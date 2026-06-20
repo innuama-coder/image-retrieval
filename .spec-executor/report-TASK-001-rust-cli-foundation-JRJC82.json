@@ -1,0 +1,121 @@
+{
+  "deliverables": {
+    "aggregate": {
+      "failed": 0,
+      "passed": 3,
+      "total": 3,
+      "total_duration_ms": 268,
+      "verify_executed": 1,
+      "verify_passed": 1,
+      "warning_items": 0
+    },
+    "finished_at": "2026-06-20T14:30:45.603706095+00:00",
+    "items": [
+      {
+        "duration_ms": 267,
+        "existence": "present_file",
+        "existence_detail": null,
+        "failure_detail": null,
+        "failure_reason": null,
+        "passed": true,
+        "path": "Cargo.toml",
+        "verify_command": "cargo fmt --all -- --check && cargo clippy --all-targets --all-features -- -D warnings && cargo test --all",
+        "verify_duration_ms": 267,
+        "verify_exit_code": 0,
+        "verify_signal": null,
+        "verify_stderr_tail": "    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.05s\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.05s\n     Running unittests src/lib.rs (target/debug/deps/image_retrieval-8b23e91ca0ac56fc)\n     Running unittests src/main.rs (target/debug/deps/image_retrieval-a908fd64c05c4e06)\n     Running tests/domain_baseline_test.rs (target/debug/deps/domain_baseline_test-b993f0df2462546f)\n   Doc-tests image_retrieval\n",
+        "verify_stdout_tail": "\nrunning 39 tests\ntest domain::candidate::tests::candidate_decision_accepted_is_accepted ... ok\ntest domain::candidate::tests::candidate_decision_uncertain_is_not_accepted ... ok\ntest domain::candidate::tests::candidate_id_display ... ok\ntest domain::candidate::tests::empty_sequence_is_empty ... ok\ntest domain::candidate::tests::candidate_decision_rejected_is_not_accepted ... ok\ntest domain::candidate::tests::retrievable_sequence_only_includes_accepted ... ok\ntest domain::candidate::tests::provider_id_display ... ok\ntest domain::delivery::tests::execution_blocked_status ... ok\ntest domain::delivery::tests::full_delivery_status ... ok\ntest domain::image::tests::accepted_decision_is_accepted ... ok\ntest domain::image::tests::mechanical_evidence_fails_on_blocking ... ok\ntest domain::image::tests::mechanical_evidence_passes_when_no_blocking ... ok\ntest domain::delivery::tests::limited_delivery_status_with_shortfall ... ok\ntest domain::delivery::tests::input_rejected_status ... ok\ntest domain::metrics::tests::metric_event_builder ... ok\ntest domain::image::tests::rejected_decisions_are_not_accepted ... ok\ntest domain::policy::tests::policy_local_reject_not_task_block ... ok\ntest domain::policy::tests::policy_task_block ... ok\ntest domain::query_plan::tests::default_required_count_is_1 ... ok\ntest domain::policy::tests::policy_allow ... ok\ntest domain::query_plan::tests::default_retry_limit_is_3 ... ok\ntest domain::query_plan::tests::task_plan_derives_candidate_target_20x ... ok\ntest domain::query_plan::tests::task_plan_derives_candidate_target_for_single_image ... ok\ntest domain::query_plan::tests::task_plan_zero_count_saturates ... ok\ntest domain::retrieval::tests::fallback_chain ... ok\ntest domain::retrieval::tests::retrieval_batch_normal ... ok\ntest domain::retrieval::tests::retrieval_batch_short ... ok\ntest domain::retrieval::tests::tier_ordering ... ok\ntest error::tests::candidate_rejection_display ... ok\ntest error::tests::diagnostic_builder ... ok\ntest error::tests::execution_blocked_display ... ok\ntest error::tests::input_rejection_display ... ok\ntest error::tests::internal_error_display ... ok\ntest error::tests::openclaw_unavailable_display ... ok\ntest error::tests::provider_failure_display ... ok\ntest error::tests::retrieval_failure_with_candidate_display ... ok\ntest ports::tests::base_provider_is_object_safe ... ok\ntest ports::tests::base_retrieval_channel_is_object_safe ... ok\ntest ports::tests::openclaw_evaluation_port_is_object_safe ... ok\n\ntest result: ok. 39 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n\nrunning 16 tests\ntest diagnostic_accumulates_items ... ok\ntest candidate_flow_to_batch ... ok\ntest error_families_are_distinguishable ... ok\ntest fallback_chain_respects_access_restrictions ... ok\ntest execution_blocked_scenario ... ok\ntest full_delivery_scenario ... ok\ntest full_query_plan_to_task_plan_lifecycle ... ok\ntest input_rejected_scenario ... ok\ntest limited_delivery_scenario ... ok\ntest metrics_events_cover_all_met_categories ... ok\ntest policy_authorization_risk_flow ... ok\ntest policy_prohibited_source_blocks ... ok\ntest retrieval_failure_produces_fallback_fact ... ok\ntest query_plan_input_round_trip ... ok\ntest retrieval_results_feed_image_acceptance ... ok\ntest task_status_serialization ... ok\n\ntest result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n",
+        "verify_timed_out": false,
+        "warnings": []
+      },
+      {
+        "duration_ms": 0,
+        "existence": "present_directory",
+        "existence_detail": null,
+        "failure_detail": null,
+        "failure_reason": null,
+        "passed": true,
+        "path": "src",
+        "verify_command": null,
+        "verify_duration_ms": null,
+        "verify_exit_code": null,
+        "verify_signal": null,
+        "verify_stderr_tail": null,
+        "verify_stdout_tail": null,
+        "verify_timed_out": null,
+        "warnings": []
+      },
+      {
+        "duration_ms": 0,
+        "existence": "present_directory",
+        "existence_detail": null,
+        "failure_detail": null,
+        "failure_reason": null,
+        "passed": true,
+        "path": "tests",
+        "verify_command": null,
+        "verify_duration_ms": null,
+        "verify_exit_code": null,
+        "verify_signal": null,
+        "verify_stderr_tail": null,
+        "verify_stdout_tail": null,
+        "verify_timed_out": null,
+        "warnings": []
+      }
+    ],
+    "not_run_reason": null,
+    "started_at": "2026-06-20T14:30:45.335657136+00:00",
+    "verification": "ran"
+  },
+  "generated_at": "2026-06-20T14:30:45.334453011+00:00",
+  "merging": {
+    "attempted": false,
+    "base_branch": null,
+    "conflict": null,
+    "merge_commit_sha": null,
+    "merged_at": null,
+    "push_detail": null,
+    "push_status": "not_attempted",
+    "pushed": false,
+    "result": "skipped",
+    "skip_reason": "skipped",
+    "source_branch": "spec-exec/TASK-001-rust-cli-foundation-JRJC82"
+  },
+  "metadata": {
+    "duration_ms": 380102,
+    "executor": "claude",
+    "finished_at": "2026-06-20T14:30:45.334453011+00:00",
+    "log_dir": "/var/lib/spec-execution-server/logs/830f541a-485d-4668-87a3-53415a37d8c8/TASK-001-rust-cli-foundation-JRJC82",
+    "mode": "worktree",
+    "repo_branch_base": "main",
+    "repo_branch_worktree": "spec-exec/TASK-001-rust-cli-foundation-JRJC82",
+    "repo_url": "https://github.com/innuama-coder/image-retrieval.git",
+    "session_id": "TASK-001-rust-cli-foundation-JRJC82",
+    "started_at": "2026-06-20T14:24:25.232444377+00:00",
+    "task_name": "TASK-001-rust-cli-foundation",
+    "worktree_path": "/workspaces/.spec-executor-worktrees/TASK-001-rust-cli-foundation-JRJC82"
+  },
+  "monitoring": {
+    "consecutive_escalate": 0,
+    "decision_done": 1,
+    "decision_escalate_normalized": 0,
+    "decision_fallback_used": 0,
+    "decision_nudge": 0,
+    "decision_timeout": 0,
+    "decision_total": 1,
+    "idle_timeout_hits": 2,
+    "last_decision_action": "done",
+    "last_decision_text": "Unchanged from prior probe. Worked for 5m 26s, handoff + 5 risks documented. IDLE. Confirmed done.",
+    "monitoring_finished_at": "2026-06-20T14:30:45.334453011+00:00",
+    "monitoring_started_at": "2026-06-20T14:24:44.618287844+00:00",
+    "nudge_count": 0,
+    "poll_count": 43
+  },
+  "schema_version": "spec-executor-report/2.0",
+  "spec_executor_version": "2.2.7",
+  "status": {
+    "failure_category": null,
+    "failure_detail": null,
+    "result": "passed"
+  }
+}

@@ -51,8 +51,11 @@
 
 ## Merging Result
 
-**Result:** — Skipped
+**Result:** ✓ Merged
 
-- **Reason:** `skipped`
-- **Worktree status:** `kept_for_manual_review`
+- **Source branch:** `spec-exec/TASK-001-rust-cli-foundation-JRJC82`
+- **Target branch:** `main`
+- **Merge commit:** `8e26b485f6bfe44cdd8ccae13ef0c2d21a51c945`
+- **Merged at:** `2026-06-20T14:30:52.146127375+00:00`
+- **Push:** `pushed` to `origin`
 

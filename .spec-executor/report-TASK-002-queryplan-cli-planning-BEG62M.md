@@ -50,8 +50,11 @@
 
 ## Merging Result
 
-**Result:** — Skipped
+**Result:** ✓ Merged
 
-- **Reason:** `skipped`
-- **Worktree status:** `kept_for_manual_review`
+- **Source branch:** `spec-exec/TASK-002-queryplan-cli-planning-BEG62M`
+- **Target branch:** `main`
+- **Merge commit:** `103e9207138bdc66d589c93085b02176d36b6143`
+- **Merged at:** `2026-06-20T14:41:24.695148376+00:00`
+- **Push:** `pushed` to `origin`
 

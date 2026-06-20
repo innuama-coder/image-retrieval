@@ -1,0 +1,17 @@
+version: "2.0"
+name: "TASK-007-delivery-policy-observability"
+repo:
+  url: "https://github.com/innuama-coder/image-retrieval.git"
+  branch: "main"
+task_dir: "tasks/development/TASK-007"
+executor: "claude"
+deliverables:
+  - path: "src"
+    verify: "cargo test --all delivery"
+  - path: "tests"
+execution:
+  poll_interval_sec: 5
+  idle_timeout_sec: 120
+  max_duration_min: 60
+  max_nudge_count: 10
+  max_consecutive_escalate: 3

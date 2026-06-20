@@ -1,0 +1,18 @@
+version: "2.0"
+name: "TASK-001-rust-cli-foundation"
+repo:
+  url: "https://github.com/innuama-coder/image-retrieval.git"
+  branch: "main"
+task_dir: "tasks/development/TASK-001"
+executor: "claude"
+deliverables:
+  - path: "Cargo.toml"
+    verify: "cargo fmt --all -- --check && cargo clippy --all-targets --all-features -- -D warnings && cargo test --all"
+  - path: "src"
+  - path: "tests"
+execution:
+  poll_interval_sec: 5
+  idle_timeout_sec: 120
+  max_duration_min: 60
+  max_nudge_count: 10
+  max_consecutive_escalate: 3

@@ -1,0 +1,10 @@
+version: "2.0"
+name: "design-planning-task-006"
+repo:
+  url: "https://github.com/innuama-coder/image-retrieval.git"
+  branch: "main"
+task_dir: "tasks/design/fixtures/TASK-006"
+executor: "codex"
+deliverables:
+  - path: "docs/design/TASK-006-image-acceptance-orchestrator-design.md"
+    verify: "py -3 tasks/design/validate_design_doc_quality.py --planning tasks/design/design-planning.json docs/design/TASK-006-image-acceptance-orchestrator-design.md || python3 tasks/design/validate_design_doc_quality.py --planning tasks/design/design-planning.json docs/design/TASK-006-image-acceptance-orchestrator-design.md || python tasks/design/validate_design_doc_quality.py --planning tasks/design/design-planning.json docs/design/TASK-006-image-acceptance-orchestrator-design.md"

@@ -1,0 +1,18 @@
+version: "2.0"
+name: "TASK-011-production-real-service-validation"
+repo:
+  url: "https://github.com/innuama-coder/image-retrieval.git"
+  branch: "main"
+task_dir: "tasks/development/TASK-011"
+executor: "claude"
+deliverables:
+  - path: "src"
+    verify: "cargo test --all"
+  - path: "tests"
+  - path: "tasks/development/real-service-validation-report.md"
+execution:
+  poll_interval_sec: 5
+  idle_timeout_sec: 120
+  max_duration_min: 60
+  max_nudge_count: 10
+  max_consecutive_escalate: 3

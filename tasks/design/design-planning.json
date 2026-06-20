@@ -1,0 +1,1288 @@
+{
+  "planning_status": "ready",
+  "output_root": "tasks/design",
+  "detailed_design_root": "docs/design",
+  "rust_design_path": "docs/design/rust-implementation-design.md",
+  "quality_validator_path": "tasks/design/validate_design_doc_quality.py",
+  "spec_executor_handoff": {
+    "spec_version": "2.0",
+    "repo": {
+      "url": "https://github.com/innuama-coder/image-retrieval.git",
+      "branch": "main"
+    },
+    "availability_status": "requires_publish",
+    "required_before_run": [
+      "commit generated docs/design and tasks/design artifacts to the referenced branch main",
+      "push the committed branch to origin before spec-executor clones the remote repo"
+    ],
+    "task_package_files": [
+      "PROMPT.md",
+      "AGENTS.md",
+      "CLAUDE.md",
+      "spec.yaml"
+    ],
+    "process_files": [
+      "tasks/design/design-planning.json",
+      "tasks/design/validate_design_doc_quality.py",
+      "docs/design/rust-implementation-design.md"
+    ],
+    "verify_runtime": {
+      "language": "Python 3",
+      "command_strategy": "try py -3, then python3, then python for tasks/design/validate_design_doc_quality.py with --planning tasks/design/design-planning.json",
+      "required_for": "spec-executor 2.0 deliverables[].verify quality checks"
+    }
+  },
+  "source_inventory": [
+    {
+      "path": "docs/PRD.md",
+      "kind": "prd",
+      "version": "v0.17",
+      "used_for": "product requirements, QueryPlan product design, acceptance criteria, metrics, risks, release gates"
+    },
+    {
+      "path": "docs/HLD.md",
+      "kind": "hld",
+      "version": "v0.11",
+      "used_for": "architecture boundaries, module responsibilities, runtime flow, ADRs, detailed-design handoff points"
+    },
+    {
+      "path": "AGENTS.md",
+      "kind": "constitution",
+      "version": "current workspace file",
+      "used_for": "project constitution, Rust CLI constraint, provider/channel/OpenClaw/retry rules, no-gstack rule"
+    },
+    {
+      "path": "README.md",
+      "kind": "repo_state",
+      "version": "current workspace file",
+      "used_for": "repository entrypoint and evidence that no Cargo project exists yet"
+    }
+  ],
+  "prd_hld_interpretation": {
+    "current_phase": "detailed design planning for Rust CLI MVP",
+    "product_scope": "QueryPlan-driven image search, candidate validation/evaluation, batched retrieval, image acceptance, retry or limited delivery, and delivery package generation",
+    "architecture_summary": "single-process local Rust CLI with task orchestration core, readiness self-check, pluggable BaseProvider, pluggable BaseRetrievalChannel, OpenClaw evaluation port, two quality gates, policy guardrails, evidence metrics, and delivery builder",
+    "hard_boundaries": [
+      "no Web UI, SaaS, service queue, account system, or image editing/generation scope",
+      "production subjective evaluation must use OpenClaw and must not be replaced by mock or fixture",
+      "retrieval fallback must not bypass login, paywall, access control, site authorization, or paid-channel enablement boundaries",
+      "fourth retrieval channel is unresolved and must not be invented in detailed design",
+      "default real search provider, built-in provider list, OpenClaw protocol, authorization blocking details, paid channel enablement, robots/site-rule policy, and maximum QueryPlan count remain open decisions"
+    ],
+    "detailed_design_obligations": [
+      "define Rust crate/module boundaries and domain types for the CLI MVP",
+      "design QueryPlan parsing, CLI command boundary, defaulting, derived planning values, and input rejection",
+      "design BaseProvider contract, search scheduling, provider readiness, source attribution, candidate shortage handling, and weighted random behavior",
+      "design candidate mechanical validation, structured candidate evaluation boundary, OpenClaw candidate evaluation, and candidate decision normalization",
+      "design BaseRetrievalChannel contract, retrieval batch planning, fallback control, channel tiers, short batch handling, retrieval result classification, and policy-owned fallback blocking handoff",
+      "design image mechanical acceptance, OpenClaw image acceptance, task state machine, attempt accounting, full delivery termination, execution blocking, retry, and limited delivery",
+      "design delivery package directory/file layout, machine-readable status contract, policy guardrails, observability, diagnostics, verification plan, and security boundaries",
+      "design readiness self-check aggregation after provider/channel/candidate OpenClaw/image OpenClaw/policy boundaries are detailed"
+    ]
+  },
+  "design_scope": {
+    "in_scope": [
+      "documentation-only detailed design tasks under docs/design",
+      "task fixtures under tasks/design/fixtures",
+      "spec-executor 2.0 pointer specs for each task",
+      "planning-aware detailed-design quality validator"
+    ],
+    "out_of_scope": [
+      "product source code",
+      "Cargo manifests",
+      "tests",
+      "schemas or migrations",
+      "runtime scripts",
+      "generated runtime artifacts",
+      "new product requirements not already present in PRD/HLD/AGENTS"
+    ]
+  },
+  "rust_stack": {
+    "language": "Rust",
+    "shape": "local CLI MVP",
+    "repo_state": "no Cargo.toml or Rust source tree exists yet",
+    "allowed_design_level": "detailed design may specify planned crate/module/type/trait/error/state/async boundaries, but must not implement them",
+    "blocked_areas": [
+      "specific Rust libraries, HTTP clients, async runtime, serialization crates, and CLI parser crates are not fixed by PRD/HLD and must be recorded as design decisions or open options rather than invented dependencies"
+    ]
+  },
+  "planning_review_stages": [
+    {
+      "stage_id": "overall_planning",
+      "stage": "inventory and interpret PRD/HLD",
+      "status": "pass",
+      "checks": [
+        "PRD/HLD present",
+        "Rust CLI scope present",
+        "HLD details design handoff points identified"
+      ],
+      "findings": [
+        "sources are sufficient for detailed-design planning with open decisions recorded as risks"
+      ],
+      "evidence_refs": [
+        "docs/PRD.md:75",
+        "docs/HLD.md:79",
+        "docs/HLD.md:437"
+      ]
+    },
+    {
+      "stage_id": "task_formation",
+      "stage": "decompose detailed-design obligations",
+      "status": "pass",
+      "checks": [
+        "one docs/design output per task",
+        "documentation-only task wording",
+        "no implementation scope"
+      ],
+      "findings": [
+        "eight detailed design tasks plus one final acceptance task cover current-phase obligations"
+      ],
+      "evidence_refs": [
+        "docs/HLD.md:202",
+        "docs/HLD.md:464"
+      ]
+    },
+    {
+      "stage_id": "single_task_review",
+      "stage": "review each task for safe execution",
+      "status": "pass",
+      "checks": [
+        "source refs present",
+        "allowed and forbidden scope present",
+        "stop conditions present",
+        "fixture paths present"
+      ],
+      "findings": [
+        "each task can be executed as a bounded documentation-only design task"
+      ],
+      "evidence_refs": [
+        "tasks/design/design-planning.json#tasks"
+      ]
+    },
+    {
+      "stage_id": "global_dag_review",
+      "stage": "review DAG and coverage",
+      "status": "pass",
+      "checks": [
+        "acyclic graph",
+        "semantic dependency reasons",
+        "coverage matrix spans FR/AC/NFR/MET sources"
+      ],
+      "findings": [
+        "dependency direction follows design information flow from baseline through provider/channel/evaluation/policy details to readiness and acceptance"
+      ],
+      "evidence_refs": [
+        "tasks/design/design-planning.json#dag",
+        "tasks/design/design-planning.json#coverage_matrix"
+      ]
+    },
+    {
+      "stage_id": "artifact_generation",
+      "stage": "emit planning artifacts and fixtures",
+      "status": "pass",
+      "checks": [
+        "planning JSON",
+        "quality validator",
+        "rust design doc",
+        "PROMPT/AGENTS/CLAUDE/spec fixture set"
+      ],
+      "findings": [
+        "generated artifacts are local and require commit/push before remote spec-executor consumption"
+      ],
+      "evidence_refs": [
+        "tasks/design/fixtures",
+        "docs/design/rust-implementation-design.md"
+      ]
+    },
+    {
+      "stage_id": "final_design_acceptance",
+      "stage": "add final design acceptance task",
+      "status": "pass",
+      "checks": [
+        "exactly one acceptance task",
+        "acceptance depends on all detailed design tasks",
+        "acceptance output under docs/design"
+      ],
+      "findings": [
+        "TASK-009 reviews the completed design document set before implementation planning"
+      ],
+      "evidence_refs": [
+        "tasks/design/design-planning.json#tasks/TASK-009"
+      ]
+    }
+  ],
+  "tasks": [
+    {
+      "task_id": "TASK-001",
+      "title": "Rust Implementation Baseline And Domain Model Design",
+      "task_type": "detailed_design",
+      "source_refs": [
+        "docs/PRD.md:24-32",
+        "docs/HLD.md:17-33",
+        "docs/HLD.md:162-217",
+        "AGENTS.md:111-130"
+      ],
+      "inputs": [
+        "PRD v0.17",
+        "HLD v0.11",
+        "AGENTS project constitution",
+        "empty Cargo project state"
+      ],
+      "outputs": [
+        "overall Rust crate and module boundary design",
+        "domain type and state boundary design",
+        "cross-task handoff map for docs/design"
+      ],
+      "allowed_scope": [
+        "design crate/module boundaries, domain entities, error families, state ownership, async/concurrency stance, and design handoffs"
+      ],
+      "forbidden_scope": [
+        "Do not implement code",
+        "do not create Cargo.toml",
+        "do not select unsupported third-party Rust libraries as committed facts"
+      ],
+      "acceptance": [
+        "document covers all required rust-implementation-design.md sections",
+        "cites PRD/HLD/AGENTS",
+        "records open technology decisions without inventing product facts"
+      ],
+      "verification": [
+        "run tasks/design/validate_design_doc_quality.py with --planning against docs/design/rust-implementation-design.md"
+      ],
+      "stop_conditions": [
+        "stop if Rust CLI scope or single-process architecture becomes contradictory",
+        "stop if a required library/protocol choice cannot be derived from PRD/HLD"
+      ],
+      "dependencies": [],
+      "design_doc_path": "docs/design/rust-implementation-design.md",
+      "fixture_dir": "tasks/design/fixtures/TASK-001",
+      "prompt_path": "tasks/design/fixtures/TASK-001/PROMPT.md",
+      "agents_path": "tasks/design/fixtures/TASK-001/AGENTS.md",
+      "claude_path": "tasks/design/fixtures/TASK-001/CLAUDE.md",
+      "spec_path": "tasks/design/fixtures/TASK-001/spec.yaml"
+    },
+    {
+      "task_id": "TASK-002",
+      "title": "QueryPlan CLI And Input Planning Detailed Design",
+      "task_type": "detailed_design",
+      "source_refs": [
+        "docs/PRD.md:75-90",
+        "docs/PRD.md:201-202",
+        "docs/HLD.md:77-79",
+        "docs/HLD.md:204-206"
+      ],
+      "inputs": [
+        "TASK-001 baseline",
+        "QueryPlan product design",
+        "input rejection and defaulting rules"
+      ],
+      "outputs": [
+        "QueryPlan input contract design",
+        "CLI command boundary design",
+        "defaulting and derived planning value design",
+        "input rejection diagnostics design"
+      ],
+      "allowed_scope": [
+        "design CLI input normalization, QueryPlan validation/defaults, derived candidate/batch/retry planning values, input rejection diagnostics, and verification plan"
+      ],
+      "forbidden_scope": [
+        "Do not implement code",
+        "do not define production CLI parser library as a fact",
+        "do not change product defaults"
+      ],
+      "acceptance": [
+        "covers FR-001, FR-002, AC-001, AC-002",
+        "distinguishes input rejection from delivery results"
+      ],
+      "verification": [
+        "run planning-aware validator on docs/design/TASK-002-queryplan-cli-input-planning-design.md"
+      ],
+      "stop_conditions": [
+        "stop if required QueryPlan fields or CLI syntax would require new product decisions"
+      ],
+      "dependencies": [
+        "TASK-001"
+      ],
+      "design_doc_path": "docs/design/TASK-002-queryplan-cli-input-planning-design.md",
+      "fixture_dir": "tasks/design/fixtures/TASK-002",
+      "prompt_path": "tasks/design/fixtures/TASK-002/PROMPT.md",
+      "agents_path": "tasks/design/fixtures/TASK-002/AGENTS.md",
+      "claude_path": "tasks/design/fixtures/TASK-002/CLAUDE.md",
+      "spec_path": "tasks/design/fixtures/TASK-002/spec.yaml"
+    },
+    {
+      "task_id": "TASK-003",
+      "title": "BaseProvider Search Scheduler Detailed Design",
+      "task_type": "detailed_design",
+      "source_refs": [
+        "docs/PRD.md:92-100",
+        "docs/PRD.md:203-204",
+        "docs/HLD.md:39-40",
+        "docs/HLD.md:207-209",
+        "AGENTS.md:44-55"
+      ],
+      "inputs": [
+        "TASK-001 baseline",
+        "TASK-002 QueryPlan derived candidate target",
+        "BaseProvider HLD boundary"
+      ],
+      "outputs": [
+        "BaseProvider trait and adapter boundary design",
+        "weighted random scheduling design",
+        "provider readiness and candidate shortage design",
+        "candidate source attribution design"
+      ],
+      "allowed_scope": [
+        "design provider contract, scheduler state, failure normalization, weighted random behavior, and verification strategy"
+      ],
+      "forbidden_scope": [
+        "Do not implement code",
+        "do not pick a default real provider",
+        "do not define concrete external provider HTTP protocol"
+      ],
+      "acceptance": [
+        "covers FR-003, FR-004, AC-003, AC-004, MET-002",
+        "keeps BaseProvider aligned with BaseSearchProvider constitutional term"
+      ],
+      "verification": [
+        "run planning-aware validator on docs/design/TASK-003-base-provider-search-design.md"
+      ],
+      "stop_conditions": [
+        "stop if default provider selection or built-in provider list becomes necessary"
+      ],
+      "dependencies": [
+        "TASK-001",
+        "TASK-002"
+      ],
+      "design_doc_path": "docs/design/TASK-003-base-provider-search-design.md",
+      "fixture_dir": "tasks/design/fixtures/TASK-003",
+      "prompt_path": "tasks/design/fixtures/TASK-003/PROMPT.md",
+      "agents_path": "tasks/design/fixtures/TASK-003/AGENTS.md",
+      "claude_path": "tasks/design/fixtures/TASK-003/CLAUDE.md",
+      "spec_path": "tasks/design/fixtures/TASK-003/spec.yaml"
+    },
+    {
+      "task_id": "TASK-004",
+      "title": "Candidate Quality Gate And OpenClaw Candidate Evaluation Detailed Design",
+      "task_type": "detailed_design",
+      "source_refs": [
+        "docs/PRD.md:102-110",
+        "docs/PRD.md:205",
+        "docs/HLD.md:210",
+        "docs/HLD.md:219-233",
+        "docs/HLD.md:443-446"
+      ],
+      "inputs": [
+        "TASK-001 baseline",
+        "TASK-002 QueryPlan quality and constraints",
+        "TASK-003 candidate and source data"
+      ],
+      "outputs": [
+        "candidate mechanical validation design",
+        "structured candidate evaluation boundary design",
+        "OpenClaw candidate evaluation result normalization design",
+        "candidate priority and rejection evidence design"
+      ],
+      "allowed_scope": [
+        "design blocking/reference metric categories, candidate decision states, OpenClaw availability behavior, and candidate evidence handoff"
+      ],
+      "forbidden_scope": [
+        "Do not implement code",
+        "do not define OpenClaw wire protocol",
+        "do not invent algorithm thresholds"
+      ],
+      "acceptance": [
+        "covers FR-005, FR-011, AC-005, AC-011, MET-004, MET-006",
+        "keeps uncertain candidate conclusions out of retrieval batches"
+      ],
+      "verification": [
+        "run planning-aware validator on docs/design/TASK-004-candidate-quality-openclaw-design.md"
+      ],
+      "stop_conditions": [
+        "stop if OpenClaw production responsibility or skill execution model must be finalized first"
+      ],
+      "dependencies": [
+        "TASK-001",
+        "TASK-002",
+        "TASK-003"
+      ],
+      "design_doc_path": "docs/design/TASK-004-candidate-quality-openclaw-design.md",
+      "fixture_dir": "tasks/design/fixtures/TASK-004",
+      "prompt_path": "tasks/design/fixtures/TASK-004/PROMPT.md",
+      "agents_path": "tasks/design/fixtures/TASK-004/AGENTS.md",
+      "claude_path": "tasks/design/fixtures/TASK-004/CLAUDE.md",
+      "spec_path": "tasks/design/fixtures/TASK-004/spec.yaml"
+    },
+    {
+      "task_id": "TASK-005",
+      "title": "BaseRetrievalChannel Batch And Fallback Detailed Design",
+      "task_type": "detailed_design",
+      "source_refs": [
+        "docs/PRD.md:112-119",
+        "docs/PRD.md:206-207",
+        "docs/HLD.md:41",
+        "docs/HLD.md:211-212",
+        "docs/HLD.md:260-315",
+        "docs/HLD.md:352",
+        "docs/HLD.md:417"
+      ],
+      "inputs": [
+        "TASK-001 baseline",
+        "TASK-002 required count and batch target",
+        "TASK-004可抓取候选序列"
+      ],
+      "outputs": [
+        "BaseRetrievalChannel trait and adapter boundary design",
+        "retrieval batch planning design",
+        "fallback policy handoff design including local rejection versus task-level execution blocking",
+        "short batch and retrieval failure classification design"
+      ],
+      "allowed_scope": [
+        "design channel tier model, channel capability/failure outputs, batch selection, fallback orchestration handoff, local rejection versus task-level blocking, and paid/disabled channel boundaries"
+      ],
+      "forbidden_scope": [
+        "Do not implement code",
+        "do not invent a fourth channel",
+        "do not bypass access or authorization limits"
+      ],
+      "acceptance": [
+        "covers FR-006, FR-007, AC-006, AC-007, MET-005",
+        "records fourth-channel uncertainty as an open decision"
+      ],
+      "verification": [
+        "run planning-aware validator on docs/design/TASK-005-retrieval-channel-batch-design.md"
+      ],
+      "stop_conditions": [
+        "stop if paid channel enablement or fourth channel becomes required to finish the design"
+      ],
+      "dependencies": [
+        "TASK-001",
+        "TASK-002",
+        "TASK-004"
+      ],
+      "design_doc_path": "docs/design/TASK-005-retrieval-channel-batch-design.md",
+      "fixture_dir": "tasks/design/fixtures/TASK-005",
+      "prompt_path": "tasks/design/fixtures/TASK-005/PROMPT.md",
+      "agents_path": "tasks/design/fixtures/TASK-005/AGENTS.md",
+      "claude_path": "tasks/design/fixtures/TASK-005/CLAUDE.md",
+      "spec_path": "tasks/design/fixtures/TASK-005/spec.yaml"
+    },
+    {
+      "task_id": "TASK-006",
+      "title": "Image Acceptance And Task Orchestrator State Machine Detailed Design",
+      "task_type": "detailed_design",
+      "source_refs": [
+        "docs/PRD.md:121-159",
+        "docs/PRD.md:208-211",
+        "docs/HLD.md:260-372",
+        "AGENTS.md:85-109"
+      ],
+      "inputs": [
+        "TASK-001 baseline",
+        "TASK-002 retry rules",
+        "TASK-004 quality gate semantics",
+        "TASK-005 retrieval results"
+      ],
+      "outputs": [
+        "image mechanical acceptance design",
+        "OpenClaw image evaluation normalization design",
+        "Task Orchestrator state machine design",
+        "attempt counting and delivery decision design"
+      ],
+      "allowed_scope": [
+        "design image acceptance states, full delivery termination, execution blocking, retry, limited delivery, and no-real-image batch behavior"
+      ],
+      "forbidden_scope": [
+        "Do not implement code",
+        "do not change initial attempt plus 3 retries rule",
+        "do not let mock/fixture count as production acceptance"
+      ],
+      "acceptance": [
+        "covers FR-008, FR-009, FR-011, AC-008, AC-009, AC-011",
+        "distinguishes retry_count and full_attempt_count"
+      ],
+      "verification": [
+        "run planning-aware validator on docs/design/TASK-006-image-acceptance-orchestrator-design.md"
+      ],
+      "stop_conditions": [
+        "stop if OpenClaw image evaluation responsibility cannot be represented without unsupported protocol details"
+      ],
+      "dependencies": [
+        "TASK-001",
+        "TASK-002",
+        "TASK-004",
+        "TASK-005"
+      ],
+      "design_doc_path": "docs/design/TASK-006-image-acceptance-orchestrator-design.md",
+      "fixture_dir": "tasks/design/fixtures/TASK-006",
+      "prompt_path": "tasks/design/fixtures/TASK-006/PROMPT.md",
+      "agents_path": "tasks/design/fixtures/TASK-006/AGENTS.md",
+      "claude_path": "tasks/design/fixtures/TASK-006/CLAUDE.md",
+      "spec_path": "tasks/design/fixtures/TASK-006/spec.yaml"
+    },
+    {
+      "task_id": "TASK-007",
+      "title": "Delivery Package Policy Observability And Verification Detailed Design",
+      "task_type": "detailed_design",
+      "source_refs": [
+        "docs/PRD.md:121-131",
+        "docs/PRD.md:178-222",
+        "docs/HLD.md:402-431",
+        "docs/HLD.md:473-476"
+      ],
+      "inputs": [
+        "TASK-001 baseline",
+        "TASK-002 output preference",
+        "TASK-003 provider/search events",
+        "TASK-004 candidate quality and OpenClaw events",
+        "TASK-005 retrieval channel and fallback events",
+        "TASK-006 final task states and evidence"
+      ],
+      "outputs": [
+        "delivery package directory and file layout design",
+        "machine-readable delivery status and manifest contract design",
+        "policy and guardrail decision design",
+        "diagnostics and observability event source design",
+        "fixture and real-service verification plan design"
+      ],
+      "allowed_scope": [
+        "design delivery package contents, directory/file organization, manifest/status files, machine-readable boundary, sensitive data exclusion, metric event sources, release verification and rollback evidence"
+      ],
+      "forbidden_scope": [
+        "Do not implement code",
+        "do not choose runtime serialization libraries as committed facts",
+        "do not mark unknown authorization as commercial-safe"
+      ],
+      "acceptance": [
+        "covers FR-010, FR-013, NFR-001 through NFR-006, MET-001 through MET-006, AC-010, AC-013",
+        "explicitly maps MET-001 through MET-006 to event sources from provider, candidate, retrieval, OpenClaw, orchestrator, and delivery boundaries",
+        "defines detailed delivery package layout and machine-readable contract within PRD/HLD scope"
+      ],
+      "verification": [
+        "run planning-aware validator on docs/design/TASK-007-delivery-policy-observability-design.md"
+      ],
+      "stop_conditions": [
+        "stop if authorization grouping, robots policy, maximum QueryPlan count, or exact runtime serialization library must be decided before design can proceed"
+      ],
+      "dependencies": [
+        "TASK-001",
+        "TASK-002",
+        "TASK-003",
+        "TASK-004",
+        "TASK-005",
+        "TASK-006"
+      ],
+      "design_doc_path": "docs/design/TASK-007-delivery-policy-observability-design.md",
+      "fixture_dir": "tasks/design/fixtures/TASK-007",
+      "prompt_path": "tasks/design/fixtures/TASK-007/PROMPT.md",
+      "agents_path": "tasks/design/fixtures/TASK-007/AGENTS.md",
+      "claude_path": "tasks/design/fixtures/TASK-007/CLAUDE.md",
+      "spec_path": "tasks/design/fixtures/TASK-007/spec.yaml"
+    },
+    {
+      "task_id": "TASK-008",
+      "title": "Readiness Self-check Integration Detailed Design",
+      "task_type": "detailed_design",
+      "source_refs": [
+        "docs/PRD.md:175",
+        "docs/PRD.md:212",
+        "docs/HLD.md:78",
+        "docs/HLD.md:205",
+        "docs/HLD.md:219-233",
+        "docs/HLD.md:235-257",
+        "docs/HLD.md:420"
+      ],
+      "inputs": [
+        "TASK-001 baseline",
+        "TASK-002 QueryPlan validation/defaults",
+        "TASK-003 provider readiness contract",
+        "TASK-004 OpenClaw candidate evaluation availability model",
+        "TASK-005 retrieval channel readiness and enablement model",
+        "TASK-006 OpenClaw image evaluation availability and execution-blocking model",
+        "TASK-007 policy guardrails and diagnostics model"
+      ],
+      "outputs": [
+        "Self-check Report detailed design",
+        "readiness aggregation control flow design",
+        "provider/channel/candidate OpenClaw/image OpenClaw/policy readiness input design",
+        "self-check diagnostics and non-delivery boundary design"
+      ],
+      "allowed_scope": [
+        "design readiness self-check command behavior, aggregation of QueryPlan/provider/channel/candidate OpenClaw/image OpenClaw/policy readiness, user-facing diagnostics, automation-readable check status, and verification plan"
+      ],
+      "forbidden_scope": [
+        "Do not implement code",
+        "do not perform search/retrieval/production subjective evaluation in self-check",
+        "do not generate a delivery package from self-check"
+      ],
+      "acceptance": [
+        "covers FR-012 and AC-012",
+        "depends on detailed provider/channel/candidate OpenClaw/image OpenClaw/policy readiness contracts rather than inventing them",
+        "keeps self-check separate from formal delivery results"
+      ],
+      "verification": [
+        "run planning-aware validator on docs/design/TASK-008-readiness-self-check-design.md"
+      ],
+      "stop_conditions": [
+        "stop if candidate OpenClaw readiness, image OpenClaw readiness, provider readiness, retrieval channel enablement, or policy blocker semantics cannot be represented from upstream design documents"
+      ],
+      "dependencies": [
+        "TASK-001",
+        "TASK-002",
+        "TASK-003",
+        "TASK-004",
+        "TASK-005",
+        "TASK-006",
+        "TASK-007"
+      ],
+      "design_doc_path": "docs/design/TASK-008-readiness-self-check-design.md",
+      "fixture_dir": "tasks/design/fixtures/TASK-008",
+      "prompt_path": "tasks/design/fixtures/TASK-008/PROMPT.md",
+      "agents_path": "tasks/design/fixtures/TASK-008/AGENTS.md",
+      "claude_path": "tasks/design/fixtures/TASK-008/CLAUDE.md",
+      "spec_path": "tasks/design/fixtures/TASK-008/spec.yaml"
+    },
+    {
+      "task_id": "TASK-009",
+      "title": "Detailed Design Acceptance Review",
+      "task_type": "design_acceptance",
+      "source_refs": [
+        "docs/PRD.md:238-247",
+        "docs/HLD.md:464-476",
+        "tasks/design/design-planning.json"
+      ],
+      "inputs": [
+        "all detailed design documents",
+        "coverage matrix",
+        "DAG",
+        "PRD/HLD source inventory"
+      ],
+      "outputs": [
+        "final detailed design acceptance report under docs/design",
+        "cross-document consistency verdict",
+        "blocker and residual risk list"
+      ],
+      "allowed_scope": [
+        "review completed docs/design deliverables for traceability, consistency, detailed design quality, and readiness for development planning"
+      ],
+      "forbidden_scope": [
+        "Do not implement code",
+        "do not modify production files",
+        "do not introduce new design scope outside the planned documents"
+      ],
+      "acceptance": [
+        "mentions every detailed design task",
+        "inventories every design document",
+        "records pass/fail/blocked verdict and required fixes"
+      ],
+      "verification": [
+        "run planning-aware validator with --acceptance on docs/design/TASK-009-detailed-design-acceptance-review.md"
+      ],
+      "stop_conditions": [
+        "block if any planned detailed design document is missing or contradicts PRD/HLD"
+      ],
+      "dependencies": [
+        "TASK-001",
+        "TASK-002",
+        "TASK-003",
+        "TASK-004",
+        "TASK-005",
+        "TASK-006",
+        "TASK-007",
+        "TASK-008"
+      ],
+      "design_doc_path": "docs/design/TASK-009-detailed-design-acceptance-review.md",
+      "fixture_dir": "tasks/design/fixtures/TASK-009",
+      "prompt_path": "tasks/design/fixtures/TASK-009/PROMPT.md",
+      "agents_path": "tasks/design/fixtures/TASK-009/AGENTS.md",
+      "claude_path": "tasks/design/fixtures/TASK-009/CLAUDE.md",
+      "spec_path": "tasks/design/fixtures/TASK-009/spec.yaml"
+    }
+  ],
+  "dag": {
+    "nodes": [
+      {
+        "task_id": "TASK-001"
+      },
+      {
+        "task_id": "TASK-002"
+      },
+      {
+        "task_id": "TASK-003"
+      },
+      {
+        "task_id": "TASK-004"
+      },
+      {
+        "task_id": "TASK-005"
+      },
+      {
+        "task_id": "TASK-006"
+      },
+      {
+        "task_id": "TASK-007"
+      },
+      {
+        "task_id": "TASK-008"
+      },
+      {
+        "task_id": "TASK-009"
+      }
+    ],
+    "edges": [
+      {
+        "from": "TASK-001",
+        "to": "TASK-002",
+        "reason": "QueryPlan and CLI input planning depend on shared Rust/domain baseline.",
+        "source_refs": [
+          "docs/HLD.md:163-217"
+        ]
+      },
+      {
+        "from": "TASK-001",
+        "to": "TASK-003",
+        "reason": "Provider trait and scheduler types depend on module and error baseline.",
+        "source_refs": [
+          "docs/HLD.md:207-209"
+        ]
+      },
+      {
+        "from": "TASK-002",
+        "to": "TASK-003",
+        "reason": "Search target and defaults derive from QueryPlan planning.",
+        "source_refs": [
+          "docs/PRD.md:88"
+        ]
+      },
+      {
+        "from": "TASK-001",
+        "to": "TASK-004",
+        "reason": "Quality gate types and decisions depend on shared domain and error model.",
+        "source_refs": [
+          "docs/HLD.md:210"
+        ]
+      },
+      {
+        "from": "TASK-002",
+        "to": "TASK-004",
+        "reason": "Candidate evaluation needs QueryPlan semantics, quality, and content constraints.",
+        "source_refs": [
+          "docs/PRD.md:75-90"
+        ]
+      },
+      {
+        "from": "TASK-003",
+        "to": "TASK-004",
+        "reason": "Candidate gate consumes normalized search candidates and source attribution.",
+        "source_refs": [
+          "docs/HLD.md:281-295"
+        ]
+      },
+      {
+        "from": "TASK-001",
+        "to": "TASK-005",
+        "reason": "Retrieval channel trait and batch types depend on shared Rust baseline.",
+        "source_refs": [
+          "docs/HLD.md:211-212"
+        ]
+      },
+      {
+        "from": "TASK-002",
+        "to": "TASK-005",
+        "reason": "Batch target uses QueryPlan required count.",
+        "source_refs": [
+          "docs/PRD.md:117"
+        ]
+      },
+      {
+        "from": "TASK-004",
+        "to": "TASK-005",
+        "reason": "Retrieval batch planner consumes only可抓取候选序列.",
+        "source_refs": [
+          "docs/HLD.md:294-296"
+        ]
+      },
+      {
+        "from": "TASK-001",
+        "to": "TASK-006",
+        "reason": "State machine and acceptance decisions depend on shared domain and error model.",
+        "source_refs": [
+          "docs/HLD.md:354-372"
+        ]
+      },
+      {
+        "from": "TASK-002",
+        "to": "TASK-006",
+        "reason": "Retry limits and default planning come from QueryPlan planning.",
+        "source_refs": [
+          "docs/HLD.md:120-121"
+        ]
+      },
+      {
+        "from": "TASK-004",
+        "to": "TASK-006",
+        "reason": "Image acceptance must align with candidate gate and OpenClaw normalization semantics.",
+        "source_refs": [
+          "docs/HLD.md:219-233"
+        ]
+      },
+      {
+        "from": "TASK-005",
+        "to": "TASK-006",
+        "reason": "Image acceptance and orchestrator consume retrieval results and fallback outcomes.",
+        "source_refs": [
+          "docs/HLD.md:297-343"
+        ]
+      },
+      {
+        "from": "TASK-001",
+        "to": "TASK-007",
+        "reason": "Delivery, policy, and observability types use shared baseline.",
+        "source_refs": [
+          "docs/HLD.md:215-217"
+        ]
+      },
+      {
+        "from": "TASK-002",
+        "to": "TASK-007",
+        "reason": "Output preference affects delivery and automation boundaries.",
+        "source_refs": [
+          "docs/PRD.md:85"
+        ]
+      },
+      {
+        "from": "TASK-003",
+        "to": "TASK-007",
+        "reason": "Observability and delivery evidence need provider usage, candidate counts, and source attribution.",
+        "source_refs": [
+          "docs/PRD.md:191-196"
+        ]
+      },
+      {
+        "from": "TASK-004",
+        "to": "TASK-007",
+        "reason": "Observability and rejection explanations need candidate gate and OpenClaw candidate event sources.",
+        "source_refs": [
+          "docs/PRD.md:194-196"
+        ]
+      },
+      {
+        "from": "TASK-005",
+        "to": "TASK-007",
+        "reason": "Observability and delivery evidence need retrieval channel and fallback event sources.",
+        "source_refs": [
+          "docs/PRD.md:195"
+        ]
+      },
+      {
+        "from": "TASK-006",
+        "to": "TASK-007",
+        "reason": "Delivery package consumes final task states, accepted images, failures, and evidence.",
+        "source_refs": [
+          "docs/PRD.md:121-131"
+        ]
+      },
+      {
+        "from": "TASK-001",
+        "to": "TASK-008",
+        "reason": "Readiness self-check uses shared domain and result boundary.",
+        "source_refs": [
+          "docs/HLD.md:235-257"
+        ]
+      },
+      {
+        "from": "TASK-002",
+        "to": "TASK-008",
+        "reason": "Self-check validates QueryPlan legality and default explainability.",
+        "source_refs": [
+          "docs/HLD.md:249-251"
+        ]
+      },
+      {
+        "from": "TASK-003",
+        "to": "TASK-008",
+        "reason": "Self-check needs BaseProvider readiness and provider configuration boundary.",
+        "source_refs": [
+          "docs/HLD.md:251-252"
+        ]
+      },
+      {
+        "from": "TASK-004",
+        "to": "TASK-008",
+        "reason": "Self-check needs candidate OpenClaw evaluation availability and skill executability model.",
+        "source_refs": [
+          "docs/HLD.md:219-224",
+          "docs/HLD.md:253-254"
+        ]
+      },
+      {
+        "from": "TASK-006",
+        "to": "TASK-008",
+        "reason": "Self-check needs image OpenClaw evaluation availability and skill executability model before formal task execution.",
+        "source_refs": [
+          "docs/HLD.md:219-225",
+          "docs/HLD.md:253-254"
+        ]
+      },
+      {
+        "from": "TASK-005",
+        "to": "TASK-008",
+        "reason": "Self-check needs retrieval channel readiness and enablement boundary.",
+        "source_refs": [
+          "docs/HLD.md:252-253"
+        ]
+      },
+      {
+        "from": "TASK-007",
+        "to": "TASK-008",
+        "reason": "Self-check aggregates policy blockers and user-facing diagnostics.",
+        "source_refs": [
+          "docs/HLD.md:254-256"
+        ]
+      },
+      {
+        "from": "TASK-001",
+        "to": "TASK-009",
+        "reason": "Final acceptance must review TASK-001 design output.",
+        "source_refs": [
+          "tasks/design/design-planning.json#TASK-001"
+        ]
+      },
+      {
+        "from": "TASK-002",
+        "to": "TASK-009",
+        "reason": "Final acceptance must review TASK-002 design output.",
+        "source_refs": [
+          "tasks/design/design-planning.json#TASK-002"
+        ]
+      },
+      {
+        "from": "TASK-003",
+        "to": "TASK-009",
+        "reason": "Final acceptance must review TASK-003 design output.",
+        "source_refs": [
+          "tasks/design/design-planning.json#TASK-003"
+        ]
+      },
+      {
+        "from": "TASK-004",
+        "to": "TASK-009",
+        "reason": "Final acceptance must review TASK-004 design output.",
+        "source_refs": [
+          "tasks/design/design-planning.json#TASK-004"
+        ]
+      },
+      {
+        "from": "TASK-005",
+        "to": "TASK-009",
+        "reason": "Final acceptance must review TASK-005 design output.",
+        "source_refs": [
+          "tasks/design/design-planning.json#TASK-005"
+        ]
+      },
+      {
+        "from": "TASK-006",
+        "to": "TASK-009",
+        "reason": "Final acceptance must review TASK-006 design output.",
+        "source_refs": [
+          "tasks/design/design-planning.json#TASK-006"
+        ]
+      },
+      {
+        "from": "TASK-007",
+        "to": "TASK-009",
+        "reason": "Final acceptance must review TASK-007 design output.",
+        "source_refs": [
+          "tasks/design/design-planning.json#TASK-007"
+        ]
+      },
+      {
+        "from": "TASK-008",
+        "to": "TASK-009",
+        "reason": "Final acceptance must review TASK-008 design output.",
+        "source_refs": [
+          "tasks/design/design-planning.json#TASK-008"
+        ]
+      }
+    ],
+    "parallel_groups": [
+      {
+        "group_id": "PG-001",
+        "tasks": [
+          "TASK-003"
+        ],
+        "reason": "Provider design follows QueryPlan derived target and feeds candidate quality and readiness."
+      },
+      {
+        "group_id": "PG-002",
+        "tasks": [
+          "TASK-008"
+        ],
+        "reason": "Readiness self-check runs after all upstream readiness inputs are detailed and before final acceptance."
+      }
+    ],
+    "cycle_check": {
+      "status": "pass",
+      "cycles": []
+    }
+  },
+  "fixtures": [
+    {
+      "task_id": "TASK-001",
+      "fixture_dir": "tasks/design/fixtures/TASK-001",
+      "prompt_path": "tasks/design/fixtures/TASK-001/PROMPT.md",
+      "agents_path": "tasks/design/fixtures/TASK-001/AGENTS.md",
+      "claude_path": "tasks/design/fixtures/TASK-001/CLAUDE.md",
+      "spec_path": "tasks/design/fixtures/TASK-001/spec.yaml"
+    },
+    {
+      "task_id": "TASK-002",
+      "fixture_dir": "tasks/design/fixtures/TASK-002",
+      "prompt_path": "tasks/design/fixtures/TASK-002/PROMPT.md",
+      "agents_path": "tasks/design/fixtures/TASK-002/AGENTS.md",
+      "claude_path": "tasks/design/fixtures/TASK-002/CLAUDE.md",
+      "spec_path": "tasks/design/fixtures/TASK-002/spec.yaml"
+    },
+    {
+      "task_id": "TASK-003",
+      "fixture_dir": "tasks/design/fixtures/TASK-003",
+      "prompt_path": "tasks/design/fixtures/TASK-003/PROMPT.md",
+      "agents_path": "tasks/design/fixtures/TASK-003/AGENTS.md",
+      "claude_path": "tasks/design/fixtures/TASK-003/CLAUDE.md",
+      "spec_path": "tasks/design/fixtures/TASK-003/spec.yaml"
+    },
+    {
+      "task_id": "TASK-004",
+      "fixture_dir": "tasks/design/fixtures/TASK-004",
+      "prompt_path": "tasks/design/fixtures/TASK-004/PROMPT.md",
+      "agents_path": "tasks/design/fixtures/TASK-004/AGENTS.md",
+      "claude_path": "tasks/design/fixtures/TASK-004/CLAUDE.md",
+      "spec_path": "tasks/design/fixtures/TASK-004/spec.yaml"
+    },
+    {
+      "task_id": "TASK-005",
+      "fixture_dir": "tasks/design/fixtures/TASK-005",
+      "prompt_path": "tasks/design/fixtures/TASK-005/PROMPT.md",
+      "agents_path": "tasks/design/fixtures/TASK-005/AGENTS.md",
+      "claude_path": "tasks/design/fixtures/TASK-005/CLAUDE.md",
+      "spec_path": "tasks/design/fixtures/TASK-005/spec.yaml"
+    },
+    {
+      "task_id": "TASK-006",
+      "fixture_dir": "tasks/design/fixtures/TASK-006",
+      "prompt_path": "tasks/design/fixtures/TASK-006/PROMPT.md",
+      "agents_path": "tasks/design/fixtures/TASK-006/AGENTS.md",
+      "claude_path": "tasks/design/fixtures/TASK-006/CLAUDE.md",
+      "spec_path": "tasks/design/fixtures/TASK-006/spec.yaml"
+    },
+    {
+      "task_id": "TASK-007",
+      "fixture_dir": "tasks/design/fixtures/TASK-007",
+      "prompt_path": "tasks/design/fixtures/TASK-007/PROMPT.md",
+      "agents_path": "tasks/design/fixtures/TASK-007/AGENTS.md",
+      "claude_path": "tasks/design/fixtures/TASK-007/CLAUDE.md",
+      "spec_path": "tasks/design/fixtures/TASK-007/spec.yaml"
+    },
+    {
+      "task_id": "TASK-008",
+      "fixture_dir": "tasks/design/fixtures/TASK-008",
+      "prompt_path": "tasks/design/fixtures/TASK-008/PROMPT.md",
+      "agents_path": "tasks/design/fixtures/TASK-008/AGENTS.md",
+      "claude_path": "tasks/design/fixtures/TASK-008/CLAUDE.md",
+      "spec_path": "tasks/design/fixtures/TASK-008/spec.yaml"
+    },
+    {
+      "task_id": "TASK-009",
+      "fixture_dir": "tasks/design/fixtures/TASK-009",
+      "prompt_path": "tasks/design/fixtures/TASK-009/PROMPT.md",
+      "agents_path": "tasks/design/fixtures/TASK-009/AGENTS.md",
+      "claude_path": "tasks/design/fixtures/TASK-009/CLAUDE.md",
+      "spec_path": "tasks/design/fixtures/TASK-009/spec.yaml"
+    }
+  ],
+  "coverage_matrix": [
+    {
+      "source": "FR-001, FR-002, AC-001, AC-002",
+      "tasks": [
+        "TASK-002"
+      ],
+      "coverage": "QueryPlan input, defaults, derived planning values, CLI boundary, and input rejection detailed design"
+    },
+    {
+      "source": "FR-003, FR-004, AC-003, AC-004, MET-002",
+      "tasks": [
+        "TASK-003",
+        "TASK-007"
+      ],
+      "coverage": "candidate target, BaseProvider, provider scheduling, readiness, attribution, and provider-derived observability event sources detailed design"
+    },
+    {
+      "source": "FR-005, FR-011, AC-005, AC-011, MET-004, MET-006",
+      "tasks": [
+        "TASK-004",
+        "TASK-007"
+      ],
+      "coverage": "candidate mechanical validation, OpenClaw candidate evaluation, candidate normalization, rejection reason metrics, and OpenClaw pass-rate event sources detailed design"
+    },
+    {
+      "source": "FR-006, FR-007, AC-006, AC-007, MET-005",
+      "tasks": [
+        "TASK-005",
+        "TASK-007"
+      ],
+      "coverage": "batch retrieval, BaseRetrievalChannel, channel fallback, short batch, and channel effectiveness event sources detailed design"
+    },
+    {
+      "source": "FR-008, FR-009, FR-011, AC-008, AC-009, AC-011, MET-001, MET-003",
+      "tasks": [
+        "TASK-006",
+        "TASK-007"
+      ],
+      "coverage": "image acceptance, OpenClaw image evaluation, state machine, retry, full delivery, execution blocking, limited delivery, task result distribution, and accepted image achievement detailed design"
+    },
+    {
+      "source": "FR-010, FR-013, AC-010, AC-013, NFR-001..NFR-006",
+      "tasks": [
+        "TASK-007"
+      ],
+      "coverage": "delivery package directory/file layout, machine-readable manifest/status contract, policy guardrails, security, diagnostics, release verification, and automation consumption detailed design"
+    },
+    {
+      "source": "FR-012, AC-012",
+      "tasks": [
+        "TASK-008"
+      ],
+      "coverage": "readiness self-check aggregation after provider/channel/candidate OpenClaw/image OpenClaw/policy readiness contracts are detailed"
+    },
+    {
+      "source": "HLD architecture baseline and TECH-01",
+      "tasks": [
+        "TASK-001"
+      ],
+      "coverage": "Rust crate/module/domain/error/state/concurrency baseline detailed design"
+    },
+    {
+      "source": "all current-phase design tasks",
+      "tasks": [
+        "TASK-009"
+      ],
+      "coverage": "final documentation-only design acceptance review"
+    }
+  ],
+  "planning_gate_report": [
+    {
+      "gate": "source_readiness",
+      "status": "pass",
+      "evidence": "docs/PRD.md and docs/HLD.md inventoried"
+    },
+    {
+      "gate": "traceability",
+      "status": "pass",
+      "evidence": "tasks and coverage matrix cite PRD/HLD/AGENTS refs"
+    },
+    {
+      "gate": "rust_stack_readiness",
+      "status": "pass",
+      "evidence": "Rust CLI stack fixed; no Cargo skeleton yet recorded"
+    },
+    {
+      "gate": "control_flow_readiness",
+      "status": "pass",
+      "evidence": "runtime and state machine obligations assigned"
+    },
+    {
+      "gate": "data_flow_readiness",
+      "status": "pass",
+      "evidence": "QueryPlan, candidates, retrieval results, accepted images, readiness inputs, delivery evidence, and metric event sources assigned"
+    },
+    {
+      "gate": "technical_decision_readiness",
+      "status": "pass",
+      "evidence": "ADRs mapped to detailed design tasks"
+    },
+    {
+      "gate": "staged_review_readiness",
+      "status": "pass",
+      "evidence": "six required planning stages recorded"
+    },
+    {
+      "gate": "dag_soundness",
+      "status": "pass",
+      "evidence": "cycle_check pass and semantic edges recorded"
+    },
+    {
+      "gate": "parallel_safety",
+      "status": "pass",
+      "evidence": "parallel groups are limited and dependency-safe"
+    },
+    {
+      "gate": "task_fixture_readiness",
+      "status": "pass",
+      "evidence": "fixtures indexed for every task"
+    },
+    {
+      "gate": "spec_executor_contract",
+      "status": "pass",
+      "evidence": "spec.yaml pointer metadata planned for every task"
+    },
+    {
+      "gate": "spec_executor_repo_availability",
+      "status": "warning",
+      "evidence": "generated local artifacts require commit/push before remote spec-executor use"
+    },
+    {
+      "gate": "verify_runtime_readiness",
+      "status": "pass",
+      "evidence": "Python 3 fallback strategy recorded"
+    },
+    {
+      "gate": "quality_context_contract",
+      "status": "pass",
+      "evidence": "verify commands pass design-planning.json"
+    },
+    {
+      "gate": "design_doc_quality_gate",
+      "status": "pass",
+      "evidence": "target-side validator generated"
+    },
+    {
+      "gate": "design_acceptance_task",
+      "status": "pass",
+      "evidence": "TASK-009 depends on all detailed design tasks"
+    },
+    {
+      "gate": "no_starter_prompt_template",
+      "status": "pass",
+      "evidence": "only task-scoped fixtures are generated"
+    }
+  ],
+  "external_dependencies": [
+    {
+      "dependency": "OpenClaw production evaluation usage and responsibility boundary",
+      "status": "open",
+      "impact": "blocks production subjective evaluation details beyond port boundary"
+    },
+    {
+      "dependency": "default real image search provider",
+      "status": "open",
+      "impact": "blocks concrete default adapter and real-service validation matrix"
+    },
+    {
+      "dependency": "paid retrieval channel enablement boundary",
+      "status": "open",
+      "impact": "blocks exact paid-channel runtime enablement design"
+    },
+    {
+      "dependency": "authorization blocking details and robots/site-rule policy",
+      "status": "open",
+      "impact": "blocks exact policy outcomes for some sources"
+    }
+  ],
+  "open_questions": [
+    "Does a fourth retrieval channel exist, or was the constitution wording a mismatch with the three listed categories?",
+    "Should single QueryPlan maximum delivery count be constrained in MVP?",
+    "Should delivery results be grouped by authorization risk in MVP or only carry risk labels?",
+    "Which real image search provider is the first default provider for local real-service validation?"
+  ],
+  "required_fixes": []
+}

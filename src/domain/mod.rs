@@ -10,3 +10,4 @@ pub mod metrics;
 pub mod policy;
 pub mod query_plan;
 pub mod retrieval;
+pub mod search;

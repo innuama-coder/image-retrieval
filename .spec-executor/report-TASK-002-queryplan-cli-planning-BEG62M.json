@@ -1,0 +1,104 @@
+{
+  "deliverables": {
+    "aggregate": {
+      "failed": 0,
+      "passed": 2,
+      "total": 2,
+      "total_duration_ms": 58,
+      "verify_executed": 1,
+      "verify_passed": 1,
+      "warning_items": 0
+    },
+    "finished_at": "2026-06-20T14:41:18.841678805+00:00",
+    "items": [
+      {
+        "duration_ms": 58,
+        "existence": "present_directory",
+        "existence_detail": null,
+        "failure_detail": null,
+        "failure_reason": null,
+        "passed": true,
+        "path": "src",
+        "verify_command": "cargo test --all query_plan",
+        "verify_duration_ms": 57,
+        "verify_exit_code": 0,
+        "verify_signal": null,
+        "verify_stderr_tail": "    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.04s\n     Running unittests src/lib.rs (target/debug/deps/image_retrieval-8b23e91ca0ac56fc)\n     Running unittests src/main.rs (target/debug/deps/image_retrieval-a908fd64c05c4e06)\n     Running tests/domain_baseline_test.rs (target/debug/deps/domain_baseline_test-b993f0df2462546f)\n",
+        "verify_stdout_tail": "\nrunning 31 tests\ntest domain::query_plan::tests::candidate_target_for_five_images_is_100 ... ok\ntest domain::query_plan::tests::default_count_is_applied ... ok\ntest domain::query_plan::tests::content_constraints_preserved ... ok\ntest domain::query_plan::tests::clean_description_no_sensitive_warning ... ok\ntest domain::query_plan::tests::default_quality_tier_is_general ... ok\ntest domain::query_plan::tests::default_retry_limit_is_applied ... ok\ntest domain::query_plan::tests::default_required_count_is_1 ... ok\ntest domain::query_plan::tests::diagnostic_error_has_error_level ... ok\ntest domain::query_plan::tests::default_retry_limit_is_3 ... ok\ntest domain::query_plan::tests::diagnostic_info_records_default ... ok\ntest domain::query_plan::tests::four_images_derives_8_batch_target ... ok\ntest domain::query_plan::tests::diagnostic_warning_has_warning_level ... ok\ntest domain::query_plan::tests::max_attempts_equals_one_plus_retry_limit ... ok\ntest domain::query_plan::tests::large_count_warning_not_rejection ... ok\ntest domain::query_plan::tests::missing_description_rejected ... ok\ntest domain::query_plan::tests::outcome_diagnostics_returns_errors_for_rejected ... ok\ntest domain::query_plan::tests::outcome_diagnostics_returns_warnings_for_valid ... ok\ntest domain::query_plan::tests::output_preference_preserved ... ok\ntest domain::query_plan::tests::outcome_unwrap_panics_on_rejected - should panic ... ok\ntest domain::query_plan::tests::quality_tier_preserved_on_valid_input ... ok\ntest domain::query_plan::tests::retry_limit_exceeds_maximum_rejected ... ok\ntest domain::query_plan::tests::sensitive_api_key_in_description_warns ... ok\ntest domain::query_plan::tests::sensitive_bearer_token_in_description_warns ... ok\ntest domain::query_plan::tests::sensitive_content_in_constraints_warns ... ok\ntest domain::query_plan::tests::task_plan_derives_candidate_target_20x ... ok\ntest domain::query_plan::tests::task_plan_derives_candidate_target_for_single_image ... ok\ntest domain::query_plan::tests::task_plan_zero_count_saturates ... ok\ntest domain::query_plan::tests::three_images_derives_60_candidates ... ok\ntest domain::query_plan::tests::unknown_authorization_remains_default ... ok\ntest domain::query_plan::tests::valid_with_description_produces_valid_outcome ... ok\ntest domain::query_plan::tests::whitespace_only_description_rejected ... ok\n\ntest result: ok. 31 passed; 0 failed; 0 ignored; 0 measured; 34 filtered out; finished in 0.00s\n\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n\nrunning 2 tests\ntest full_query_plan_to_task_plan_lifecycle ... ok\ntest query_plan_input_round_trip ... ok\n\ntest result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 14 filtered out; finished in 0.00s\n\n",
+        "verify_timed_out": false,
+        "warnings": []
+      },
+      {
+        "duration_ms": 0,
+        "existence": "present_directory",
+        "existence_detail": null,
+        "failure_detail": null,
+        "failure_reason": null,
+        "passed": true,
+        "path": "tests",
+        "verify_command": null,
+        "verify_duration_ms": null,
+        "verify_exit_code": null,
+        "verify_signal": null,
+        "verify_stderr_tail": null,
+        "verify_stdout_tail": null,
+        "verify_timed_out": null,
+        "warnings": []
+      }
+    ],
+    "not_run_reason": null,
+    "started_at": "2026-06-20T14:41:18.783243554+00:00",
+    "verification": "ran"
+  },
+  "generated_at": "2026-06-20T14:41:18.781755554+00:00",
+  "merging": {
+    "attempted": false,
+    "base_branch": null,
+    "conflict": null,
+    "merge_commit_sha": null,
+    "merged_at": null,
+    "push_detail": null,
+    "push_status": "not_attempted",
+    "pushed": false,
+    "result": "skipped",
+    "skip_reason": "skipped",
+    "source_branch": "spec-exec/TASK-002-queryplan-cli-planning-BEG62M"
+  },
+  "metadata": {
+    "duration_ms": 316374,
+    "executor": "claude",
+    "finished_at": "2026-06-20T14:41:18.781755554+00:00",
+    "log_dir": "/var/lib/spec-execution-server/logs/a06067b8-5e12-471e-abd7-7b44fe6e0f1d/TASK-002-queryplan-cli-planning-BEG62M",
+    "mode": "worktree",
+    "repo_branch_base": "main",
+    "repo_branch_worktree": "spec-exec/TASK-002-queryplan-cli-planning-BEG62M",
+    "repo_url": "https://github.com/innuama-coder/image-retrieval.git",
+    "session_id": "TASK-002-queryplan-cli-planning-BEG62M",
+    "started_at": "2026-06-20T14:36:02.407452213+00:00",
+    "task_name": "TASK-002-queryplan-cli-planning",
+    "worktree_path": "/workspaces/.spec-executor-worktrees/TASK-002-queryplan-cli-planning-BEG62M"
+  },
+  "monitoring": {
+    "consecutive_escalate": 0,
+    "decision_done": 1,
+    "decision_escalate_normalized": 0,
+    "decision_fallback_used": 0,
+    "decision_nudge": 0,
+    "decision_timeout": 0,
+    "decision_total": 1,
+    "idle_timeout_hits": 2,
+    "last_decision_action": "done",
+    "last_decision_text": "Unchanged. Baked for 4m 22s, handoff table intact. IDLE. Confirmed done.",
+    "monitoring_finished_at": "2026-06-20T14:41:18.781755554+00:00",
+    "monitoring_started_at": "2026-06-20T14:36:23.675275918+00:00",
+    "nudge_count": 0,
+    "poll_count": 35
+  },
+  "schema_version": "spec-executor-report/2.0",
+  "spec_executor_version": "2.2.7",
+  "status": {
+    "failure_category": null,
+    "failure_detail": null,
+    "result": "passed"
+  }
+}

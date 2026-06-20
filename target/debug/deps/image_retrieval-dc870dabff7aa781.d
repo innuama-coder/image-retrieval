@@ -1,6 +1,6 @@
-/workspaces/.spec-executor-worktrees/TASK-001-rust-cli-foundation-JRJC82/target/debug/deps/image_retrieval-dc870dabff7aa781.d: src/main.rs
+/workspaces/.spec-executor-worktrees/TASK-002-queryplan-cli-planning-BEG62M/target/debug/deps/image_retrieval-dc870dabff7aa781.d: src/main.rs
 
-/workspaces/.spec-executor-worktrees/TASK-001-rust-cli-foundation-JRJC82/target/debug/deps/image_retrieval-dc870dabff7aa781: src/main.rs
+/workspaces/.spec-executor-worktrees/TASK-002-queryplan-cli-planning-BEG62M/target/debug/deps/image_retrieval-dc870dabff7aa781: src/main.rs
 
 src/main.rs:
 

@@ -140,8 +140,11 @@ test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fin
 
 ## Merging Result
 
-**Result:** — Skipped
+**Result:** ✓ Merged
 
-- **Reason:** `skipped`
-- **Worktree status:** `kept_for_manual_review`
+- **Source branch:** `spec-exec/TASK-003-base-provider-search-Q6AG2Q`
+- **Target branch:** `main`
+- **Merge commit:** `7c53b1bff3084a6e048bf2d69fa533d8858e7553`
+- **Merged at:** `2026-06-21T00:00:03.607044003+00:00`
+- **Push:** `pushed` to `origin`
 

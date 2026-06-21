@@ -50,8 +50,11 @@
 
 ## Merging Result
 
-**Result:** — Skipped
+**Result:** ✓ Merged
 
-- **Reason:** `skipped`
-- **Worktree status:** `kept_for_manual_review`
+- **Source branch:** `spec-exec/TASK-004-candidate-openclaw-quality-P875R4`
+- **Target branch:** `main`
+- **Merge commit:** `629e46e5a8e2809f46a4e8ff34815dc355c4546d`
+- **Merged at:** `2026-06-21T00:08:13.261684882+00:00`
+- **Push:** `pushed` to `origin`
 

@@ -1,6 +1,6 @@
-/workspaces/.spec-executor-worktrees/TASK-009-e2e-fixture-release-gates-ADCJ92/target/debug/deps/image_retrieval-1fa65a7bff34ed61.d: src/main.rs Cargo.toml
+/workspaces/.spec-executor-worktrees/TASK-011-production-real-service-validat-Q5DA88/target/debug/deps/image_retrieval-1fa65a7bff34ed61.d: src/main.rs Cargo.toml
 
-/workspaces/.spec-executor-worktrees/TASK-009-e2e-fixture-release-gates-ADCJ92/target/debug/deps/libimage_retrieval-1fa65a7bff34ed61.rmeta: src/main.rs Cargo.toml
+/workspaces/.spec-executor-worktrees/TASK-011-production-real-service-validat-Q5DA88/target/debug/deps/libimage_retrieval-1fa65a7bff34ed61.rmeta: src/main.rs Cargo.toml
 
 src/main.rs:
 Cargo.toml:

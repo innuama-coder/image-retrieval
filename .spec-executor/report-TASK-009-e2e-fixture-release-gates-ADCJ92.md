@@ -161,8 +161,11 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 
 ## Merging Result
 
-**Result:** — Skipped
+**Result:** ✓ Merged
 
-- **Reason:** `skipped`
-- **Worktree status:** `kept_for_manual_review`
+- **Source branch:** `spec-exec/TASK-009-e2e-fixture-release-gates-ADCJ92`
+- **Target branch:** `main`
+- **Merge commit:** `798cd19654a9d16cbf72d3b10447cc8080053032`
+- **Merged at:** `2026-06-21T01:06:58.702382426+00:00`
+- **Push:** `pushed` to `origin`
 

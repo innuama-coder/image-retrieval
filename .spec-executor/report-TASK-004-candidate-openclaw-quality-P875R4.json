@@ -1,0 +1,104 @@
+{
+  "deliverables": {
+    "aggregate": {
+      "failed": 0,
+      "passed": 2,
+      "total": 2,
+      "total_duration_ms": 54,
+      "verify_executed": 1,
+      "verify_passed": 1,
+      "warning_items": 0
+    },
+    "finished_at": "2026-06-21T00:08:03.478881669+00:00",
+    "items": [
+      {
+        "duration_ms": 54,
+        "existence": "present_directory",
+        "existence_detail": null,
+        "failure_detail": null,
+        "failure_reason": null,
+        "passed": true,
+        "path": "src",
+        "verify_command": "cargo test --all candidate_quality",
+        "verify_duration_ms": 54,
+        "verify_exit_code": 0,
+        "verify_signal": null,
+        "verify_stderr_tail": "    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.03s\n     Running unittests src/lib.rs (target/debug/deps/image_retrieval-8b23e91ca0ac56fc)\n     Running unittests src/main.rs (target/debug/deps/image_retrieval-a908fd64c05c4e06)\n     Running tests/candidate_quality_test.rs (target/debug/deps/candidate_quality_test-6d3d12fd1391208c)\n     Running tests/domain_baseline_test.rs (target/debug/deps/domain_baseline_test-b993f0df2462546f)\n     Running tests/search_integration_test.rs (target/debug/deps/search_integration_test-af82ba891d664743)\n",
+        "verify_stdout_tail": "\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 164 filtered out; finished in 0.00s\n\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n\nrunning 16 tests\ntest candidate_quality_acceptance_normalization ... ok\ntest candidate_quality_conclusion_all_variants_serialize ... ok\ntest candidate_quality_does_not_decide_final_delivery ... ok\ntest candidate_quality_empty_input_sequence_is_empty ... ok\ntest candidate_quality_duplicates_blocked_mechanically_not_by_openclaw ... ok\ntest candidate_quality_execution_blocking_fact_serialization ... ok\ntest candidate_quality_full_pipeline_integration ... ok\ntest candidate_quality_mechanical_evidence_serialization ... ok\ntest candidate_quality_only_approved_candidates_enter_sequence ... ok\ntest candidate_quality_mechanical_block_prevents_openclaw ... ok\ntest candidate_quality_openclaw_unavailable_execution_blocked ... ok\ntest candidate_quality_shortage_does_not_block_evaluation ... ok\ntest candidate_quality_unknown_authorization_is_not_mechanically_blocked ... ok\ntest candidate_quality_must_avoid_in_title_is_mechanically_blocked ... ok\ntest candidate_quality_rejected_and_uncertain_not_retrievable ... ok\ntest candidate_quality_reference_evidence_flows_to_evaluation_request ... ok\n\ntest result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 16 filtered out; finished in 0.00s\n\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 11 filtered out; finished in 0.00s\n\n",
+        "verify_timed_out": false,
+        "warnings": []
+      },
+      {
+        "duration_ms": 0,
+        "existence": "present_directory",
+        "existence_detail": null,
+        "failure_detail": null,
+        "failure_reason": null,
+        "passed": true,
+        "path": "tests",
+        "verify_command": null,
+        "verify_duration_ms": null,
+        "verify_exit_code": null,
+        "verify_signal": null,
+        "verify_stderr_tail": null,
+        "verify_stdout_tail": null,
+        "verify_timed_out": null,
+        "warnings": []
+      }
+    ],
+    "not_run_reason": null,
+    "started_at": "2026-06-21T00:08:03.424006503+00:00",
+    "verification": "ran"
+  },
+  "generated_at": "2026-06-21T00:08:03.423098794+00:00",
+  "merging": {
+    "attempted": false,
+    "base_branch": null,
+    "conflict": null,
+    "merge_commit_sha": null,
+    "merged_at": null,
+    "push_detail": null,
+    "push_status": "not_attempted",
+    "pushed": false,
+    "result": "skipped",
+    "skip_reason": "skipped",
+    "source_branch": "spec-exec/TASK-004-candidate-openclaw-quality-P875R4"
+  },
+  "metadata": {
+    "duration_ms": 381687,
+    "executor": "claude",
+    "finished_at": "2026-06-21T00:08:03.423098794+00:00",
+    "log_dir": "/var/lib/spec-execution-server/logs/d0719805-70cc-4a9c-81fa-8b998a3b3b2f/TASK-004-candidate-openclaw-quality-P875R4",
+    "mode": "worktree",
+    "repo_branch_base": "main",
+    "repo_branch_worktree": "spec-exec/TASK-004-candidate-openclaw-quality-P875R4",
+    "repo_url": "https://github.com/innuama-coder/image-retrieval.git",
+    "session_id": "TASK-004-candidate-openclaw-quality-P875R4",
+    "started_at": "2026-06-21T00:01:41.735541048+00:00",
+    "task_name": "TASK-004-candidate-openclaw-quality",
+    "worktree_path": "/workspaces/.spec-executor-worktrees/TASK-004-candidate-openclaw-quality-P875R4"
+  },
+  "monitoring": {
+    "consecutive_escalate": 0,
+    "decision_done": 1,
+    "decision_escalate_normalized": 0,
+    "decision_fallback_used": 0,
+    "decision_nudge": 0,
+    "decision_timeout": 0,
+    "decision_total": 1,
+    "idle_timeout_hits": 2,
+    "last_decision_action": "done",
+    "last_decision_text": "Cogitated for 5m 38s. Full handoff: 4 interfaces, blocking risk (trait-only). IDLE. Task complete.",
+    "monitoring_finished_at": "2026-06-21T00:08:03.423098794+00:00",
+    "monitoring_started_at": "2026-06-21T00:02:03.553653211+00:00",
+    "nudge_count": 0,
+    "poll_count": 43
+  },
+  "schema_version": "spec-executor-report/2.0",
+  "spec_executor_version": "2.2.7",
+  "status": {
+    "failure_category": null,
+    "failure_detail": null,
+    "result": "passed"
+  }
+}

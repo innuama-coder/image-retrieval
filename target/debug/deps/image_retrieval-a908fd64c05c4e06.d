@@ -1,6 +1,6 @@
-/workspaces/.spec-executor-worktrees/TASK-003-base-provider-search-Q6AG2Q/target/debug/deps/image_retrieval-a908fd64c05c4e06.d: src/main.rs
+/workspaces/.spec-executor-worktrees/TASK-004-candidate-openclaw-quality-P875R4/target/debug/deps/image_retrieval-a908fd64c05c4e06.d: src/main.rs
 
-/workspaces/.spec-executor-worktrees/TASK-003-base-provider-search-Q6AG2Q/target/debug/deps/image_retrieval-a908fd64c05c4e06: src/main.rs
+/workspaces/.spec-executor-worktrees/TASK-004-candidate-openclaw-quality-P875R4/target/debug/deps/image_retrieval-a908fd64c05c4e06: src/main.rs
 
 src/main.rs:
 

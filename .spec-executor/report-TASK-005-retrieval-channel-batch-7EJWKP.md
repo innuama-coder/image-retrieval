@@ -146,8 +146,11 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 11 filtered out; fin
 
 ## Merging Result
 
-**Result:** — Skipped
+**Result:** ✓ Merged
 
-- **Reason:** `skipped`
-- **Worktree status:** `kept_for_manual_review`
+- **Source branch:** `spec-exec/TASK-005-retrieval-channel-batch-7EJWKP`
+- **Target branch:** `main`
+- **Merge commit:** `fe5ea01ae53681489a43547c216fc83064991bb6`
+- **Merged at:** `2026-06-21T00:17:56.138142263+00:00`
+- **Push:** `pushed` to `origin`
 

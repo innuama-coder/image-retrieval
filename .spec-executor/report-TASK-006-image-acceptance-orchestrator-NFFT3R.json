@@ -1,0 +1,104 @@
+{
+  "deliverables": {
+    "aggregate": {
+      "failed": 0,
+      "passed": 2,
+      "total": 2,
+      "total_duration_ms": 117,
+      "verify_executed": 1,
+      "verify_passed": 1,
+      "warning_items": 0
+    },
+    "finished_at": "2026-06-21T00:31:28.870863417+00:00",
+    "items": [
+      {
+        "duration_ms": 116,
+        "existence": "present_directory",
+        "existence_detail": null,
+        "failure_detail": null,
+        "failure_reason": null,
+        "passed": true,
+        "path": "src",
+        "verify_command": "cargo test --all orchestrator",
+        "verify_duration_ms": 116,
+        "verify_exit_code": 0,
+        "verify_signal": null,
+        "verify_stderr_tail": "    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.08s\n     Running unittests src/lib.rs (target/debug/deps/image_retrieval-db1aa00adef82489)\n     Running unittests src/main.rs (target/debug/deps/image_retrieval-7bdb6b62adc47bdd)\n     Running tests/candidate_quality_test.rs (target/debug/deps/candidate_quality_test-5dfcff02a2c841b2)\n     Running tests/domain_baseline_test.rs (target/debug/deps/domain_baseline_test-afc2771da34eb48a)\n     Running tests/retrieval_test.rs (target/debug/deps/retrieval_test-e9209738b4974c74)\n     Running tests/search_integration_test.rs (target/debug/deps/search_integration_test-577b32a6abf6acc6)\n",
+        "verify_stdout_tail": "\nrunning 25 tests\ntest orchestrator::tests::attempt_counter_exhausted_after_max_retries ... ok\ntest orchestrator::tests::attempt_counter_zero_retry_limit ... ok\ntest orchestrator::tests::attempt_counter_new_starts_at_one ... ok\ntest orchestrator::tests::non_terminal_states_are_not_terminal ... ok\ntest orchestrator::tests::mechanically_blocked_images_are_rejected_not_qualified ... ok\ntest orchestrator::tests::openclaw_unavailable_enters_execution_blocked ... ok\ntest orchestrator::tests::execution_blocked_by_retrieval_fact ... ok\ntest orchestrator::tests::insufficient_triggers_retry ... ok\ntest orchestrator::tests::only_mechanical_and_openclaw_dual_pass_counts_as_qualified ... ok\ntest orchestrator::tests::openclaw_uncertain_does_not_count_as_qualified ... ok\ntest orchestrator::tests::full_delivery_when_qualified_images_meet_requirement ... ok\ntest orchestrator::tests::limited_delivery_after_all_retries_with_insufficient_accumulation ... ok\ntest orchestrator::tests::immediate_full_delivery_when_requirement_met_on_first_attempt ... ok\ntest orchestrator::tests::limited_delivery_when_insufficient_after_all_retries ... ok\ntest orchestrator::tests::full_attempt_count_and_retry_count_are_distinct ... ok\ntest orchestrator::tests::limited_delivery_can_be_zero_images ... ok\ntest orchestrator::tests::orchestrator_emits_task_outcome_event_on_terminal_state ... ok\ntest orchestrator::tests::qualified_images_accumulate_across_calls ... ok\ntest orchestrator::tests::record_retry_fails_when_exhausted ... ok\ntest orchestrator::tests::orchestrator_builds_diagnostic_with_items ... ok\ntest orchestrator::tests::retry_increments_both_counters ... ok\ntest orchestrator::tests::validate_and_create_orchestrator_rejects_empty_description ... ok\ntest orchestrator::tests::terminal_states_are_terminal ... ok\ntest orchestrator::tests::state_labels ... ok\ntest orchestrator::tests::validate_and_create_orchestrator_valid_input ... ok\n\ntest result: ok. 25 passed; 0 failed; 0 ignored; 0 measured; 253 filtered out; finished in 0.00s\n\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 16 filtered out; finished in 0.00s\n\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 16 filtered out; finished in 0.00s\n\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 38 filtered out; finished in 0.00s\n\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 11 filtered out; finished in 0.00s\n\n",
+        "verify_timed_out": false,
+        "warnings": []
+      },
+      {
+        "duration_ms": 0,
+        "existence": "present_directory",
+        "existence_detail": null,
+        "failure_detail": null,
+        "failure_reason": null,
+        "passed": true,
+        "path": "tests",
+        "verify_command": null,
+        "verify_duration_ms": null,
+        "verify_exit_code": null,
+        "verify_signal": null,
+        "verify_stderr_tail": null,
+        "verify_stdout_tail": null,
+        "verify_timed_out": null,
+        "warnings": []
+      }
+    ],
+    "not_run_reason": null,
+    "started_at": "2026-06-21T00:31:28.753759042+00:00",
+    "verification": "ran"
+  },
+  "generated_at": "2026-06-21T00:31:28.752448+00:00",
+  "merging": {
+    "attempted": false,
+    "base_branch": null,
+    "conflict": null,
+    "merge_commit_sha": null,
+    "merged_at": null,
+    "push_detail": null,
+    "push_status": "not_attempted",
+    "pushed": false,
+    "result": "skipped",
+    "skip_reason": "skipped",
+    "source_branch": "spec-exec/TASK-006-image-acceptance-orchestrator-NFFT3R"
+  },
+  "metadata": {
+    "duration_ms": 627426,
+    "executor": "claude",
+    "finished_at": "2026-06-21T00:31:28.752448+00:00",
+    "log_dir": "/var/lib/spec-execution-server/logs/b56e2491-4705-43c6-81bb-ed999b535faf/TASK-006-image-acceptance-orchestrator-NFFT3R",
+    "mode": "worktree",
+    "repo_branch_base": "main",
+    "repo_branch_worktree": "spec-exec/TASK-006-image-acceptance-orchestrator-NFFT3R",
+    "repo_url": "https://github.com/innuama-coder/image-retrieval.git",
+    "session_id": "TASK-006-image-acceptance-orchestrator-NFFT3R",
+    "started_at": "2026-06-21T00:21:01.325453502+00:00",
+    "task_name": "TASK-006-image-acceptance-orchestrator",
+    "worktree_path": "/workspaces/.spec-executor-worktrees/TASK-006-image-acceptance-orchestrator-NFFT3R"
+  },
+  "monitoring": {
+    "consecutive_escalate": 0,
+    "decision_done": 1,
+    "decision_escalate_normalized": 0,
+    "decision_fallback_used": 0,
+    "decision_nudge": 0,
+    "decision_timeout": 0,
+    "decision_total": 1,
+    "idle_timeout_hits": 2,
+    "last_decision_action": "done",
+    "last_decision_text": "Unchanged. Brewed 9m24s, all tests pass, handoff complete. IDLE. Confirmed done.",
+    "monitoring_finished_at": "2026-06-21T00:31:28.752448+00:00",
+    "monitoring_started_at": "2026-06-21T00:21:28.016093708+00:00",
+    "nudge_count": 0,
+    "poll_count": 73
+  },
+  "schema_version": "spec-executor-report/2.0",
+  "spec_executor_version": "2.2.7",
+  "status": {
+    "failure_category": null,
+    "failure_detail": null,
+    "result": "passed"
+  }
+}

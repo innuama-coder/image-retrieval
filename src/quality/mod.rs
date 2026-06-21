@@ -6,6 +6,7 @@
 //! References: PRD §校验与评价产品要求, HLD §Candidate Quality Gate / Image Acceptance Gate
 
 pub mod candidate;
+pub mod image;
 
 /// Re-export quality-related domain types for convenience.
 pub use crate::domain::candidate::CandidateDecision;
@@ -18,4 +19,12 @@ pub use candidate::{
     CandidateEvaluationRequest, CandidateMechanicalEvidence, CandidateQualityGate,
     CandidateQualityGateResult, CandidateQualitySummary, CandidateReferenceSignal,
     ExecutionBlockingFact,
+};
+
+// Re-export image quality gate public API
+pub use image::{
+    evaluate_images_with_conclusions, normalize_image_conclusion, normalize_image_conclusions,
+    validate_image_mechanical, ImageAcceptanceGate, ImageAcceptanceGateResult,
+    ImageAcceptanceSummary, ImageBlockingReason, ImageEvaluationConclusion, ImageEvaluationRequest,
+    ImageExecutionBlockingFact, ImageReferenceSignal,
 };

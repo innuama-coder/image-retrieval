@@ -50,8 +50,11 @@
 
 ## Merging Result
 
-**Result:** — Skipped
+**Result:** ✓ Merged
 
-- **Reason:** `skipped`
-- **Worktree status:** `kept_for_manual_review`
+- **Source branch:** `spec-exec/TASK-007-delivery-policy-observability-VX6ZRG`
+- **Target branch:** `main`
+- **Merge commit:** `8ff46ceea23cd5290a9ac1cf0ec59e8de3e58dd0`
+- **Merged at:** `2026-06-21T00:44:53.590557216+00:00`
+- **Push:** `pushed` to `origin`
 

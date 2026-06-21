@@ -161,8 +161,11 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 
 ## Merging Result
 
-**Result:** — Skipped
+**Result:** ✓ Merged
 
-- **Reason:** `skipped`
-- **Worktree status:** `kept_for_manual_review`
+- **Source branch:** `spec-exec/TASK-011-production-real-service-validat-Q5DA88`
+- **Target branch:** `main`
+- **Merge commit:** `b46625d437080ff5ddfaeac8df38f7b8eb04ec17`
+- **Merged at:** `2026-06-21T01:16:25.657356300+00:00`
+- **Push:** `pushed` to `origin`
 

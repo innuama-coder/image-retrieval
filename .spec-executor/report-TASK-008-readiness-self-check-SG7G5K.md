@@ -50,8 +50,11 @@
 
 ## Merging Result
 
-**Result:** — Skipped
+**Result:** ✓ Merged
 
-- **Reason:** `skipped`
-- **Worktree status:** `kept_for_manual_review`
+- **Source branch:** `spec-exec/TASK-008-readiness-self-check-SG7G5K`
+- **Target branch:** `main`
+- **Merge commit:** `ec0c03f8aa734c06375e2c6d26bd3cebec1aa9b0`
+- **Merged at:** `2026-06-21T00:54:04.587803679+00:00`
+- **Push:** `pushed` to `origin`
 

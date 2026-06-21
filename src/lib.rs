@@ -20,6 +20,7 @@
 pub mod domain;
 pub mod error;
 pub mod ports;
+pub mod search;
 
 // Downstream module placeholders — type definitions only, no production logic.
 pub mod delivery;

@@ -1,0 +1,106 @@
+{
+  "deliverables": {
+    "aggregate": {
+      "failed": 0,
+      "passed": 2,
+      "total": 2,
+      "total_duration_ms": 53,
+      "verify_executed": 1,
+      "verify_passed": 1,
+      "warning_items": 1
+    },
+    "finished_at": "2026-06-20T23:59:56.157715014+00:00",
+    "items": [
+      {
+        "duration_ms": 53,
+        "existence": "present_directory",
+        "existence_detail": null,
+        "failure_detail": null,
+        "failure_reason": null,
+        "passed": true,
+        "path": "src",
+        "verify_command": "cargo test --all search",
+        "verify_duration_ms": 52,
+        "verify_exit_code": 0,
+        "verify_signal": null,
+        "verify_stderr_tail": "    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.03s\n     Running unittests src/lib.rs (target/debug/deps/image_retrieval-8b23e91ca0ac56fc)\n     Running unittests src/main.rs (target/debug/deps/image_retrieval-a908fd64c05c4e06)\n     Running tests/domain_baseline_test.rs (target/debug/deps/domain_baseline_test-b993f0df2462546f)\n     Running tests/search_integration_test.rs (target/debug/deps/search_integration_test-af82ba891d664743)\n",
+        "verify_stdout_tail": "... ok\ntest search::fixture::tests::fixture_provider_basics ... ok\ntest search::fixture::tests::fixture_provider_custom_weight ... ok\ntest search::fixture::tests::fixture_provider_disabled ... ok\ntest search::fixture::tests::fixture_provider_not_ready ... ok\ntest search::fixture::tests::fixture_provider_does_not_leak_credentials ... ok\ntest search::fixture::tests::make_fixture_candidate_has_source_url ... ok\ntest search::fixture::tests::fixture_provider_returns_batches ... ok\ntest search::fixture::tests::ready_fixture_with_batches_works ... ok\ntest search::fixture::tests::make_fixture_batch_creates_unique_ids ... ok\ntest search::fixture::tests::ready_fixture_with_candidates_works ... ok\ntest search::registry::tests::build_weight_table_with_readiness_overrides ... ok\ntest search::registry::tests::disabled_provider_excluded_with_readiness_override ... ok\ntest search::registry::tests::empty_registry_has_no_providers ... ok\ntest search::registry::tests::equal_weight_default_yields_equal_entries ... ok\ntest search::registry::tests::has_available_providers_detects_empty ... ok\ntest search::registry::tests::iter_yields_all_registrations ... ok\ntest search::registry::tests::register_and_lookup ... ok\ntest search::registry::tests::register_overwrites_existing ... ok\ntest search::registry::tests::remove_provider ... ok\ntest search::registry::tests::total_weight_sums_correctly ... ok\ntest search::registry::tests::weight_table_only_includes_enabled_positive_weight ... ok\ntest search::registry::tests::weight_table_with_all_disabled_returns_empty ... ok\ntest search::scheduler::tests::candidate_shortage_not_blocking ... ok\ntest search::scheduler::tests::scheduler_all_disabled_providers_readiness_recorded ... ok\ntest search::scheduler::tests::provider_credentials_not_in_search_outcome ... ok\ntest search::scheduler::tests::scheduler_candidate_shortage_preserves_explanation ... ok\ntest search::scheduler::tests::scheduler_disabled_provider_not_used ... ok\ntest search::scheduler::tests::scheduler_deduplicates_by_source_url ... ok\ntest search::scheduler::tests::scheduler_multi_provider_weighted_selection ... ok\ntest search::scheduler::tests::scheduler_negative_weight_provider_excluded ... ok\ntest search::scheduler::tests::scheduler_not_ready_provider_excluded ... ok\ntest search::scheduler::tests::scheduler_multi_provider_equal_weight ... ok\ntest search::scheduler::tests::scheduler_no_providers_returns_shortage ... ok\ntest search::scheduler::tests::scheduler_requires_3_images_target_60 ... ok\ntest search::scheduler::tests::scheduler_zero_weight_provider_excluded ... ok\ntest search::scheduler::tests::scheduler_single_provider_reaches_target ... ok\ntest search::scheduler::tests::weighted_selection_picks_first_when_rng_zero ... ok\ntest search::scheduler::tests::weighted_selection_picks_second_when_rng_exceeds_first_weight ... ok\ntest search::scheduler::tests::search_outcome_provides_source_traceability ... ok\ntest search::scheduler::tests::weighted_selection_respects_proportional_distribution ... ok\n\ntest result: ok. 51 passed; 0 failed; 0 ignored; 0 measured; 65 filtered out; finished in 0.00s\n\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 16 filtered out; finished in 0.00s\n\n\nrunning 11 tests\ntest search_candidate_shortage_not_blocking_integration ... ok\ntest search_cross_provider_dedup_integration ... ok\ntest search_candidate_source_traceability_integration ... ok\ntest search_abnormal_weight_providers_diagnosed_and_excluded ... ok\ntest search_multi_batch_exhaustion_integration ... ok\ntest search_multi_provider_weighted_scheduling_integration ... ok\ntest search_equal_default_weight_integration ... ok\ntest search_no_credentials_in_search_evidence ... ok\ntest search_target_for_3_images_is_60 ... ok\ntest search_readiness_summary_covers_all_registered_providers ... ok\ntest search_outcome_met002_evidence ... ok\n\ntest result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n",
+        "verify_timed_out": false,
+        "warnings": [
+          "verify_truncated_output"
+        ]
+      },
+      {
+        "duration_ms": 0,
+        "existence": "present_directory",
+        "existence_detail": null,
+        "failure_detail": null,
+        "failure_reason": null,
+        "passed": true,
+        "path": "tests",
+        "verify_command": null,
+        "verify_duration_ms": null,
+        "verify_exit_code": null,
+        "verify_signal": null,
+        "verify_stderr_tail": null,
+        "verify_stdout_tail": null,
+        "verify_timed_out": null,
+        "warnings": []
+      }
+    ],
+    "not_run_reason": null,
+    "started_at": "2026-06-20T23:59:56.104330014+00:00",
+    "verification": "ran"
+  },
+  "generated_at": "2026-06-20T23:59:56.103442597+00:00",
+  "merging": {
+    "attempted": false,
+    "base_branch": null,
+    "conflict": null,
+    "merge_commit_sha": null,
+    "merged_at": null,
+    "push_detail": null,
+    "push_status": "not_attempted",
+    "pushed": false,
+    "result": "skipped",
+    "skip_reason": "skipped",
+    "source_branch": "spec-exec/TASK-003-base-provider-search-Q6AG2Q"
+  },
+  "metadata": {
+    "duration_ms": 422572,
+    "executor": "claude",
+    "finished_at": "2026-06-20T23:59:56.103442597+00:00",
+    "log_dir": "/var/lib/spec-execution-server/logs/259223c6-2f22-4306-970c-6d811051cd24/TASK-003-base-provider-search-Q6AG2Q",
+    "mode": "worktree",
+    "repo_branch_base": "main",
+    "repo_branch_worktree": "spec-exec/TASK-003-base-provider-search-Q6AG2Q",
+    "repo_url": "https://github.com/innuama-coder/image-retrieval.git",
+    "session_id": "TASK-003-base-provider-search-Q6AG2Q",
+    "started_at": "2026-06-20T23:52:53.530529012+00:00",
+    "task_name": "TASK-003-base-provider-search",
+    "worktree_path": "/workspaces/.spec-executor-worktrees/TASK-003-base-provider-search-Q6AG2Q"
+  },
+  "monitoring": {
+    "consecutive_escalate": 0,
+    "decision_done": 1,
+    "decision_escalate_normalized": 0,
+    "decision_fallback_used": 0,
+    "decision_nudge": 0,
+    "decision_timeout": 0,
+    "decision_total": 1,
+    "idle_timeout_hits": 1,
+    "last_decision_action": "done",
+    "last_decision_text": "Cooked for 6m 24s. Full handoff: 4 residual risks mapped to downstream tasks. IDLE. Task complete.",
+    "monitoring_finished_at": "2026-06-20T23:59:56.103442597+00:00",
+    "monitoring_started_at": "2026-06-20T23:53:15.214506175+00:00",
+    "nudge_count": 0,
+    "poll_count": 49
+  },
+  "schema_version": "spec-executor-report/2.0",
+  "spec_executor_version": "2.2.7",
+  "status": {
+    "failure_category": null,
+    "failure_detail": null,
+    "result": "passed"
+  }
+}

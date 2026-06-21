@@ -168,8 +168,11 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 
 ## Merging Result
 
-**Result:** — Skipped
+**Result:** ✓ Merged
 
-- **Reason:** `skipped`
-- **Worktree status:** `kept_for_manual_review`
+- **Source branch:** `spec-exec/TASK-010-mvp-delivery-acceptance-Y6AQ0P`
+- **Target branch:** `main`
+- **Merge commit:** `39cedea05c04fb137e2b1da85a41972db97cf1a2`
+- **Merged at:** `2026-06-21T01:22:45.493979670+00:00`
+- **Push:** `pushed` to `origin`
 

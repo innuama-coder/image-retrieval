@@ -1,6 +1,6 @@
-/workspaces/.spec-executor-worktrees/TASK-007-delivery-policy-observability-VX6ZRG/target/debug/deps/search_integration_test-90d64a69b4750ebb.d: tests/search_integration_test.rs Cargo.toml
+/workspaces/.spec-executor-worktrees/TASK-008-readiness-self-check-SG7G5K/target/debug/deps/search_integration_test-90d64a69b4750ebb.d: tests/search_integration_test.rs Cargo.toml
 
-/workspaces/.spec-executor-worktrees/TASK-007-delivery-policy-observability-VX6ZRG/target/debug/deps/libsearch_integration_test-90d64a69b4750ebb.rmeta: tests/search_integration_test.rs Cargo.toml
+/workspaces/.spec-executor-worktrees/TASK-008-readiness-self-check-SG7G5K/target/debug/deps/libsearch_integration_test-90d64a69b4750ebb.rmeta: tests/search_integration_test.rs Cargo.toml
 
 tests/search_integration_test.rs:
 Cargo.toml:

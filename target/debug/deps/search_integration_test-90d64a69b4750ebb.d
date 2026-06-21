@@ -1,6 +1,6 @@
-/workspaces/.spec-executor-worktrees/TASK-005-retrieval-channel-batch-7EJWKP/target/debug/deps/search_integration_test-90d64a69b4750ebb.d: tests/search_integration_test.rs Cargo.toml
+/workspaces/.spec-executor-worktrees/TASK-006-image-acceptance-orchestrator-NFFT3R/target/debug/deps/search_integration_test-90d64a69b4750ebb.d: tests/search_integration_test.rs Cargo.toml
 
-/workspaces/.spec-executor-worktrees/TASK-005-retrieval-channel-batch-7EJWKP/target/debug/deps/libsearch_integration_test-90d64a69b4750ebb.rmeta: tests/search_integration_test.rs Cargo.toml
+/workspaces/.spec-executor-worktrees/TASK-006-image-acceptance-orchestrator-NFFT3R/target/debug/deps/libsearch_integration_test-90d64a69b4750ebb.rmeta: tests/search_integration_test.rs Cargo.toml
 
 tests/search_integration_test.rs:
 Cargo.toml:

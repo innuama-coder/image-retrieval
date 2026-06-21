@@ -1,0 +1,123 @@
+{
+  "deliverables": {
+    "aggregate": {
+      "failed": 0,
+      "passed": 3,
+      "total": 3,
+      "total_duration_ms": 354,
+      "verify_executed": 1,
+      "verify_passed": 1,
+      "warning_items": 1
+    },
+    "finished_at": "2026-06-21T01:06:38.026904083+00:00",
+    "items": [
+      {
+        "duration_ms": 353,
+        "existence": "present_directory",
+        "existence_detail": null,
+        "failure_detail": null,
+        "failure_reason": null,
+        "passed": true,
+        "path": "tests",
+        "verify_command": "cargo test --all",
+        "verify_duration_ms": 353,
+        "verify_exit_code": 0,
+        "verify_signal": null,
+        "verify_stderr_tail": "    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.06s\n     Running unittests src/lib.rs (target/debug/deps/image_retrieval-db1aa00adef82489)\n     Running unittests src/main.rs (target/debug/deps/image_retrieval-7bdb6b62adc47bdd)\n     Running tests/candidate_quality_test.rs (target/debug/deps/candidate_quality_test-5dfcff02a2c841b2)\n     Running tests/domain_baseline_test.rs (target/debug/deps/domain_baseline_test-afc2771da34eb48a)\n     Running tests/e2e_fixture_test.rs (target/debug/deps/e2e_fixture_test-e752bafe27e7a2e3)\n     Running tests/retrieval_test.rs (target/debug/deps/retrieval_test-e9209738b4974c74)\n     Running tests/search_integration_test.rs (target/debug/deps/search_integration_test-577b32a6abf6acc6)\n   Doc-tests image_retrieval\n",
+        "verify_stdout_tail": "e2e_orchestrator_all_terminal_states ... ok\ntest e2e_retrieval_batch_exact_count_not_short ... ok\ntest e2e_search_outcome_provides_source_traceability ... ok\ntest e2e_retrieval_batch_short_batch_detection ... ok\ntest e2e_retrieval_failure_access_restricted_no_fallback ... ok\ntest e2e_search_scheduler_empty_registry_produces_shortage ... ok\ntest e2e_provider_registry_mixed_readiness ... ok\ntest e2e_search_scheduler_with_fixture_providers ... ok\ntest e2e_self_check_input_rejected_produces_blocked ... ok\ntest e2e_self_check_no_channels_blocked ... ok\ntest e2e_sanitize_removes_credentials_from_log_text ... ok\ntest e2e_full_delivery_complete_pipeline ... ok\ntest e2e_self_check_does_not_produce_delivery_artifacts ... ok\ntest e2e_self_check_openclaw_unavailable_produces_blocked ... ok\ntest e2e_execution_blocked_openclaw_unavailable ... ok\ntest e2e_self_check_paid_channel_unconfirmed_blocked ... ok\ntest e2e_self_check_provider_missing_credentials_blocked ... ok\ntest e2e_limited_delivery_zero_images_all_rejected ... ok\ntest e2e_sensitive_info_not_in_delivery_output ... ok\n\ntest result: ok. 48 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n\nrunning 38 tests\ntest ac006_batch_target_for_1_image_is_2 ... ok\ntest ac006_batch_target_for_3_images_is_6 ... ok\ntest ac006_batch_target_for_4_images_is_8 ... ok\ntest channel_readiness_display_values ... ok\ntest ac006_batch_exact_target_formed ... ok\ntest empty_sequence_produces_empty_short_batch ... ok\ntest ac006_batch_takes_no_more_than_target ... ok\ntest executor_empty_batch_returns_execution_blocked ... ok\ntest ac007_access_restriction_not_bypassed_by_upgrading_channel ... ok\ntest ac007_access_restricted_blocks_fallback ... ok\ntest execution_blocked_candidates_never_enter_batch ... ok\ntest batch_carries_urls_for_retrieval ... ok\ntest executor_all_channels_exhausted_no_success ... ok\ntest ac007_normal_failure_allows_fallback ... ok\ntest executor_partial_success_stops_fallback ... ok\ntest fixture_channel_all_readiness_states ... ok\ntest executor_single_channel_disabled_produces_execution_blocked ... ok\ntest fallback_fact_paid_requires_confirmation_flag ... ok\ntest fallback_fact_terminal_when_paid_fails ... ok\ntest fixture_channel_all_success ... ok\ntest fixture_channel_mixed_results ... ok\ntest fixture_channel_preserves_tier ... ok\ntest fixture_channel_unprogrammed_fails ... ok\ntest paid_channel_not_silently_used ... ok\ntest paid_channel_readiness_reports_paid_unconfirmed ... ok\ntest paid_channel_when_ready_is_usable ... ok\ntest readiness_summary_reports_all_states ... ok\ntest retrieval_failure_category_allows_fallback_flag ... ok\ntest rejected_candidates_never_enter_batch ... ok\ntest retrieval_result_candidate_id_accessor ... ok\ntest short_batch_does_not_infinite_backfill ... ok\ntest short_batch_formed_when_fewer_candidates ... ok\ntest uncertain_candidates_never_enter_batch ... ok\ntest web_fetch_channel_disabled_readiness_fails ... ok\ntest web_fetch_channel_fallback_fact ... ok\ntest web_fetch_channel_has_correct_tier ... ok\ntest web_fetch_channel_readiness_ok_by_default ... ok\ntest web_fetch_channel_missing_url_is_failure ... ok\n\ntest result: ok. 38 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n\nrunning 11 tests\ntest search_cross_provider_dedup_integration ... ok\ntest search_candidate_shortage_not_blocking_integration ... ok\ntest search_candidate_source_traceability_integration ... ok\ntest search_abnormal_weight_providers_diagnosed_and_excluded ... ok\ntest search_multi_batch_exhaustion_integration ... ok\ntest search_equal_default_weight_integration ... ok\ntest search_outcome_met002_evidence ... ok\ntest search_no_credentials_in_search_evidence ... ok\ntest search_target_for_3_images_is_60 ... ok\ntest search_multi_provider_weighted_scheduling_integration ... ok\ntest search_readiness_summary_covers_all_registered_providers ... ok\n\ntest result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n",
+        "verify_timed_out": false,
+        "warnings": [
+          "verify_truncated_output"
+        ]
+      },
+      {
+        "duration_ms": 0,
+        "existence": "present_directory",
+        "existence_detail": null,
+        "failure_detail": null,
+        "failure_reason": null,
+        "passed": true,
+        "path": "src",
+        "verify_command": null,
+        "verify_duration_ms": null,
+        "verify_exit_code": null,
+        "verify_signal": null,
+        "verify_stderr_tail": null,
+        "verify_stdout_tail": null,
+        "verify_timed_out": null,
+        "warnings": []
+      },
+      {
+        "duration_ms": 0,
+        "existence": "present_file",
+        "existence_detail": null,
+        "failure_detail": null,
+        "failure_reason": null,
+        "passed": true,
+        "path": "README.md",
+        "verify_command": null,
+        "verify_duration_ms": null,
+        "verify_exit_code": null,
+        "verify_signal": null,
+        "verify_stderr_tail": null,
+        "verify_stdout_tail": null,
+        "verify_timed_out": null,
+        "warnings": []
+      }
+    ],
+    "not_run_reason": null,
+    "started_at": "2026-06-21T01:06:37.672723375+00:00",
+    "verification": "ran"
+  },
+  "generated_at": "2026-06-21T01:06:37.671776291+00:00",
+  "merging": {
+    "attempted": false,
+    "base_branch": null,
+    "conflict": null,
+    "merge_commit_sha": null,
+    "merged_at": null,
+    "push_detail": null,
+    "push_status": "not_attempted",
+    "pushed": false,
+    "result": "skipped",
+    "skip_reason": "skipped",
+    "source_branch": "spec-exec/TASK-009-e2e-fixture-release-gates-ADCJ92"
+  },
+  "metadata": {
+    "duration_ms": 580351,
+    "executor": "claude",
+    "finished_at": "2026-06-21T01:06:37.671776291+00:00",
+    "log_dir": "/var/lib/spec-execution-server/logs/67035b11-9677-44c2-b9a8-6b65cd79c001/TASK-009-e2e-fixture-release-gates-ADCJ92",
+    "mode": "worktree",
+    "repo_branch_base": "main",
+    "repo_branch_worktree": "spec-exec/TASK-009-e2e-fixture-release-gates-ADCJ92",
+    "repo_url": "https://github.com/innuama-coder/image-retrieval.git",
+    "session_id": "TASK-009-e2e-fixture-release-gates-ADCJ92",
+    "started_at": "2026-06-21T00:56:57.320484342+00:00",
+    "task_name": "TASK-009-e2e-fixture-release-gates",
+    "worktree_path": "/workspaces/.spec-executor-worktrees/TASK-009-e2e-fixture-release-gates-ADCJ92"
+  },
+  "monitoring": {
+    "consecutive_escalate": 0,
+    "decision_done": 1,
+    "decision_escalate_normalized": 0,
+    "decision_fallback_used": 0,
+    "decision_nudge": 0,
+    "decision_timeout": 0,
+    "decision_total": 1,
+    "idle_timeout_hits": 2,
+    "last_decision_action": "done",
+    "last_decision_text": "Unchanged. Cogitated 8m41s, all gates documented, IDLE. Confirmed done.",
+    "monitoring_finished_at": "2026-06-21T01:06:37.671776291+00:00",
+    "monitoring_started_at": "2026-06-21T00:57:24.489622841+00:00",
+    "nudge_count": 0,
+    "poll_count": 67
+  },
+  "schema_version": "spec-executor-report/2.0",
+  "spec_executor_version": "2.2.7",
+  "status": {
+    "failure_category": null,
+    "failure_detail": null,
+    "result": "passed"
+  }
+}

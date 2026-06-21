@@ -1,6 +1,6 @@
-/workspaces/.spec-executor-worktrees/TASK-008-readiness-self-check-SG7G5K/target/debug/deps/image_retrieval-025a3b3442bf497f.d: src/main.rs Cargo.toml
+/workspaces/.spec-executor-worktrees/TASK-009-e2e-fixture-release-gates-ADCJ92/target/debug/deps/image_retrieval-025a3b3442bf497f.d: src/main.rs Cargo.toml
 
-/workspaces/.spec-executor-worktrees/TASK-008-readiness-self-check-SG7G5K/target/debug/deps/libimage_retrieval-025a3b3442bf497f.rmeta: src/main.rs Cargo.toml
+/workspaces/.spec-executor-worktrees/TASK-009-e2e-fixture-release-gates-ADCJ92/target/debug/deps/libimage_retrieval-025a3b3442bf497f.rmeta: src/main.rs Cargo.toml
 
 src/main.rs:
 Cargo.toml:

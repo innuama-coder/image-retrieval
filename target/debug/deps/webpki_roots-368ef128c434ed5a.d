@@ -1,7 +1,7 @@
-/workspaces/.spec-executor-worktrees/TASK-007-delivery-policy-observability-VX6ZRG/target/debug/deps/webpki_roots-368ef128c434ed5a.d: /opt/rust/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/webpki-roots-1.0.8/src/lib.rs
+/workspaces/.spec-executor-worktrees/TASK-008-readiness-self-check-SG7G5K/target/debug/deps/webpki_roots-368ef128c434ed5a.d: /opt/rust/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/webpki-roots-1.0.8/src/lib.rs
 
-/workspaces/.spec-executor-worktrees/TASK-007-delivery-policy-observability-VX6ZRG/target/debug/deps/libwebpki_roots-368ef128c434ed5a.rlib: /opt/rust/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/webpki-roots-1.0.8/src/lib.rs
+/workspaces/.spec-executor-worktrees/TASK-008-readiness-self-check-SG7G5K/target/debug/deps/libwebpki_roots-368ef128c434ed5a.rlib: /opt/rust/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/webpki-roots-1.0.8/src/lib.rs
 
-/workspaces/.spec-executor-worktrees/TASK-007-delivery-policy-observability-VX6ZRG/target/debug/deps/libwebpki_roots-368ef128c434ed5a.rmeta: /opt/rust/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/webpki-roots-1.0.8/src/lib.rs
+/workspaces/.spec-executor-worktrees/TASK-008-readiness-self-check-SG7G5K/target/debug/deps/libwebpki_roots-368ef128c434ed5a.rmeta: /opt/rust/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/webpki-roots-1.0.8/src/lib.rs
 
 /opt/rust/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/webpki-roots-1.0.8/src/lib.rs:

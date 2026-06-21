@@ -177,7 +177,7 @@ pub struct DiagnosticItem {
 }
 
 /// Severity levels for diagnostic items.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum DiagnosticLevel {
     /// Informational — normal operation.
     Info,

@@ -1,6 +1,6 @@
-/workspaces/.spec-executor-worktrees/TASK-011-production-real-service-validat-Q5DA88/target/debug/deps/candidate_quality_test-702a37520f072dde.d: tests/candidate_quality_test.rs Cargo.toml
+/workspaces/.spec-executor-worktrees/TASK-010-mvp-delivery-acceptance-Y6AQ0P/target/debug/deps/candidate_quality_test-702a37520f072dde.d: tests/candidate_quality_test.rs Cargo.toml
 
-/workspaces/.spec-executor-worktrees/TASK-011-production-real-service-validat-Q5DA88/target/debug/deps/libcandidate_quality_test-702a37520f072dde.rmeta: tests/candidate_quality_test.rs Cargo.toml
+/workspaces/.spec-executor-worktrees/TASK-010-mvp-delivery-acceptance-Y6AQ0P/target/debug/deps/libcandidate_quality_test-702a37520f072dde.rmeta: tests/candidate_quality_test.rs Cargo.toml
 
 tests/candidate_quality_test.rs:
 Cargo.toml:

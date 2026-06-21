@@ -50,8 +50,11 @@
 
 ## Merging Result
 
-**Result:** — Skipped
+**Result:** ✓ Merged
 
-- **Reason:** `skipped`
-- **Worktree status:** `kept_for_manual_review`
+- **Source branch:** `spec-exec/TASK-006-image-acceptance-orchestrator-NFFT3R`
+- **Target branch:** `main`
+- **Merge commit:** `60f1c3a0b05c6700528c3463311599d9bc112541`
+- **Merged at:** `2026-06-21T00:31:46.651063134+00:00`
+- **Push:** `pushed` to `origin`
 

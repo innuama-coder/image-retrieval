@@ -210,7 +210,7 @@ pub fn validate_candidate_mechanical(
     let mut reference: Vec<CandidateReferenceSignal> = Vec::new();
 
     // 1. Obviously invalid — source URL
-    let url = candidate.source_url.trim();
+    let url = candidate.image_url.trim();
     if url.is_empty() {
         blocking.push(CandidateBlockingReason::ObviouslyInvalid {
             detail: "source URL is empty".into(),
@@ -267,7 +267,7 @@ pub fn validate_candidate_mechanical(
     }
 
     // 4. Low quality — dimensions below absolute minimums
-    if let Some(ref dims) = candidate.dimensions {
+    if let Some(dims) = candidate.dimensions() {
         const MIN_WIDTH: u32 = 2;
         const MIN_HEIGHT: u32 = 2;
         if dims.width < MIN_WIDTH || dims.height < MIN_HEIGHT {
@@ -294,7 +294,7 @@ pub fn validate_candidate_mechanical(
     }
 
     // 5. Provider confidence reference — based on presence/absence of metadata
-    if candidate.title.is_none() && candidate.page_url.is_none() {
+    if candidate.title.is_none() && candidate.source_page_url.is_none() {
         reference.push(CandidateReferenceSignal::ProviderConfidence {
             note: "candidate has no title or page URL — provider confidence may be low".into(),
         });
@@ -316,14 +316,30 @@ mod tests {
     use crate::domain::candidate::{CandidateId, ImageDimensions, ProviderId};
 
     fn make_candidate(id: &str, url: &str, title: Option<&str>) -> CandidateRecord {
+        let cid = CandidateId::new(id);
         CandidateRecord {
-            id: CandidateId::new(id),
+            candidate_id: cid.clone(),
+            query_plan_id: "qp-test".into(),
             provider_id: ProviderId::new("test-provider"),
-            source_url: url.into(),
+            provider_kind: "fixture".into(),
+            search_request_id: "sr-test".into(),
+            search_round: 1,
+            provider_rank: 1,
+            global_rank_hint: None,
+            image_url: url.into(),
+            source_page_url: None,
             thumbnail_url: None,
             title: title.map(|s| s.into()),
-            page_url: None,
-            dimensions: None,
+            snippet: None,
+            width: None,
+            height: None,
+            mime_type: None,
+            license_hint: None,
+            attribution: None,
+            dedupe_key: CandidateRecord::build_dedupe_key(url),
+            origin_candidate_ids: vec![cid],
+            provenance: crate::domain::candidate::CandidateProvenance::new(1, "test", 1, 1),
+            normalization_warnings: Vec::new(),
         }
     }
 
@@ -334,14 +350,30 @@ mod tests {
         width: u32,
         height: u32,
     ) -> CandidateRecord {
+        let cid = CandidateId::new(id);
         CandidateRecord {
-            id: CandidateId::new(id),
+            candidate_id: cid.clone(),
+            query_plan_id: "qp-test".into(),
             provider_id: ProviderId::new("test-provider"),
-            source_url: url.into(),
+            provider_kind: "fixture".into(),
+            search_request_id: "sr-test".into(),
+            search_round: 1,
+            provider_rank: 1,
+            global_rank_hint: None,
+            image_url: url.into(),
+            source_page_url: None,
             thumbnail_url: None,
             title: title.map(|s| s.into()),
-            page_url: None,
-            dimensions: Some(ImageDimensions { width, height }),
+            snippet: None,
+            width: Some(width),
+            height: Some(height),
+            mime_type: None,
+            license_hint: None,
+            attribution: None,
+            dedupe_key: CandidateRecord::build_dedupe_key(url),
+            origin_candidate_ids: vec![cid],
+            provenance: crate::domain::candidate::CandidateProvenance::new(1, "test", 1, 1),
+            normalization_warnings: Vec::new(),
         }
     }
 
@@ -771,15 +803,12 @@ mod tests {
     #[test]
     fn multiple_blocking_reasons_can_coexist() {
         // Empty URL + must_avoid in title
-        let c = CandidateRecord {
-            id: CandidateId::new("c15"),
-            provider_id: ProviderId::new("test-provider"),
-            source_url: "".into(),
-            thumbnail_url: None,
-            title: Some("city scape".into()),
-            page_url: None,
-            dimensions: None,
-        };
+        let mut c = CandidateRecord::minimal(
+            CandidateId::new("c15"),
+            ProviderId::new("test-provider"),
+            "",
+        );
+        c.title = Some("city scape".into());
         let seen = HashSet::new();
         let constraints = ContentConstraints {
             must_include: vec![],

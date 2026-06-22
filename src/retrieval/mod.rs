@@ -352,15 +352,7 @@ mod tests {
 
     fn make_accepted(id: &str, url: &str, priority: u32) -> CandidateDecision {
         CandidateDecision::Accepted {
-            candidate: CandidateRecord {
-                id: CandidateId::new(id),
-                provider_id: ProviderId::new("test"),
-                source_url: url.to_string(),
-                thumbnail_url: None,
-                title: None,
-                page_url: None,
-                dimensions: None,
-            },
+            candidate: CandidateRecord::minimal(CandidateId::new(id), ProviderId::new("test"), url),
             priority,
         }
     }

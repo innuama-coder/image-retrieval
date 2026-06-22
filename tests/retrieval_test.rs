@@ -31,15 +31,7 @@ use image_retrieval::retrieval::{
 
 fn make_accepted(id: &str, url: &str, priority: u32) -> CandidateDecision {
     CandidateDecision::Accepted {
-        candidate: CandidateRecord {
-            id: CandidateId::new(id),
-            provider_id: ProviderId::new("test"),
-            source_url: url.to_string(),
-            thumbnail_url: None,
-            title: None,
-            page_url: None,
-            dimensions: None,
-        },
+        candidate: CandidateRecord::minimal(CandidateId::new(id), ProviderId::new("test"), url),
         priority,
     }
 }
@@ -167,15 +159,11 @@ fn rejected_candidates_never_enter_batch() {
     let decisions = vec![
         make_accepted("good", "https://example.com/good.jpg", 5),
         CandidateDecision::Rejected {
-            candidate: CandidateRecord {
-                id: CandidateId::new("bad"),
-                provider_id: ProviderId::new("test"),
-                source_url: "https://example.com/bad.jpg".into(),
-                thumbnail_url: None,
-                title: None,
-                page_url: None,
-                dimensions: None,
-            },
+            candidate: CandidateRecord::minimal(
+                CandidateId::new("bad"),
+                ProviderId::new("test"),
+                "https://example.com/bad.jpg",
+            ),
             reason: "low quality".into(),
         },
         make_accepted("also-good", "https://example.com/also.jpg", 3),
@@ -195,15 +183,11 @@ fn uncertain_candidates_never_enter_batch() {
     let decisions = vec![
         make_accepted("yes", "https://example.com/yes.jpg", 3),
         CandidateDecision::Uncertain {
-            candidate: CandidateRecord {
-                id: CandidateId::new("maybe"),
-                provider_id: ProviderId::new("test"),
-                source_url: "https://example.com/maybe.jpg".into(),
-                thumbnail_url: None,
-                title: None,
-                page_url: None,
-                dimensions: None,
-            },
+            candidate: CandidateRecord::minimal(
+                CandidateId::new("maybe"),
+                ProviderId::new("test"),
+                "https://example.com/maybe.jpg",
+            ),
             reason: "ambiguous".into(),
         },
     ];
@@ -219,15 +203,11 @@ fn execution_blocked_candidates_never_enter_batch() {
     let decisions = vec![
         make_accepted("ok", "https://example.com/ok.jpg", 5),
         CandidateDecision::ExecutionBlocked {
-            candidate: CandidateRecord {
-                id: CandidateId::new("blocked"),
-                provider_id: ProviderId::new("test"),
-                source_url: "https://example.com/blocked.jpg".into(),
-                thumbnail_url: None,
-                title: None,
-                page_url: None,
-                dimensions: None,
-            },
+            candidate: CandidateRecord::minimal(
+                CandidateId::new("blocked"),
+                ProviderId::new("test"),
+                "https://example.com/blocked.jpg",
+            ),
             reason: "OpenClaw unavailable".into(),
         },
     ];

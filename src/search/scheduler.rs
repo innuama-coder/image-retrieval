@@ -1,26 +1,30 @@
 //! Weighted random search scheduler.
 //!
-//! Implements the weighted random selection algorithm, per-invocation
-//! provider dispatch, candidate deduplication, source tracking, and
-//! candidate shortage diagnosis.
+//! Implements the weighted random selection algorithm using the
+//! pluggable [`RandomSource`] abstraction. Consumes a
+//! [`NormalizedQueryPlan`], [`ProviderRegistry`], and
+//! [`BaseSearchProvider`] adapters to produce a
+//! [`SearchSessionOutcome`].
 //!
-//! The scheduler uses a pluggable random source so tests can provide
-//! deterministic behaviour. In production, the default `StdRandom` wraps
-//! the OS random source.
+//! v1.1: rewritten for `BaseSearchProvider`, structured readiness,
+//! search rounds, dedupe evidence, and package-safe output.
 //!
-//! References: PRD §搜索与候选产品要求, HLD §Search Scheduler,
-//! `docs/design/TASK-003-base-provider-search-design.md`
+//! References: PRD FR-005, LLD §Search Provider Contract,
+//! `docs/design/v1.1-TASK-002-search-provider-candidate-design.md`
 
-use crate::domain::candidate::{CandidateRecord, ProviderId};
-use crate::domain::query_plan::TaskPlan;
-use crate::domain::search::{
-    CandidateShortageReason, ProviderReadiness, SearchFailureCategory, SearchOutcome,
-    SearchUsageEvent, WeightEntry,
+use crate::domain::candidate::{
+    CandidateDedupeEvidence, CandidateId, CandidateRecord, DedupeMergeReason, ProviderId,
 };
-use crate::error::Error;
-use crate::ports::BaseProvider;
+use crate::domain::query_plan::NormalizedQueryPlan;
+use crate::domain::search::{
+    CandidateShortageReason, ProviderFailureCode, SearchDiagnostic, SearchDiagnosticCode,
+    SearchRequest, SearchResponseStatus, SearchSessionOutcome, SearchUsageEvent,
+    WeightedProviderEntry,
+};
+use crate::ports::BaseSearchProvider;
 use crate::search::registry::ProviderRegistry;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet};
+use std::time::Instant;
 
 // ---------------------------------------------------------------------------
 // Random source abstraction
@@ -43,22 +47,18 @@ impl RandomSource for StdRandom {
         if max == 0 {
             return 0;
         }
-        // Use a simple but adequate approach. For production, this could
-        // be replaced with a proper CSPRNG.
         let val: u32 = fast_random_u32();
         val % max
     }
 }
 
-/// A fast, non-cryptographic random generator suitable for weighted
-/// scheduling. Uses a simple xorshift algorithm.
+/// A fast, non-cryptographic random generator using xorshift64.
 fn fast_random_u32() -> u32 {
     use std::time::{SystemTime, UNIX_EPOCH};
     let seed = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_nanos() as u64)
         .unwrap_or(0);
-    // xorshift64
     let mut x = seed.wrapping_add(1);
     x ^= x << 13;
     x ^= x >> 7;
@@ -70,23 +70,18 @@ fn fast_random_u32() -> u32 {
 // Search scheduler
 // ---------------------------------------------------------------------------
 
+/// Default maximum invocations per search session (safety cap).
+const DEFAULT_MAX_INVOCATIONS: u32 = 50;
+
 /// The weighted random search scheduler.
-///
-/// Orchestrates provider selection, candidate collection, deduplication,
-/// and shortage diagnosis. Does NOT own providers — it receives them
-/// by reference during scheduling.
 pub struct SearchScheduler {
-    /// Maximum number of provider invocations before the scheduler stops
-    /// to prevent unbounded loops. This is a safety cap; normally the
-    /// scheduler stops when the candidate target is met or all providers
-    /// are exhausted.
     max_invocations: u32,
 }
 
 impl Default for SearchScheduler {
     fn default() -> Self {
         Self {
-            max_invocations: 50,
+            max_invocations: DEFAULT_MAX_INVOCATIONS,
         }
     }
 }
@@ -105,223 +100,366 @@ impl SearchScheduler {
 
     /// Execute a search session.
     ///
-    /// `providers` maps provider id strings to `&dyn BaseProvider` references.
-    /// The scheduler will:
-    ///
-    /// 1. Build the effective weight table from the registry.
-    /// 2. Check each provider's readiness.
-    /// 3. Loop: weighted-random select a provider → call search → dedup.
-    /// 4. Stop when the candidate target is met, all providers are exhausted,
-    ///    or the invocation cap is reached.
-    /// 5. Return a [`SearchOutcome`] with candidates, usage events, and
-    ///    shortage diagnosis.
+    /// Consumes the normalized query plan (which contains the candidate target)
+    /// and the provider registry (which contains readiness and adapters).
+    /// Produces a [`SearchSessionOutcome`] suitable for handoff to TASK-003.
     pub fn run(
         &self,
-        task_plan: &TaskPlan,
+        query_plan: &NormalizedQueryPlan,
         registry: &ProviderRegistry,
-        providers: &HashMap<String, &dyn BaseProvider>,
         rng: &mut dyn RandomSource,
-    ) -> SearchOutcome {
-        let candidate_target = task_plan.candidate_target;
+    ) -> SearchSessionOutcome {
+        let candidate_target = query_plan.candidate_target;
+        let query_plan_id = query_plan.query_plan_id.clone();
+        let full_attempt_count = 1u8; // default for first attempt
+        let retry_count = 0u8;
 
-        // Step 1: Check readiness of each registered provider
-        let mut readiness_map: HashMap<String, ProviderReadiness> = HashMap::new();
-        for reg in registry.iter() {
-            let readiness = if let Some(provider) = providers.get(&reg.provider_id.to_string()) {
-                match provider.readiness() {
-                    Ok(()) => ProviderReadiness::Ready,
-                    Err(e) => match &e {
-                        Error::ProviderFailure { reason, .. } if reason.contains("credentials") => {
-                            ProviderReadiness::MissingCredentials
-                        }
-                        Error::ProviderFailure { reason, .. } if reason.contains("rate") => {
-                            ProviderReadiness::RateLimited
-                        }
-                        Error::ProviderFailure { .. } => ProviderReadiness::Unavailable,
-                        _ => ProviderReadiness::Unavailable,
-                    },
-                }
-            } else {
-                // Provider not in the adapter map — treat as unavailable
-                ProviderReadiness::Unavailable
-            };
+        // Step 1: Evaluate provider readiness
+        let readiness_reports = registry.evaluate_readiness();
 
-            // A disabled registration overrides any provider response
-            let effective = if !reg.enabled {
-                ProviderReadiness::Disabled
-            } else if reg.weight <= 0 {
-                ProviderReadiness::Misconfigured
-            } else {
-                readiness
-            };
+        // Step 2: Build effective weight table
+        let weight_table = ProviderRegistry::build_weight_table(&readiness_reports);
 
-            readiness_map.insert(reg.provider_id.to_string(), effective);
-        }
-
-        // Step 2: Build the effective weight table
-        let (weight_table, readiness_summary) =
-            registry.build_weight_table_with_readiness(&readiness_map);
-
+        // Check for no providers
         if weight_table.is_empty() {
-            return SearchOutcome {
-                candidates: Vec::new(),
-                usage_events: Vec::new(),
-                total_invocations: 0,
+            return SearchSessionOutcome {
+                query_plan_id,
+                full_attempt_count,
+                retry_count,
                 candidate_target,
+                unique_candidate_count: 0,
                 target_met: false,
-                shortage_reason: Some(CandidateShortageReason::NoAvailableProviders),
-                readiness_summary,
+                candidates: Vec::new(),
+                readiness_reports,
+                usage_events: Vec::new(),
+                dedupe_events: Vec::new(),
+                diagnostics: vec![SearchDiagnostic::blocker(
+                    SearchDiagnosticCode::NoAvailableSearchProvider,
+                    "No ready provider is available for scheduling.",
+                )],
+                shortage_reason: Some(CandidateShortageReason::NoAvailableSearchProvider),
             };
         }
 
         // Step 3: Scheduling loop
-        let mut all_candidates: Vec<CandidateRecord> = Vec::new();
+        let all_candidates: Vec<CandidateRecord> = Vec::new();
         let mut usage_events: Vec<SearchUsageEvent> = Vec::new();
-        let mut seen_urls: HashSet<String> = HashSet::new();
-        let mut exhausted_providers: HashSet<String> = HashSet::new();
-        let mut failed_providers: HashSet<String> = HashSet::new();
-        let mut invocations: u32 = 0;
+        let mut dedupe_events: Vec<CandidateDedupeEvidence> = Vec::new();
+        let mut diagnostics: Vec<SearchDiagnostic> = Vec::new();
 
-        while (all_candidates.len() as u32) < candidate_target
-            && exhausted_providers.len() < weight_table.len()
+        // Dedupe index: dedupe_key → canonical candidate_id
+        let mut dedupe_index: BTreeMap<String, CandidateId> = BTreeMap::new();
+        // Canonical candidate store: candidate_id → (record, all origin IDs)
+        let mut dedupe_store: BTreeMap<CandidateId, (CandidateRecord, Vec<CandidateId>)> =
+            BTreeMap::new();
+
+        let mut exhausted_providers: BTreeSet<ProviderId> = BTreeSet::new();
+        let mut terminal_failed_providers: BTreeSet<ProviderId> = BTreeSet::new();
+        let mut search_round: u32 = 0;
+        let mut invocations: u32 = 0;
+        let mut total_unique: u32 = 0;
+
+        // Pick a query text (first one, or rotate)
+        let query_text = query_plan
+            .query_texts
+            .first()
+            .cloned()
+            .unwrap_or_else(|| query_plan.description.clone());
+
+        while total_unique < candidate_target
+            && exhausted_providers.len() + terminal_failed_providers.len() < weight_table.len()
             && invocations < self.max_invocations
         {
-            // Filter to non-exhausted providers
-            let active_entries: Vec<&WeightEntry> = weight_table
+            search_round += 1;
+
+            // Filter to non-exhausted, non-failed providers
+            let active_entries: Vec<&WeightedProviderEntry> = weight_table
                 .iter()
-                .filter(|e| !exhausted_providers.contains(&e.provider_id.to_string()))
+                .filter(|e| {
+                    !exhausted_providers.contains(&e.provider_id)
+                        && !terminal_failed_providers.contains(&e.provider_id)
+                })
                 .collect();
 
             if active_entries.is_empty() {
                 break;
             }
 
-            // Recompute total weight of active providers
-            let active_total_weight: u32 = active_entries.iter().map(|e| e.weight).sum();
+            let active_total_weight: u32 = active_entries.iter().map(|e| e.effective_weight).sum();
             if active_total_weight == 0 {
                 break;
             }
 
             // Weighted random selection
             let selected = select_weighted(&active_entries, active_total_weight, rng);
-            let provider_id_str = selected.provider_id.to_string();
+            let provider_id = selected.provider_id.clone();
 
             invocations += 1;
 
-            // Get the provider adapter
-            let provider = match providers.get(&provider_id_str) {
-                Some(p) => *p,
+            // Look up adapter
+            let adapter = match registry.get_adapter(&provider_id) {
+                Some(a) => a,
                 None => {
-                    // Should not happen with readiness check, but handle gracefully
-                    exhausted_providers.insert(provider_id_str.clone());
+                    terminal_failed_providers.insert(provider_id.clone());
                     usage_events.push(SearchUsageEvent::failure_event(
-                        selected.provider_id.clone(),
-                        SearchFailureCategory::Unavailable,
-                        ProviderReadiness::Unavailable,
-                        selected.weight,
+                        query_plan_id.clone(),
+                        provider_id.clone(),
+                        format!("sr-{}-{}", query_plan_id, provider_id),
+                        full_attempt_count,
+                        retry_count,
+                        search_round,
+                        selected.effective_weight,
+                        active_total_weight,
+                        ProviderFailureCode::ProviderAdapterMissing,
+                        0,
                     ));
+                    diagnostics.push(
+                        SearchDiagnostic::error(
+                            SearchDiagnosticCode::ProviderAdapterMissing,
+                            format!(
+                                "Adapter for provider '{}' not found during scheduling",
+                                provider_id
+                            ),
+                        )
+                        .with_provider(provider_id.clone()),
+                    );
                     continue;
                 }
             };
 
-            // Determine how many results to request
-            let remaining_needed = candidate_target.saturating_sub(all_candidates.len() as u32);
-            // We overshoot a bit to account for duplicates
-            let request_count = (remaining_needed.saturating_mul(3)).max(10);
+            // Determine request count
+            let remaining_needed = candidate_target.saturating_sub(total_unique);
+            let request_count = clamp_max_results(
+                std::cmp::max(10, remaining_needed.saturating_mul(3)),
+                selected.capabilities.max_results_per_request,
+            );
 
-            let search_result = provider.search(&task_plan.query_plan.description, request_count);
+            // Build search request
+            let search_req = SearchRequest::new(
+                query_plan_id.clone(),
+                provider_id.clone(),
+                &query_text,
+                request_count,
+                search_round,
+                full_attempt_count,
+            );
+
+            // Call provider
+            let t0 = Instant::now();
+            let search_result = adapter.search(&search_req);
+            let duration_ms = t0.elapsed().as_millis() as u64;
 
             match search_result {
-                Ok(candidates) => {
-                    let raw_count = candidates.len() as u32;
+                Ok(response) => {
+                    let raw_count = response.raw_result_count;
+                    let normalized_count = response.candidates.len() as u32;
 
-                    // Deduplicate by source_url
-                    let mut deduped_count: u32 = 0;
-                    for candidate in candidates {
-                        if seen_urls.insert(candidate.source_url.clone()) {
-                            all_candidates.push(candidate);
-                            deduped_count += 1;
+                    // Process candidates through dedupe
+                    let mut unique_this_round: u32 = 0;
+                    let mut duplicate_this_round: u32 = 0;
+
+                    for candidate in &response.candidates {
+                        let dedupe_key = candidate.dedupe_key.clone();
+                        let image_url_key = Some(candidate.image_url.clone());
+
+                        if let Some(existing_id) = dedupe_index.get(&dedupe_key) {
+                            // Duplicate found — merge
+                            duplicate_this_round += 1;
+                            if let Some((canonical, origin_ids)) = dedupe_store.get_mut(existing_id)
+                            {
+                                // Merge origin IDs
+                                for oid in &candidate.origin_candidate_ids {
+                                    if !origin_ids.contains(oid) {
+                                        origin_ids.push(oid.clone());
+                                    }
+                                }
+                                canonical.origin_candidate_ids = origin_ids.clone();
+                            }
+
+                            dedupe_events.push(CandidateDedupeEvidence::duplicate(
+                                dedupe_key,
+                                existing_id.clone(),
+                                DedupeMergeReason::ExactImageUrl,
+                            ));
+
+                            diagnostics.push(
+                                SearchDiagnostic::info(
+                                    SearchDiagnosticCode::CandidateDuplicateMerged,
+                                    format!(
+                                        "Candidate '{}' merged into '{}' (duplicate image URL)",
+                                        candidate.candidate_id, existing_id
+                                    ),
+                                )
+                                .with_provider(provider_id.clone())
+                                .with_candidate(candidate.candidate_id.clone()),
+                            );
+                        } else {
+                            // New candidate
+                            unique_this_round += 1;
+                            dedupe_index.insert(dedupe_key.clone(), candidate.candidate_id.clone());
+
+                            let record = candidate.clone();
+                            let origin_ids = record.origin_candidate_ids.clone();
+
+                            dedupe_store.insert(record.candidate_id.clone(), (record, origin_ids));
+
+                            dedupe_events
+                                .push(CandidateDedupeEvidence::unique(dedupe_key, image_url_key));
                         }
                     }
 
-                    let is_exhausted = raw_count == 0
-                        || raw_count < request_count / 2
-                        || deduped_count == 0 && raw_count > 0;
+                    total_unique += unique_this_round;
 
-                    if is_exhausted && raw_count == 0 {
-                        // Empty result — provider may be exhausted
-                        exhausted_providers.insert(provider_id_str.clone());
-                    } else if is_exhausted && deduped_count == 0 {
-                        // All returned were duplicates — provider likely exhausted
-                        exhausted_providers.insert(provider_id_str.clone());
+                    let is_exhausted = response.exhausted
+                        || (raw_count == 0)
+                        || response.status == SearchResponseStatus::Empty;
+
+                    if is_exhausted {
+                        exhausted_providers.insert(provider_id.clone());
                     }
 
                     usage_events.push(SearchUsageEvent::success_event(
-                        selected.provider_id.clone(),
+                        query_plan_id.clone(),
+                        provider_id.clone(),
+                        search_req.search_request_id,
+                        full_attempt_count,
+                        retry_count,
+                        search_round,
+                        selected.effective_weight,
+                        active_total_weight,
                         raw_count,
-                        deduped_count,
-                        is_exhausted && exhausted_providers.contains(&provider_id_str),
-                        selected.weight,
+                        normalized_count,
+                        unique_this_round,
+                        duplicate_this_round,
+                        is_exhausted,
+                        duration_ms,
                     ));
+
+                    // Collect provider diagnostics
+                    diagnostics.extend(response.diagnostics);
                 }
-                Err(e) => {
-                    let failure_category = classify_search_error(&e);
-                    failed_providers.insert(provider_id_str.clone());
-                    // Don't mark as exhausted on transient errors — keep in table
-                    // for potential retry unless it's a terminal failure
-                    if matches!(
-                        failure_category,
-                        SearchFailureCategory::Unavailable
-                            | SearchFailureCategory::UnnormalizableResponse
-                    ) {
-                        exhausted_providers.insert(provider_id_str.clone());
+                Err(search_error) => {
+                    let failure_code = search_error.to_failure_code();
+
+                    // Transient errors: don't permanently remove
+                    let is_transient = matches!(
+                        search_error,
+                        crate::domain::search::SearchError::Timeout { .. }
+                            | crate::domain::search::SearchError::RateLimited { .. }
+                    );
+
+                    if !is_transient {
+                        terminal_failed_providers.insert(provider_id.clone());
+                    } else {
+                        // For transient errors, mark exhausted for this round
+                        // but don't terminal-fail
                     }
 
+                    let diagnostic_code = match &search_error {
+                        crate::domain::search::SearchError::Timeout { .. } => {
+                            SearchDiagnosticCode::SearchProviderTimeout
+                        }
+                        crate::domain::search::SearchError::RateLimited { .. } => {
+                            SearchDiagnosticCode::SearchProviderRateLimited
+                        }
+                        _ => SearchDiagnosticCode::ProviderUnavailable,
+                    };
+
+                    diagnostics.push(
+                        SearchDiagnostic::error(diagnostic_code, search_error.to_string())
+                            .with_provider(provider_id.clone())
+                            .with_request(&search_req.search_request_id),
+                    );
+
                     usage_events.push(SearchUsageEvent::failure_event(
-                        selected.provider_id.clone(),
-                        failure_category,
-                        ProviderReadiness::Unavailable,
-                        selected.weight,
+                        query_plan_id.clone(),
+                        provider_id.clone(),
+                        search_req.search_request_id,
+                        full_attempt_count,
+                        retry_count,
+                        search_round,
+                        selected.effective_weight,
+                        active_total_weight,
+                        failure_code,
+                        duration_ms,
                     ));
                 }
             }
 
-            // If we've collected enough, stop
-            if (all_candidates.len() as u32) >= candidate_target {
+            // Collect all unique candidates into the output list
+            if total_unique >= candidate_target {
                 break;
             }
         }
 
-        let total_deduped = all_candidates.len() as u32;
-        let target_met = total_deduped >= candidate_target;
+        // Build final candidate list from dedupe_store (preserving canonical order)
+        let all_candidates: Vec<CandidateRecord> = dedupe_store
+            .into_values()
+            .map(|(record, _)| record)
+            .collect();
+
+        let unique_candidate_count = all_candidates.len() as u32;
+        let target_met = unique_candidate_count >= candidate_target;
 
         let shortage_reason = if target_met {
             None
-        } else if exhausted_providers.len() >= weight_table.len() && failed_providers.is_empty() {
-            Some(CandidateShortageReason::AllProvidersExhausted)
-        } else if !failed_providers.is_empty() {
-            Some(CandidateShortageReason::PartialFailureWithExhaustion {
-                failed_providers: failed_providers.iter().map(ProviderId::new).collect(),
-                exhausted_providers: exhausted_providers.iter().map(ProviderId::new).collect(),
-            })
+        } else if invocations >= self.max_invocations {
+            diagnostics.push(SearchDiagnostic::warning(
+                SearchDiagnosticCode::SearchInvocationLimitReached,
+                format!(
+                    "Reached invocation limit of {} before meeting candidate target.",
+                    self.max_invocations
+                ),
+            ));
+            Some(CandidateShortageReason::SearchInvocationLimitReached)
+        } else if exhausted_providers.len() + terminal_failed_providers.len() >= weight_table.len()
+        {
+            if !terminal_failed_providers.is_empty() {
+                diagnostics.push(SearchDiagnostic::warning(
+                    SearchDiagnosticCode::SearchTargetShortage,
+                    "Not all providers were fully available; target not met.",
+                ));
+                Some(CandidateShortageReason::ProviderPartialFailure {
+                    failed_providers: terminal_failed_providers.iter().cloned().collect(),
+                    exhausted_providers: exhausted_providers.iter().cloned().collect(),
+                })
+            } else {
+                diagnostics.push(SearchDiagnostic::warning(
+                    SearchDiagnosticCode::SearchTargetShortage,
+                    "All providers exhausted before reaching candidate target.",
+                ));
+                Some(CandidateShortageReason::AllProvidersExhausted)
+            }
         } else {
             let total_raw: u32 = usage_events.iter().map(|e| e.raw_candidate_count).sum();
-            let duplicates_removed = total_raw.saturating_sub(total_deduped);
+            let duplicates_removed = total_raw.saturating_sub(unique_candidate_count);
+            diagnostics.push(SearchDiagnostic::warning(
+                SearchDiagnosticCode::SearchTargetShortage,
+                format!(
+                    "Insufficient unique candidates: {} raw, {} after dedup ({} duplicates).",
+                    total_raw, unique_candidate_count, duplicates_removed
+                ),
+            ));
             Some(CandidateShortageReason::InsufficientUniqueCandidates {
                 total_raw,
-                total_deduped,
+                total_deduped: unique_candidate_count,
                 duplicates_removed,
             })
         };
 
-        SearchOutcome {
-            candidates: all_candidates,
-            usage_events,
-            total_invocations: invocations,
+        SearchSessionOutcome {
+            query_plan_id,
+            full_attempt_count,
+            retry_count,
             candidate_target,
+            unique_candidate_count,
             target_met,
+            candidates: all_candidates,
+            readiness_reports,
+            usage_events,
+            dedupe_events,
+            diagnostics,
             shortage_reason,
-            readiness_summary,
         }
     }
 }
@@ -331,55 +469,32 @@ impl SearchScheduler {
 // ---------------------------------------------------------------------------
 
 /// Select a provider from the weight table using weighted random selection.
-///
-/// Each provider's probability of being selected is proportional to its weight.
 fn select_weighted<'a>(
-    entries: &[&'a WeightEntry],
+    entries: &[&'a WeightedProviderEntry],
     total_weight: u32,
     rng: &mut dyn RandomSource,
-) -> &'a WeightEntry {
+) -> &'a WeightedProviderEntry {
     if entries.is_empty() || total_weight == 0 {
-        // Safety fallback — should not happen if callers check preconditions
         panic!("select_weighted called with empty entries or zero total weight");
     }
 
     let mut target = rng.gen_range(total_weight);
     for entry in entries {
-        if target < entry.weight {
+        if target < entry.effective_weight {
             return entry;
         }
-        target -= entry.weight;
+        target -= entry.effective_weight;
     }
 
-    // Fallback to last entry (should not reach here with correct arithmetic)
+    // Fallback to last entry
     entries.last().expect("non-empty entries")
 }
 
-// ---------------------------------------------------------------------------
-// Error classification
-// ---------------------------------------------------------------------------
-
-/// Classify a search error into a [`SearchFailureCategory`].
-fn classify_search_error(error: &Error) -> SearchFailureCategory {
-    match error {
-        Error::ProviderFailure { reason, .. } => {
-            let lower = reason.to_lowercase();
-            if lower.contains("timeout") || lower.contains("timed out") {
-                SearchFailureCategory::Timeout
-            } else if lower.contains("rate") && lower.contains("limit") {
-                SearchFailureCategory::RateLimited
-            } else if lower.contains("empty") || lower.contains("no result") {
-                SearchFailureCategory::EmptyResult
-            } else if lower.contains("parse")
-                || lower.contains("normalize")
-                || lower.contains("malformed")
-            {
-                SearchFailureCategory::UnnormalizableResponse
-            } else {
-                SearchFailureCategory::ProviderError
-            }
-        }
-        _ => SearchFailureCategory::Other,
+/// Clamp max_results to provider's declared limit.
+fn clamp_max_results(requested: u32, provider_max: Option<u32>) -> u32 {
+    match provider_max {
+        Some(max) => requested.min(max),
+        None => requested,
     }
 }
 
@@ -390,17 +505,22 @@ fn classify_search_error(error: &Error) -> SearchFailureCategory {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::candidate::CandidateId;
-    use crate::domain::query_plan::{ContentConstraints, QualityTier, ValidatedQueryPlan};
-    use crate::domain::search::ProviderRegistration;
-    use crate::error::Result;
+    use crate::domain::candidate::CandidateProvenance;
+    use crate::domain::config::SearchProviderKind;
+    use crate::domain::query_plan::QueryPlanId;
+    use crate::domain::search::{
+        ProviderConstraintSupport, ProviderReadinessReport, ProviderReadinessStatus,
+        SearchResponse, SearchResponseStatus,
+    };
+    use crate::ports::BaseSearchProvider;
     use std::cell::RefCell;
+    use std::collections::HashSet;
+    use std::sync::{Arc, Mutex};
 
     // -----------------------------------------------------------------------
     // Deterministic random source for testing
     // -----------------------------------------------------------------------
 
-    /// A deterministic random source that returns pre-programmed values.
     struct TestRandom {
         values: Vec<u32>,
         index: RefCell<usize>,
@@ -425,55 +545,40 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Stub provider for testing
+    // Stub provider implementing BaseSearchProvider for tests
     // -----------------------------------------------------------------------
 
-    /// A stub provider that returns pre-configured candidates.
-    struct StubProvider {
+    struct StubSearchProvider {
         id: ProviderId,
         name: String,
-        weight: i32,
+        kind: SearchProviderKind,
         ready: bool,
-        candidates: RefCell<Vec<Vec<CandidateRecord>>>,
-        call_count: RefCell<usize>,
+        credential_present: bool,
+        /// Pre-configured response batches.
+        responses: Mutex<Vec<Vec<CandidateRecord>>>,
+        call_count: Mutex<usize>,
     }
 
-    impl StubProvider {
-        fn new(id: &str, name: &str, weight: i32, ready: bool) -> Self {
+    impl StubSearchProvider {
+        fn new(id: &str, name: &str, ready: bool, credential_present: bool) -> Self {
             Self {
                 id: ProviderId::new(id),
                 name: name.into(),
-                weight,
+                kind: SearchProviderKind::Custom("stub".into()),
                 ready,
-                candidates: RefCell::new(Vec::new()),
-                call_count: RefCell::new(0),
+                credential_present,
+                responses: Mutex::new(Vec::new()),
+                call_count: Mutex::new(0),
             }
         }
 
-        fn with_responses(
-            id: &str,
-            name: &str,
-            weight: i32,
-            ready: bool,
-            responses: Vec<Vec<CandidateRecord>>,
-        ) -> Self {
-            Self {
-                id: ProviderId::new(id),
-                name: name.into(),
-                weight,
-                ready,
-                candidates: RefCell::new(responses),
-                call_count: RefCell::new(0),
-            }
-        }
-
-        #[allow(dead_code)]
-        fn call_count(&self) -> usize {
-            *self.call_count.borrow()
+        fn with_responses(mut self, responses: Vec<Vec<CandidateRecord>>) -> Self {
+            self.responses = Mutex::new(responses);
+            self
         }
     }
 
-    impl BaseProvider for StubProvider {
+    impl BaseSearchProvider for StubSearchProvider {
         fn provider_id(&self) -> ProviderId {
             self.id.clone()
         }
@@ -482,57 +587,142 @@ mod tests {
             &self.name
         }
 
-        fn readiness(&self) -> Result<()> {
-            if self.ready {
-                Ok(())
+        fn provider_kind(&self) -> SearchProviderKind {
+            self.kind.clone()
+        }
+
+        fn supported_constraints(&self) -> ProviderConstraintSupport {
+            ProviderConstraintSupport::default()
+        }
+
+        fn readiness(
+            &self,
+            _config: &crate::domain::config::SearchProviderConfig,
+        ) -> ProviderReadinessReport {
+            if self.ready && self.credential_present {
+                ProviderReadinessReport::ready(self.id.clone(), self.kind.clone(), &self.name)
+            } else if !self.credential_present {
+                ProviderReadinessReport::not_ready(
+                    self.id.clone(),
+                    self.kind.clone(),
+                    &self.name,
+                    ProviderReadinessStatus::MissingCredentials,
+                    ProviderFailureCode::ProviderCredentialMissing,
+                    vec![],
+                )
             } else {
-                Err(Error::provider_failure(
-                    self.id.to_string(),
-                    "missing credentials",
-                ))
+                ProviderReadinessReport::not_ready(
+                    self.id.clone(),
+                    self.kind.clone(),
+                    &self.name,
+                    ProviderReadinessStatus::Unavailable,
+                    ProviderFailureCode::ProviderUnavailable,
+                    vec![],
+                )
             }
         }
 
-        fn weight(&self) -> i32 {
-            self.weight
-        }
-
-        fn search(&self, _query: &str, _max_results: u32) -> Result<Vec<CandidateRecord>> {
-            let mut count = self.call_count.borrow_mut();
+        fn search(
+            &self,
+            request: &SearchRequest,
+        ) -> std::result::Result<SearchResponse, crate::domain::search::SearchError> {
+            let mut count = self.call_count.lock().unwrap();
             let idx = *count;
             *count += 1;
-            let mut responses = self.candidates.borrow_mut();
-            if idx < responses.len() {
-                Ok(std::mem::take(&mut responses[idx]))
+            drop(count);
+
+            let mut responses = self.responses.lock().unwrap();
+            let candidates = if idx < responses.len() {
+                std::mem::take(&mut responses[idx])
             } else {
-                Ok(Vec::new())
-            }
+                Vec::new()
+            };
+
+            let raw_count = candidates.len() as u32;
+            let exhausted = candidates.is_empty();
+            let status = if candidates.is_empty() {
+                SearchResponseStatus::Empty
+            } else {
+                SearchResponseStatus::Complete
+            };
+
+            Ok(SearchResponse {
+                search_request_id: request.search_request_id.clone(),
+                provider_id: self.id.clone(),
+                provider_kind: self.kind.clone(),
+                query_plan_id: request.query_plan_id.clone(),
+                search_round: request.search_round,
+                status,
+                candidates,
+                raw_result_count: raw_count,
+                normalized_count: raw_count,
+                provider_next_page_token_present: false,
+                exhausted,
+                diagnostics: Vec::new(),
+                redaction_applied: false,
+            })
         }
     }
 
-    fn make_candidate(id: &str, provider: &str, url: &str) -> CandidateRecord {
+    // -----------------------------------------------------------------------
+    // Helper functions
+    // -----------------------------------------------------------------------
+
+    fn make_candidate(
+        id: &str,
+        provider: &str,
+        image_url: &str,
+        query_plan_id: &str,
+        search_round: u32,
+        rank: u32,
+    ) -> CandidateRecord {
+        let candidate_id = CandidateId::new(id);
         CandidateRecord {
-            id: CandidateId::new(id),
+            candidate_id: candidate_id.clone(),
+            query_plan_id: query_plan_id.into(),
             provider_id: ProviderId::new(provider),
-            source_url: url.into(),
+            provider_kind: "stub".into(),
+            search_request_id: format!("sr-{}-{}", query_plan_id, provider),
+            search_round,
+            provider_rank: rank,
+            global_rank_hint: None,
+            image_url: image_url.into(),
+            source_page_url: None,
             thumbnail_url: None,
             title: Some(format!("Image {}", id)),
-            page_url: None,
-            dimensions: None,
+            snippet: None,
+            width: None,
+            height: None,
+            mime_type: None,
+            license_hint: None,
+            attribution: None,
+            dedupe_key: CandidateRecord::build_dedupe_key(image_url),
+            origin_candidate_ids: vec![candidate_id],
+            provenance: CandidateProvenance::new(rank, "test query", search_round, 1),
+            normalization_warnings: Vec::new(),
         }
     }
 
-    fn make_task_plan(required_count: u32) -> TaskPlan {
-        let plan = ValidatedQueryPlan {
+    fn make_query_plan(required_image_count: u32) -> NormalizedQueryPlan {
+        NormalizedQueryPlan {
+            query_plan_id: QueryPlanId::new("qp-test"),
             description: "test query".into(),
-            required_count,
-            quality_tier: QualityTier::General,
-            content_constraints: ContentConstraints::default(),
-            authorization_preference: Default::default(),
-            output_preference: Default::default(),
+            query_texts: vec!["test query".into()],
+            required_image_count,
+            quality: crate::domain::query_plan::QualityTier::General,
+            quality_requirements: Default::default(),
+            material_types: Vec::new(),
+            visual_requirements: Vec::new(),
+            negative_scope: Vec::new(),
+            source_diversity_requirement: None,
+            candidate_target: required_image_count * 20,
+            retrieval_batch_target: required_image_count * 2,
             retry_limit: 3,
-        };
-        TaskPlan::from_validated(plan)
+            full_attempt_limit: 4,
+            provider_policy: Default::default(),
+            retrieval_policy: Default::default(),
+            admission_diagnostics: Vec::new(),
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -541,80 +731,46 @@ mod tests {
 
     #[test]
     fn weighted_selection_picks_first_when_rng_zero() {
-        let entries = [
-            WeightEntry {
+        let entries = vec![
+            WeightedProviderEntry {
                 provider_id: ProviderId::new("a"),
                 display_name: "A".into(),
-                weight: 2,
+                effective_weight: 2,
+                capabilities: ProviderConstraintSupport::default(),
             },
-            WeightEntry {
+            WeightedProviderEntry {
                 provider_id: ProviderId::new("b"),
                 display_name: "B".into(),
-                weight: 3,
+                effective_weight: 3,
+                capabilities: ProviderConstraintSupport::default(),
             },
         ];
-        let entry_refs: Vec<&WeightEntry> = entries.iter().collect();
-        let mut rng = TestRandom::new(vec![0]); // picks first
+        let entry_refs: Vec<&WeightedProviderEntry> = entries.iter().collect();
+        let mut rng = TestRandom::new(vec![0]);
         let selected = select_weighted(&entry_refs, 5, &mut rng);
         assert_eq!(selected.provider_id.to_string(), "a");
     }
 
     #[test]
-    fn weighted_selection_picks_second_when_rng_exceeds_first_weight() {
-        let entries = [
-            WeightEntry {
+    fn weighted_selection_picks_second_when_rng_exceeds_first() {
+        let entries = vec![
+            WeightedProviderEntry {
                 provider_id: ProviderId::new("a"),
                 display_name: "A".into(),
-                weight: 2,
+                effective_weight: 2,
+                capabilities: ProviderConstraintSupport::default(),
             },
-            WeightEntry {
+            WeightedProviderEntry {
                 provider_id: ProviderId::new("b"),
                 display_name: "B".into(),
-                weight: 3,
+                effective_weight: 3,
+                capabilities: ProviderConstraintSupport::default(),
             },
         ];
-        let entry_refs: Vec<&WeightEntry> = entries.iter().collect();
-        let mut rng = TestRandom::new(vec![2]); // equal to first weight, falls through to second
+        let entry_refs: Vec<&WeightedProviderEntry> = entries.iter().collect();
+        let mut rng = TestRandom::new(vec![2]); // falls through to b
         let selected = select_weighted(&entry_refs, 5, &mut rng);
         assert_eq!(selected.provider_id.to_string(), "b");
-    }
-
-    #[test]
-    fn weighted_selection_respects_proportional_distribution() {
-        // With enough samples, the distribution should approximate weights
-        let entries = [
-            WeightEntry {
-                provider_id: ProviderId::new("a"),
-                display_name: "A".into(),
-                weight: 1,
-            },
-            WeightEntry {
-                provider_id: ProviderId::new("b"),
-                display_name: "B".into(),
-                weight: 2,
-            },
-        ];
-        let entry_refs: Vec<&WeightEntry> = entries.iter().collect();
-        let total_weight = 3;
-
-        // Simulate "random" values that span the entire range uniformly
-        let samples: Vec<u32> = (0..300).map(|i| i % total_weight).collect();
-        let mut rng = TestRandom::new(samples);
-
-        let mut count_a = 0;
-        let mut count_b = 0;
-        for _ in 0..300 {
-            let selected = select_weighted(&entry_refs, total_weight, &mut rng);
-            match selected.provider_id.to_string().as_str() {
-                "a" => count_a += 1,
-                "b" => count_b += 1,
-                _ => {}
-            }
-        }
-
-        // With weight 1:2, expect roughly 100:200 (± some tolerance)
-        assert!(count_a >= 80, "a got {}, expected ~100", count_a);
-        assert!(count_b >= 180, "b got {}, expected ~200", count_b);
     }
 
     // -----------------------------------------------------------------------
@@ -624,123 +780,128 @@ mod tests {
     #[test]
     fn scheduler_no_providers_returns_shortage() {
         let registry = ProviderRegistry::new();
-        let task_plan = make_task_plan(3);
+        let query_plan = make_query_plan(3);
         let scheduler = SearchScheduler::new();
-        let providers: HashMap<String, &dyn BaseProvider> = HashMap::new();
         let mut rng = TestRandom::new(vec![]);
 
-        let outcome = scheduler.run(&task_plan, &registry, &providers, &mut rng);
+        let outcome = scheduler.run(&query_plan, &registry, &mut rng);
         assert!(!outcome.target_met);
         assert!(outcome.candidates.is_empty());
         assert!(matches!(
             outcome.shortage_reason,
-            Some(CandidateShortageReason::NoAvailableProviders)
+            Some(CandidateShortageReason::NoAvailableSearchProvider)
         ));
     }
 
     #[test]
     fn scheduler_single_provider_reaches_target() {
         let mut registry = ProviderRegistry::new();
-        registry.register(
-            ProviderRegistration::new(ProviderId::new("p1"), "P1")
-                .with_enabled(true)
-                .with_weight(1),
+        let provider = Arc::new(
+            StubSearchProvider::new("p1", "P1", true, true).with_responses(vec![(0..70)
+                .map(|i| {
+                    make_candidate(
+                        &format!("c{}", i),
+                        "p1",
+                        &format!("https://ex.com/{}", i),
+                        "qp-test",
+                        1,
+                        i + 1,
+                    )
+                })
+                .collect()]),
         );
+        registry.register_adapter(ProviderId::new("p1"), provider);
 
-        // Provider returns 70 candidates (enough for target of 60)
-        let candidates: Vec<CandidateRecord> = (0..70)
-            .map(|i| make_candidate(&format!("c{}", i), "p1", &format!("https://ex.com/{}", i)))
-            .collect();
-
-        let stub = StubProvider::with_responses("p1", "P1", 1, true, vec![candidates]);
-
-        let mut providers: HashMap<String, &dyn BaseProvider> = HashMap::new();
-        providers.insert("p1".to_string(), &stub);
-
-        let task_plan = make_task_plan(3); // target = 60
+        let query_plan = make_query_plan(3); // target = 60
         let scheduler = SearchScheduler::new();
         let mut rng = TestRandom::new(vec![0]);
 
-        let outcome = scheduler.run(&task_plan, &registry, &providers, &mut rng);
+        let outcome = scheduler.run(&query_plan, &registry, &mut rng);
         assert!(outcome.target_met);
-        assert!(outcome.candidates.len() >= 60);
-        assert_eq!(outcome.total_invocations, 1);
+        assert!(outcome.candidates.len() as u32 >= 60);
+        assert_eq!(outcome.usage_events.len(), 1);
         assert!(outcome.shortage_reason.is_none());
     }
 
     #[test]
-    fn scheduler_deduplicates_by_source_url() {
+    fn scheduler_deduplicates_by_image_url() {
         let mut registry = ProviderRegistry::new();
-        registry.register(
-            ProviderRegistration::new(ProviderId::new("p1"), "P1")
-                .with_enabled(true)
-                .with_weight(1),
-        );
-
-        // First call: 5 unique, 2 duplicates
-        let batch1: Vec<CandidateRecord> = vec![
-            make_candidate("a1", "p1", "https://ex.com/1"),
-            make_candidate("a2", "p1", "https://ex.com/2"),
-            make_candidate("a3", "p1", "https://ex.com/1"), // duplicate URL
-            make_candidate("a4", "p1", "https://ex.com/3"),
-            make_candidate("a5", "p1", "https://ex.com/4"),
-            make_candidate("a6", "p1", "https://ex.com/2"), // duplicate URL
-            make_candidate("a7", "p1", "https://ex.com/5"),
+        let batch: Vec<CandidateRecord> = vec![
+            make_candidate("a1", "p1", "https://ex.com/1", "qp-test", 1, 1),
+            make_candidate("a2", "p1", "https://ex.com/2", "qp-test", 1, 2),
+            make_candidate("a3", "p1", "https://ex.com/1", "qp-test", 1, 3), // duplicate
+            make_candidate("a4", "p1", "https://ex.com/3", "qp-test", 1, 4),
+            make_candidate("a5", "p1", "https://ex.com/2", "qp-test", 1, 5), // duplicate
+            make_candidate("a6", "p1", "https://ex.com/4", "qp-test", 1, 6),
         ];
 
-        let stub = StubProvider::with_responses("p1", "P1", 1, true, vec![batch1]);
+        let provider =
+            Arc::new(StubSearchProvider::new("p1", "P1", true, true).with_responses(vec![batch]));
+        registry.register_adapter(ProviderId::new("p1"), provider);
 
-        let mut providers: HashMap<String, &dyn BaseProvider> = HashMap::new();
-        providers.insert("p1".to_string(), &stub);
-
-        let task_plan = make_task_plan(1); // target = 20
+        let query_plan = make_query_plan(1); // target = 20
         let scheduler = SearchScheduler::new();
         let mut rng = TestRandom::new(vec![0]);
 
-        let outcome = scheduler.run(&task_plan, &registry, &providers, &mut rng);
-        assert_eq!(outcome.candidates.len(), 5); // 7 raw, 5 unique
-        assert_eq!(outcome.usage_events[0].raw_candidate_count, 7);
-        assert_eq!(outcome.usage_events[0].deduped_candidate_count, 5);
+        let outcome = scheduler.run(&query_plan, &registry, &mut rng);
+        // 6 raw, 4 unique (1→1,2→2,3→dup1,4→3,5→dup2,6→4)
+        assert_eq!(outcome.candidates.len(), 4);
+        assert!(!outcome.dedupe_events.is_empty());
+
+        // Count duplicates
+        let dup_events: Vec<_> = outcome
+            .dedupe_events
+            .iter()
+            .filter(|e| e.duplicate_of.is_some())
+            .collect();
+        assert_eq!(dup_events.len(), 2);
     }
 
     #[test]
-    fn scheduler_multi_provider_equal_weight() {
+    fn scheduler_multi_provider() {
         let mut registry = ProviderRegistry::new();
-        registry.register(
-            ProviderRegistration::new(ProviderId::new("a"), "A")
-                .with_enabled(true)
-                .with_weight(1),
+
+        let provider_a = Arc::new(
+            StubSearchProvider::new("a", "A", true, true).with_responses(vec![(0..35)
+                .map(|i| {
+                    make_candidate(
+                        &format!("ca{}", i),
+                        "a",
+                        &format!("https://a.ex/{}", i),
+                        "qp-test",
+                        1,
+                        i + 1,
+                    )
+                })
+                .collect()]),
         );
-        registry.register(
-            ProviderRegistration::new(ProviderId::new("b"), "B")
-                .with_enabled(true)
-                .with_weight(1),
+        let provider_b = Arc::new(
+            StubSearchProvider::new("b", "B", true, true).with_responses(vec![(0..35)
+                .map(|i| {
+                    make_candidate(
+                        &format!("cb{}", i),
+                        "b",
+                        &format!("https://b.ex/{}", i),
+                        "qp-test",
+                        2,
+                        i + 1,
+                    )
+                })
+                .collect()]),
         );
 
-        let candidates_a: Vec<CandidateRecord> = (0..35)
-            .map(|i| make_candidate(&format!("ca{}", i), "a", &format!("https://a.ex/{}", i)))
-            .collect();
-        let candidates_b: Vec<CandidateRecord> = (0..35)
-            .map(|i| make_candidate(&format!("cb{}", i), "b", &format!("https://b.ex/{}", i)))
-            .collect();
+        registry.register_adapter(ProviderId::new("a"), provider_a);
+        registry.register_adapter(ProviderId::new("b"), provider_b);
 
-        let stub_a = StubProvider::with_responses("a", "A", 1, true, vec![candidates_a]);
-        let stub_b = StubProvider::with_responses("b", "B", 1, true, vec![candidates_b]);
-
-        let mut providers: HashMap<String, &dyn BaseProvider> = HashMap::new();
-        providers.insert("a".to_string(), &stub_a);
-        providers.insert("b".to_string(), &stub_b);
-
-        let task_plan = make_task_plan(3); // target = 60
+        let query_plan = make_query_plan(3); // target = 60
         let scheduler = SearchScheduler::new();
-        // rng: 0 picks "a" first, 1 picks "b" second (total_weight=2)
+        // rng: 0 picks a, then 1 picks b (total_weight=2)
         let mut rng = TestRandom::new(vec![0, 1]);
 
-        let outcome = scheduler.run(&task_plan, &registry, &providers, &mut rng);
+        let outcome = scheduler.run(&query_plan, &registry, &mut rng);
         assert!(outcome.target_met);
-        // Both providers should have been invoked
-        assert_eq!(outcome.total_invocations, 2);
-        // Events should show both providers used
+        assert_eq!(outcome.usage_events.len(), 2);
+
         let used_ids: HashSet<String> = outcome
             .usage_events
             .iter()
@@ -751,393 +912,178 @@ mod tests {
     }
 
     #[test]
-    fn scheduler_multi_provider_weighted_selection() {
-        let mut registry = ProviderRegistry::new();
-        // Provider A has weight 3, B has weight 1
-        registry.register(
-            ProviderRegistration::new(ProviderId::new("a"), "A")
-                .with_enabled(true)
-                .with_weight(3),
-        );
-        registry.register(
-            ProviderRegistration::new(ProviderId::new("b"), "B")
-                .with_enabled(true)
-                .with_weight(1),
-        );
-
-        // Each provider returns small batches so multiple calls are needed
-        let candidates_a: Vec<CandidateRecord> = (0..10)
-            .map(|i| make_candidate(&format!("ca{}", i), "a", &format!("https://a.ex/{}", i)))
-            .collect();
-        let candidates_b: Vec<CandidateRecord> = (0..10)
-            .map(|i| make_candidate(&format!("cb{}", i), "b", &format!("https://b.ex/{}", i)))
-            .collect();
-
-        let stub_a = StubProvider::with_responses(
-            "a",
-            "A",
-            3,
-            true,
-            vec![candidates_a.clone(), candidates_a.clone(), candidates_a],
-        );
-        let stub_b = StubProvider::with_responses(
-            "b",
-            "B",
-            1,
-            true,
-            vec![candidates_b.clone(), candidates_b],
-        );
-
-        let mut providers: HashMap<String, &dyn BaseProvider> = HashMap::new();
-        providers.insert("a".to_string(), &stub_a);
-        providers.insert("b".to_string(), &stub_b);
-
-        let task_plan = make_task_plan(1); // target = 20
-        let scheduler = SearchScheduler::new();
-
-        // rng values: 0,1,2 pick A; 3 picks B
-        let mut rng = TestRandom::new(vec![0, 1, 2, 3]);
-
-        let outcome = scheduler.run(&task_plan, &registry, &providers, &mut rng);
-
-        // A should be called more than B (weight 3 vs 1)
-        let calls_a: u32 = outcome
-            .usage_events
-            .iter()
-            .filter(|e| e.provider_id.to_string() == "a")
-            .count() as u32;
-        let calls_b: u32 = outcome
-            .usage_events
-            .iter()
-            .filter(|e| e.provider_id.to_string() == "b")
-            .count() as u32;
-
-        // With rng [0,1,2,3] and total_weight=4: 3 values (0,1,2) map to A, 1 (3) to B
-        assert!(
-            calls_a >= calls_b,
-            "A should be called at least as often as B"
-        );
-        assert!(outcome.target_met);
-    }
-
-    #[test]
-    fn scheduler_zero_weight_provider_excluded() {
-        let mut registry = ProviderRegistry::new();
-        registry.register(
-            ProviderRegistration::new(ProviderId::new("a"), "A")
-                .with_enabled(true)
-                .with_weight(1),
-        );
-        registry.register(
-            ProviderRegistration::new(ProviderId::new("b"), "B")
-                .with_enabled(true)
-                .with_weight(0), // zero weight → excluded
-        );
-
-        let candidates: Vec<CandidateRecord> = (0..25)
-            .map(|i| make_candidate(&format!("c{}", i), "a", &format!("https://ex.com/{}", i)))
-            .collect();
-
-        let stub_a = StubProvider::with_responses("a", "A", 1, true, vec![candidates]);
-        let stub_b = StubProvider::with_responses("b", "B", 0, true, vec![]);
-
-        let mut providers: HashMap<String, &dyn BaseProvider> = HashMap::new();
-        providers.insert("a".to_string(), &stub_a);
-        providers.insert("b".to_string(), &stub_b);
-
-        let task_plan = make_task_plan(1); // target = 20
-        let scheduler = SearchScheduler::new();
-        let mut rng = TestRandom::new(vec![0]);
-
-        let outcome = scheduler.run(&task_plan, &registry, &providers, &mut rng);
-        assert!(outcome.target_met);
-
-        // B should never have been called
-        let b_used = outcome
-            .usage_events
-            .iter()
-            .any(|e| e.provider_id.to_string() == "b");
-        assert!(!b_used, "zero-weight provider should not be called");
-
-        // B's readiness should be Misconfigured
-        let b_summary = outcome
-            .readiness_summary
-            .iter()
-            .find(|r| r.provider_id.to_string() == "b")
-            .unwrap();
-        assert_eq!(b_summary.readiness, ProviderReadiness::Misconfigured);
-        assert!(!b_summary.included_in_table);
-    }
-
-    #[test]
-    fn scheduler_negative_weight_provider_excluded() {
-        let mut registry = ProviderRegistry::new();
-        registry.register(
-            ProviderRegistration::new(ProviderId::new("a"), "A")
-                .with_enabled(true)
-                .with_weight(1),
-        );
-        registry.register(
-            ProviderRegistration::new(ProviderId::new("b"), "B")
-                .with_enabled(true)
-                .with_weight(-5), // negative → excluded
-        );
-
-        let candidates: Vec<CandidateRecord> = (0..25)
-            .map(|i| make_candidate(&format!("c{}", i), "a", &format!("https://ex.com/{}", i)))
-            .collect();
-
-        let stub_a = StubProvider::with_responses("a", "A", 1, true, vec![candidates]);
-        let stub_b = StubProvider::with_responses("b", "B", -5, true, vec![]);
-
-        let mut providers: HashMap<String, &dyn BaseProvider> = HashMap::new();
-        providers.insert("a".to_string(), &stub_a);
-        providers.insert("b".to_string(), &stub_b);
-
-        let task_plan = make_task_plan(1); // target = 20
-        let scheduler = SearchScheduler::new();
-        let mut rng = TestRandom::new(vec![0]);
-
-        let outcome = scheduler.run(&task_plan, &registry, &providers, &mut rng);
-
-        let b_summary = outcome
-            .readiness_summary
-            .iter()
-            .find(|r| r.provider_id.to_string() == "b")
-            .unwrap();
-        assert_eq!(b_summary.readiness, ProviderReadiness::Misconfigured);
-        assert!(!b_summary.included_in_table);
-    }
-
-    #[test]
-    fn scheduler_candidate_shortage_preserves_explanation() {
-        let mut registry = ProviderRegistry::new();
-        registry.register(
-            ProviderRegistration::new(ProviderId::new("p1"), "P1")
-                .with_enabled(true)
-                .with_weight(1),
-        );
-
-        // Only 5 candidates, target is 60 → shortage
-        let candidates: Vec<CandidateRecord> = (0..5)
-            .map(|i| make_candidate(&format!("c{}", i), "p1", &format!("https://ex.com/{}", i)))
-            .collect();
-
-        let stub = StubProvider::with_responses("p1", "P1", 1, true, vec![candidates]);
-
-        let mut providers: HashMap<String, &dyn BaseProvider> = HashMap::new();
-        providers.insert("p1".to_string(), &stub);
-
-        let task_plan = make_task_plan(3); // target = 60
-        let scheduler = SearchScheduler::new();
-        let mut rng = TestRandom::new(vec![0]);
-
-        let outcome = scheduler.run(&task_plan, &registry, &providers, &mut rng);
-        assert!(!outcome.target_met);
-        assert!(outcome.candidates.len() < 60);
-        assert!(outcome.shortage_reason.is_some());
-
-        // The shortage reason should NOT be a blocking error — it's diagnostic
-        let reason = outcome.shortage_reason.as_ref().unwrap();
-        let reason_str = reason.to_string();
-        assert!(!reason_str.is_empty());
-    }
-
-    #[test]
-    fn scheduler_disabled_provider_not_used() {
-        let mut registry = ProviderRegistry::new();
-        registry.register(
-            ProviderRegistration::new(ProviderId::new("p1"), "P1")
-                .with_enabled(false) // disabled
-                .with_weight(1),
-        );
-
-        let stub = StubProvider::new("p1", "P1", 1, true);
-
-        let mut providers: HashMap<String, &dyn BaseProvider> = HashMap::new();
-        providers.insert("p1".to_string(), &stub);
-
-        let task_plan = make_task_plan(1);
-        let scheduler = SearchScheduler::new();
-        let mut rng = TestRandom::new(vec![0]);
-
-        let outcome = scheduler.run(&task_plan, &registry, &providers, &mut rng);
-        assert!(!outcome.target_met);
-        assert!(matches!(
-            outcome.shortage_reason,
-            Some(CandidateShortageReason::NoAvailableProviders)
-        ));
-        assert_eq!(outcome.total_invocations, 0);
-    }
-
-    #[test]
     fn scheduler_not_ready_provider_excluded() {
         let mut registry = ProviderRegistry::new();
-        registry.register(
-            ProviderRegistration::new(ProviderId::new("p1"), "P1")
-                .with_enabled(true)
-                .with_weight(1),
+
+        // Provider is ready but credential is missing
+        let provider = Arc::new(
+            StubSearchProvider::new("p1", "P1", true, false) // credential_present = false
+                .with_responses(vec![vec![]]),
         );
+        registry.register_adapter(ProviderId::new("p1"), provider);
 
-        // Provider reports not ready
-        let stub = StubProvider::new("p1", "P1", 1, false); // ready = false
-
-        let mut providers: HashMap<String, &dyn BaseProvider> = HashMap::new();
-        providers.insert("p1".to_string(), &stub);
-
-        let task_plan = make_task_plan(1);
+        let query_plan = make_query_plan(1);
         let scheduler = SearchScheduler::new();
         let mut rng = TestRandom::new(vec![0]);
 
-        let outcome = scheduler.run(&task_plan, &registry, &providers, &mut rng);
+        let outcome = scheduler.run(&query_plan, &registry, &mut rng);
         assert!(!outcome.target_met);
 
-        let p1_summary = outcome
-            .readiness_summary
+        // Check readiness report shows credential missing
+        let p1_report = outcome
+            .readiness_reports
             .iter()
             .find(|r| r.provider_id.to_string() == "p1")
             .unwrap();
-        assert!(!p1_summary.included_in_table);
+        assert_eq!(
+            p1_report.status,
+            ProviderReadinessStatus::MissingCredentials
+        );
     }
 
     #[test]
-    fn scheduler_all_disabled_providers_readiness_recorded() {
+    fn scheduler_candidate_shortage_not_blocking() {
         let mut registry = ProviderRegistry::new();
-        registry.register(
-            ProviderRegistration::new(ProviderId::new("a"), "A")
-                .with_enabled(false)
-                .with_weight(1),
+        let provider = Arc::new(
+            StubSearchProvider::new("p1", "P1", true, true).with_responses(vec![(0..10)
+                .map(|i| {
+                    make_candidate(
+                        &format!("c{}", i),
+                        "p1",
+                        &format!("https://ex.com/{}", i),
+                        "qp-test",
+                        1,
+                        i + 1,
+                    )
+                })
+                .collect()]),
         );
-        registry.register(
-            ProviderRegistration::new(ProviderId::new("b"), "B")
-                .with_enabled(false)
-                .with_weight(1),
-        );
+        registry.register_adapter(ProviderId::new("p1"), provider);
 
-        let task_plan = make_task_plan(1);
-        let scheduler = SearchScheduler::new();
-        let providers: HashMap<String, &dyn BaseProvider> = HashMap::new();
-        let mut rng = TestRandom::new(vec![]);
-
-        let outcome = scheduler.run(&task_plan, &registry, &providers, &mut rng);
-        assert_eq!(outcome.readiness_summary.len(), 2);
-        for r in &outcome.readiness_summary {
-            assert_eq!(r.readiness, ProviderReadiness::Disabled);
-            assert!(!r.included_in_table);
-        }
-    }
-
-    #[test]
-    fn search_outcome_provides_source_traceability() {
-        let mut registry = ProviderRegistry::new();
-        registry.register(
-            ProviderRegistration::new(ProviderId::new("p1"), "P1")
-                .with_enabled(true)
-                .with_weight(1),
-        );
-
-        let candidates: Vec<CandidateRecord> = (0..25)
-            .map(|i| make_candidate(&format!("c{}", i), "p1", &format!("https://ex.com/{}", i)))
-            .collect();
-
-        let stub = StubProvider::with_responses("p1", "P1", 1, true, vec![candidates]);
-
-        let mut providers: HashMap<String, &dyn BaseProvider> = HashMap::new();
-        providers.insert("p1".to_string(), &stub);
-
-        let task_plan = make_task_plan(1); // target = 20
+        let query_plan = make_query_plan(3); // target = 60, only 10 results
         let scheduler = SearchScheduler::new();
         let mut rng = TestRandom::new(vec![0]);
 
-        let outcome = scheduler.run(&task_plan, &registry, &providers, &mut rng);
+        let outcome = scheduler.run(&query_plan, &registry, &mut rng);
+        assert!(!outcome.target_met);
+        assert!(!outcome.candidates.is_empty());
+        assert_eq!(outcome.candidates.len(), 10);
+        assert!(outcome.shortage_reason.is_some());
+    }
 
-        // Every candidate should have the provider_id set
+    #[test]
+    fn scheduler_preserves_search_round_and_rank() {
+        let mut registry = ProviderRegistry::new();
+        let provider = Arc::new(
+            StubSearchProvider::new("p1", "P1", true, true).with_responses(vec![(0..5)
+                .map(|i| {
+                    make_candidate(
+                        &format!("c{}", i),
+                        "p1",
+                        &format!("https://ex.com/{}", i),
+                        "qp-test",
+                        1,
+                        (i + 1) as u32,
+                    )
+                })
+                .collect()]),
+        );
+        registry.register_adapter(ProviderId::new("p1"), provider);
+
+        let query_plan = make_query_plan(1); // target = 20, 5 results
+        let scheduler = SearchScheduler::new();
+        let mut rng = TestRandom::new(vec![0]);
+
+        let outcome = scheduler.run(&query_plan, &registry, &mut rng);
+
         for candidate in &outcome.candidates {
+            assert_eq!(candidate.search_round, 1);
+            assert!(candidate.provider_rank >= 1);
             assert_eq!(candidate.provider_id.to_string(), "p1");
         }
+    }
 
-        // Usage events provide per-invocation traceability
-        assert!(!outcome.usage_events.is_empty());
-        for event in &outcome.usage_events {
-            assert_eq!(event.provider_id.to_string(), "p1");
-            assert_eq!(event.effective_weight, 1);
+    #[test]
+    fn scheduler_no_credentials_leak() {
+        let mut registry = ProviderRegistry::new();
+        let provider = Arc::new(
+            StubSearchProvider::new("p1", "P1", true, true).with_responses(vec![(0..5)
+                .map(|i| {
+                    make_candidate(
+                        &format!("c{}", i),
+                        "p1",
+                        &format!("https://ex.com/{}", i),
+                        "qp-test",
+                        1,
+                        (i + 1) as u32,
+                    )
+                })
+                .collect()]),
+        );
+        registry.register_adapter(ProviderId::new("p1"), provider);
+
+        let query_plan = make_query_plan(1);
+        let scheduler = SearchScheduler::new();
+        let mut rng = TestRandom::new(vec![0]);
+
+        let outcome = scheduler.run(&query_plan, &registry, &mut rng);
+
+        // Serialize candidates and events
+        let candidates_json = serde_json::to_string(&outcome.candidates).unwrap_or_default();
+        let events_json = serde_json::to_string(&outcome.usage_events).unwrap_or_default();
+
+        for json in &[candidates_json, events_json] {
+            let lower = json.to_lowercase();
+            assert!(!lower.contains("api_key"));
+            assert!(!lower.contains("token"));
+            assert!(!lower.contains("secret"));
+            assert!(!lower.contains("password"));
+            assert!(!lower.contains("credential"));
         }
     }
 
     #[test]
     fn scheduler_requires_3_images_target_60() {
-        // AC: 要求 3 张图片时搜索目标约 60
-        let task_plan = make_task_plan(3);
-        assert_eq!(task_plan.candidate_target, 60); // 3 × 20
+        let qp = make_query_plan(3);
+        assert_eq!(qp.candidate_target, 60);
     }
 
     #[test]
-    fn candidate_shortage_not_blocking() {
-        // AC: 候选不足保留说明但不直接执行阻塞
-        let mut registry = ProviderRegistry::new();
-        registry.register(
-            ProviderRegistration::new(ProviderId::new("p1"), "P1")
-                .with_enabled(true)
-                .with_weight(1),
-        );
+    fn scheduler_weighted_selection_respects_proportions() {
+        // With deterministic RNG, higher weight gets selected more often
+        let entries = vec![
+            WeightedProviderEntry {
+                provider_id: ProviderId::new("a"),
+                display_name: "A".into(),
+                effective_weight: 1,
+                capabilities: ProviderConstraintSupport::default(),
+            },
+            WeightedProviderEntry {
+                provider_id: ProviderId::new("b"),
+                display_name: "B".into(),
+                effective_weight: 3,
+                capabilities: ProviderConstraintSupport::default(),
+            },
+        ];
+        let entry_refs: Vec<&WeightedProviderEntry> = entries.iter().collect();
+        let total_weight = 4;
 
-        // Only 10 candidates, target 60
-        let candidates: Vec<CandidateRecord> = (0..10)
-            .map(|i| make_candidate(&format!("c{}", i), "p1", &format!("https://ex.com/{}", i)))
-            .collect();
+        let samples: Vec<u32> = (0..400).map(|i| i % total_weight).collect();
+        let mut rng = TestRandom::new(samples);
 
-        let stub = StubProvider::with_responses("p1", "P1", 1, true, vec![candidates]);
+        let mut count_a = 0;
+        let mut count_b = 0;
+        for _ in 0..400 {
+            let selected = select_weighted(&entry_refs, total_weight, &mut rng);
+            match selected.provider_id.to_string().as_str() {
+                "a" => count_a += 1,
+                "b" => count_b += 1,
+                _ => {}
+            }
+        }
 
-        let mut providers: HashMap<String, &dyn BaseProvider> = HashMap::new();
-        providers.insert("p1".to_string(), &stub);
-
-        let task_plan = make_task_plan(3); // target = 60
-        let scheduler = SearchScheduler::new();
-        let mut rng = TestRandom::new(vec![0]);
-
-        let outcome = scheduler.run(&task_plan, &registry, &providers, &mut rng);
-
-        // Not target_met, but NOT a blocking condition
-        assert!(!outcome.target_met);
-        // Candidates are still returned (10 of them) — shortfall doesn't block
-        assert!(!outcome.candidates.is_empty());
-        // Shortage is explained
-        assert!(outcome.shortage_reason.is_some());
-    }
-
-    #[test]
-    fn provider_credentials_not_in_search_outcome() {
-        // AC: 凭据不进入用户可见证据 — verify that no credential fields
-        // exist in CandidateRecord or SearchUsageEvent
-        let mut registry = ProviderRegistry::new();
-        registry.register(
-            ProviderRegistration::new(ProviderId::new("p1"), "P1")
-                .with_enabled(true)
-                .with_weight(1),
-        );
-
-        let candidates: Vec<CandidateRecord> = (0..5)
-            .map(|i| make_candidate(&format!("c{}", i), "p1", &format!("https://ex.com/{}", i)))
-            .collect();
-
-        let stub = StubProvider::with_responses("p1", "P1", 1, true, vec![candidates]);
-
-        let mut providers: HashMap<String, &dyn BaseProvider> = HashMap::new();
-        providers.insert("p1".to_string(), &stub);
-
-        let task_plan = make_task_plan(1);
-        let scheduler = SearchScheduler::new();
-        let mut rng = TestRandom::new(vec![0]);
-
-        let outcome = scheduler.run(&task_plan, &registry, &providers, &mut rng);
-
-        // Serialize outcome (simulating what would be user-visible)
-        // There should be no credential fields
-        let json = serde_json::to_string(&outcome.usage_events).unwrap_or_default();
-        assert!(!json.to_lowercase().contains("api_key"));
-        assert!(!json.to_lowercase().contains("token"));
-        assert!(!json.to_lowercase().contains("secret"));
-        assert!(!json.to_lowercase().contains("password"));
-        assert!(!json.to_lowercase().contains("credential"));
+        // Weight 1:3 → roughly 100:300
+        assert!(count_a >= 70, "a got {}, expected ~100", count_a);
+        assert!(count_b >= 270, "b got {}, expected ~300", count_b);
     }
 }

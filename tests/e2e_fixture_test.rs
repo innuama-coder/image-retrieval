@@ -287,8 +287,8 @@ fn e2e_full_delivery_complete_pipeline() {
             plan_qp.quality_tier,
         );
         if evidence.passed_mechanical() {
-            if !c.source_url.trim().is_empty() {
-                seen.insert(c.source_url.clone());
+            if !c.image_url.trim().is_empty() {
+                seen.insert(c.image_url.clone());
             }
             mechanically_passed.push((c.clone(), evidence));
         }
@@ -321,7 +321,9 @@ fn e2e_full_delivery_complete_pipeline() {
         .candidates
         .iter()
         .filter_map(|d| match d {
-            CandidateDecision::Accepted { candidate, .. } => Some(candidate.id.to_string()),
+            CandidateDecision::Accepted { candidate, .. } => {
+                Some(candidate.candidate_id.to_string())
+            }
             _ => None,
         })
         .collect();
@@ -1011,13 +1013,13 @@ fn e2e_search_scheduler_with_fixture_providers() {
 
     // All candidates have valid source URLs with no credentials
     for c in r1.iter().chain(r2.iter()) {
-        assert!(!c.source_url.is_empty());
-        assert!(!c.source_url.contains("api_key"));
-        assert!(!c.source_url.contains("token"));
+        assert!(!c.image_url.is_empty());
+        assert!(!c.image_url.contains("api_key"));
+        assert!(!c.image_url.contains("token"));
     }
 
     // Weight table should only include enabled providers with positive weight
-    let (weight_table, _readiness) = registry.build_weight_table();
+    let (weight_table, _readiness) = registry.build_weight_table_legacy();
     assert_eq!(weight_table.len(), 2);
 }
 
@@ -1031,7 +1033,7 @@ fn e2e_search_scheduler_empty_registry_produces_shortage() {
         ProviderRegistration::new(ProviderId::new("orphan"), "Orphan Provider").with_weight(1),
     );
 
-    let (weight_table, _) = registry.build_weight_table();
+    let (weight_table, _) = registry.build_weight_table_legacy();
     assert_eq!(weight_table.len(), 1);
 
     // The provider exists in the weight table but has no adapter
@@ -1313,7 +1315,7 @@ fn e2e_fixture_provider_is_explicitly_non_production() {
 #[test]
 fn e2e_fixture_candidates_have_fixture_prefix() {
     let candidate = make_fixture_candidate(42, "provider-x", "https://fixture.example.com");
-    assert!(candidate.id.to_string().starts_with("fixture-"));
+    assert!(candidate.candidate_id.to_string().starts_with("fixture-"));
     assert_eq!(candidate.provider_id.to_string(), "provider-x");
 }
 
@@ -1329,11 +1331,11 @@ fn e2e_search_outcome_provides_source_traceability() {
     let results = provider.search("test query", 10).unwrap();
     assert_eq!(results.len(), 5);
 
-    let ids: HashSet<String> = results.iter().map(|c| c.id.to_string()).collect();
+    let ids: HashSet<String> = results.iter().map(|c| c.candidate_id.to_string()).collect();
     assert_eq!(ids.len(), 5);
 
     for c in &results {
-        assert!(c.source_url.contains("trace-p1.example.com"));
+        assert!(c.image_url.contains("trace-p1.example.com"));
         assert_eq!(c.provider_id.to_string(), "trace-p1");
     }
 
@@ -1365,7 +1367,7 @@ fn e2e_provider_registry_mixed_readiness() {
             .with_enabled(true),
     );
 
-    let (weight_table, _readiness) = registry.build_weight_table();
+    let (weight_table, _readiness) = registry.build_weight_table_legacy();
     // Only the ready provider has positive weight and enabled=true
     // The "down-p" with weight 1 and enabled=true should also be in the table
     // The "disabled-p" with weight 0 is excluded

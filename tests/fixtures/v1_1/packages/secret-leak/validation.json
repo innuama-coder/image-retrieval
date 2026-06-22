@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "query_plan_id": "qp-secret-leak-001",
+  "validation_passed": false,
+  "issues": [
+    {
+      "code": "PKG_SECRET_LEAK",
+      "severity": "error",
+      "file": "image-recalls.json",
+      "message": "Credential-like pattern detected: Bearer token found in package file"
+    }
+  ]
+}

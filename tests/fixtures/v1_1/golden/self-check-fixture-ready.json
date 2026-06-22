@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "check_id": "golden-self-check-001",
+  "status": "ready",
+  "blocks": [],
+  "query_plan_valid": true,
+  "provider_summary": {
+    "total": 1,
+    "ready": 1,
+    "missing_credentials": 0,
+    "disabled": 0,
+    "misconfigured": 0,
+    "failed_health": 0,
+    "fixture_only": 1
+  },
+  "channel_summary": {
+    "total": 1,
+    "ready": 1,
+    "disabled": 0,
+    "fixture_only": 1,
+    "paid_unconfirmed": 0
+  },
+  "vlm_readiness": {
+    "available": true,
+    "fixture_mode": true,
+    "failure_code": null
+  },
+  "policy_readiness": {
+    "paid_enabled": false,
+    "robots_unknown_behavior": "warn",
+    "blockers": []
+  },
+  "output_readiness": {
+    "output_dir_writable": true
+  },
+  "credentials_status": "env_var_names_present_no_values_leaked",
+  "execution_mode": "fixture"
+}

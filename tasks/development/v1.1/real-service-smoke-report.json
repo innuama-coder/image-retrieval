@@ -1,0 +1,157 @@
+{
+  "schema_version": 1,
+  "test_id": "real_service_smoke_v1_1",
+  "status": "skipped",
+  "blocked_reason_code": "REAL_SMOKE_NOT_ENABLED",
+  "skipped_reason_code": "ENV_VAR_NOT_SET",
+  "timestamp": "2026-06-22T00:00:00Z",
+  "release_gates": [
+    {
+      "gate_id": "GATE-RSV-001",
+      "title": "Default Real Image Search Provider",
+      "status": "open",
+      "blocks": "Real service verification",
+      "detail": "SerpApi Google Images adapter exists but SERPAPI_API_KEY or configured credential env var is not present in this environment.",
+      "decision_ref": null
+    },
+    {
+      "gate_id": "GATE-RSV-002",
+      "title": "Built-in Provider List & Restricted/Legacy Provider Policy",
+      "status": "open",
+      "blocks": "Real service verification",
+      "detail": "Provider matrix tests blocked until built-in/restricted policy is defined.",
+      "decision_ref": null
+    },
+    {
+      "gate_id": "GATE-RSV-003",
+      "title": "Paid Retrieval Channel Enablement Boundary",
+      "status": "open",
+      "blocks": "Real service verification",
+      "detail": "Paid smoke skipped — explicit approval and budget not configured.",
+      "decision_ref": null
+    },
+    {
+      "gate_id": "GATE-RSV-004",
+      "title": "robots.txt / Site-Rule Compliance Strategy",
+      "status": "open",
+      "blocks": "Real service verification",
+      "detail": "Default warn posture active; no enforcement configured.",
+      "decision_ref": null
+    },
+    {
+      "gate_id": "GATE-RSV-005",
+      "title": "Quality Tier Calibration or Waiver",
+      "status": "open",
+      "blocks": "Real service verification",
+      "detail": "Quality tiers defined but uncalibrated against real tasks.",
+      "decision_ref": null
+    },
+    {
+      "gate_id": "GATE-MVP-001",
+      "title": "Qwen 3.5 VLM Production Evaluation Usage & Responsibility",
+      "status": "open",
+      "blocks": "MVP release",
+      "detail": "QWEN_API_TOKEN or configured credential env var not present. Qwen 3.5 VLM adapter exists but cannot execute production evaluation.",
+      "decision_ref": null
+    },
+    {
+      "gate_id": "GATE-MVP-002",
+      "title": "Built-in Provider List & Restricted/Legacy Provider Policy (MVP)",
+      "status": "open",
+      "blocks": "MVP release",
+      "detail": "Same as RSV-002, finalized before MVP.",
+      "decision_ref": null
+    },
+    {
+      "gate_id": "GATE-MVP-003",
+      "title": "Authorization Blocking Detailed Rules",
+      "status": "open",
+      "blocks": "MVP release",
+      "detail": "Unknown authorization allows with risk retention. Detailed blocking rules pending.",
+      "decision_ref": null
+    },
+    {
+      "gate_id": "GATE-MVP-004",
+      "title": "Fourth Retrieval Channel Decision",
+      "status": "open",
+      "blocks": "MVP release",
+      "detail": "Only three confirmed tiers modeled. No fourth tier synthesized.",
+      "decision_ref": null
+    },
+    {
+      "gate_id": "GATE-MVP-005",
+      "title": "Qwen 3.5 VLM Adapter Config/Smoke",
+      "status": "open",
+      "blocks": "MVP release",
+      "detail": "Candidate/image subjective evaluation smoke blocked until adapter readiness, response validation, and real-service evidence exist.",
+      "decision_ref": null
+    }
+  ],
+  "environment": {
+    "config_path_present": false,
+    "query_plan_path_present": false,
+    "output_dir_writable": false,
+    "credential_env_names_present": [],
+    "credential_env_names_expected": [
+      "SERPAPI_API_KEY",
+      "QWEN_API_TOKEN"
+    ],
+    "credential_values_redacted": true,
+    "real_smoke_env_var_set": false,
+    "required_env_vars": {
+      "IMAGE_RETRIEVAL_REAL_SMOKE": "not set",
+      "IMAGE_RETRIEVAL_CONFIG": "not set",
+      "IMAGE_RETRIEVAL_QUERY_PLAN": "not set",
+      "IMAGE_RETRIEVAL_OUTPUT_DIR": "not set"
+    }
+  },
+  "self_check_status": "not_run",
+  "package_dir": null,
+  "commands_run": [],
+  "commands_not_run": [
+    {
+      "command": "image-retrieval self-check --config \"$IMAGE_RETRIEVAL_CONFIG\" --query-plan \"$IMAGE_RETRIEVAL_QUERY_PLAN\" --format json",
+      "reason": "IMAGE_RETRIEVAL_REAL_SMOKE=1 not set; IMAGE_RETRIEVAL_CONFIG and IMAGE_RETRIEVAL_QUERY_PLAN env vars not configured"
+    },
+    {
+      "command": "image-retrieval run --query-plan \"$IMAGE_RETRIEVAL_QUERY_PLAN\" --config \"$IMAGE_RETRIEVAL_CONFIG\" --output-dir \"$IMAGE_RETRIEVAL_OUTPUT_DIR\" --mode production --format json",
+      "reason": "IMAGE_RETRIEVAL_REAL_SMOKE=1 not set; production run requires configured SerpApi + retrieval + Qwen 3.5 VLM prerequisites"
+    },
+    {
+      "command": "image-retrieval validate-package --package-dir \"$IMAGE_RETRIEVAL_OUTPUT_DIR/package\" --format json",
+      "reason": "No package produced because run was not executed"
+    }
+  ],
+  "smoke_objectives": {
+    "serpapi_search": {
+      "status": "blocked",
+      "reason": "SERPAPI_API_KEY not set; no real provider credential available"
+    },
+    "non_fixture_artifact_retrieval": {
+      "status": "blocked",
+      "reason": "No production retrieval channel configured; no output directory set"
+    },
+    "qwen_candidate_evaluation": {
+      "status": "blocked",
+      "reason": "QWEN_API_TOKEN not set; Qwen 3.5 VLM endpoint not configured"
+    },
+    "qwen_image_evaluation": {
+      "status": "blocked",
+      "reason": "QWEN_API_TOKEN not set; Qwen 3.5 VLM endpoint not configured"
+    },
+    "accepted_image": {
+      "status": "blocked",
+      "reason": "Upstream search + retrieval + evaluation all blocked"
+    },
+    "validated_package": {
+      "status": "blocked",
+      "reason": "No package generated because run was not executed"
+    },
+    "secret_scan": {
+      "status": "not_applicable",
+      "reason": "No real-service package to scan"
+    }
+  },
+  "notes": "Real-service smoke cannot run because IMAGE_RETRIEVAL_REAL_SMOKE=1 is not set and all required credential env vars (SERPAPI_API_KEY, QWEN_API_TOKEN) are absent. All release gates (RSV-001 through MVP-005) remain open. This smoke report is diagnostic evidence only — it does NOT prove full v1.1 expected-target completion. Local deterministic tests (284 passing) provide comprehensive coverage of all PRD AC-001 through AC-019 with fixture-mode evidence. Real-service evidence must be obtained in an environment where all prerequisites are satisfied before v1.1 expected-target completion can be claimed.",
+  "expected_target_completion_proven": false
+}

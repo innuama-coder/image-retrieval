@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "query_plan_id": "qp-coverage-mismatch-001",
+  "delivery_status": "passed",
+  "accepted_images": [
+    {
+      "candidate_id": "cand-001",
+      "retrieval_job_id": "ret-job-001",
+      "image_url": "https://example.com/images/photo.jpg",
+      "local_artifact_path": "images/photo.jpg",
+      "checksum_sha256": "abc123",
+      "content_type": "image/jpeg",
+      "media_type_match": true,
+      "delivered_qualified": true
+    }
+  ],
+  "gap": {"required_count": 1, "accepted_count": 1, "coverage_gap": 0}
+}

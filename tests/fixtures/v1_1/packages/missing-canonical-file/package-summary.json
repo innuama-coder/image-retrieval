@@ -1,0 +1,7 @@
+{
+  "schema_version": 1,
+  "query_plan_id": "qp-missing-file-001",
+  "package_status": "passed",
+  "accepted_count": 0,
+  "requested_count": 1
+}

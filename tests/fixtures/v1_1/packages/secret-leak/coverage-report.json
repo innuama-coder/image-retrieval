@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "query_plan_id": "qp-secret-leak-001",
+  "required_count": 1,
+  "accepted_count": 1,
+  "coverage_gap": 0,
+  "status": "covered"
+}

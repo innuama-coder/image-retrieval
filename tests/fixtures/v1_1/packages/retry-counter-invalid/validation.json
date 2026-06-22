@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "query_plan_id": "qp-retry-invalid-001",
+  "validation_passed": false,
+  "issues": [
+    {
+      "code": "PKG_RETRY_COUNTER_INVALID",
+      "severity": "error",
+      "message": "retry_count=0 does not equal full_attempt_count-1=4; violates 1 initial + N retry invariant"
+    }
+  ]
+}

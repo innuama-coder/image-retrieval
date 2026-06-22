@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "query_plan_id": "qp-fixture-passed-001",
+  "processed_candidates": [
+    {
+      "candidate_id": "cand-001",
+      "retrieval_job_id": "ret-job-001",
+      "image_url": "https://example.com/images/sunset-mountains-1920x1080.jpg",
+      "retrieval_status": "complete",
+      "local_artifact_path": "images/sunset-mountains-1920x1080.jpg",
+      "source_artifact_path": "evidence/source-sunset-mountains-1920x1080.jpg",
+      "source_sidecar_path": "evidence/sidecar-cand-001.json",
+      "content_summary_path": "evidence/summary-cand-001.json",
+      "task_report_path": "evidence/report-cand-001.json",
+      "visual_description_path": "evidence/vd-cand-001.txt",
+      "checksum_sha256": "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2",
+      "content_type": "image/jpeg",
+      "media_type_match": true,
+      "delivered_qualified": true
+    },
+    {
+      "candidate_id": "cand-002",
+      "retrieval_job_id": "ret-job-002",
+      "image_url": "https://photos.example.com/images/orange-sky-1600x900.jpg",
+      "retrieval_status": "complete",
+      "local_artifact_path": "images/orange-sky-1600x900.jpg",
+      "source_artifact_path": "evidence/source-orange-sky-1600x900.jpg",
+      "source_sidecar_path": "evidence/sidecar-cand-002.json",
+      "content_summary_path": "evidence/summary-cand-002.json",
+      "task_report_path": "evidence/report-cand-002.json",
+      "visual_description_path": "evidence/vd-cand-002.txt",
+      "checksum_sha256": "b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3",
+      "content_type": "image/jpeg",
+      "media_type_match": true,
+      "delivered_qualified": false,
+      "rejection_reason": "VLM image evaluation rejected"
+    }
+  ],
+  "delivered_images": [
+    {
+      "candidate_id": "cand-001",
+      "retrieval_job_id": "ret-job-001",
+      "image_url": "https://example.com/images/sunset-mountains-1920x1080.jpg",
+      "local_artifact_path": "images/sunset-mountains-1920x1080.jpg",
+      "checksum_sha256": "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2"
+    }
+  ]
+}

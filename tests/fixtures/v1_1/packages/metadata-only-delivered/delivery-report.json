@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "query_plan_id": "qp-meta-only-001",
+  "delivery_status": "passed",
+  "per_candidate": {
+    "cand-001": {
+      "candidate_id": "cand-001",
+      "delivered_qualified": true,
+      "all_artifacts_present": false
+    }
+  }
+}

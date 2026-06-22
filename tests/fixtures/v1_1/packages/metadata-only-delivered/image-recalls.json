@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "query_plan_id": "qp-meta-only-001",
+  "delivery_status": "passed",
+  "accepted_images": [
+    {
+      "candidate_id": "cand-001",
+      "retrieval_job_id": "ret-job-001",
+      "image_url": "https://example.com/images/photo.jpg",
+      "delivered_qualified": true,
+      "checksum_sha256": "fakechecksum12345",
+      "content_type": "image/jpeg",
+      "media_type_match": true
+    }
+  ],
+  "gap": {"required_count": 1, "accepted_count": 1, "coverage_gap": 0}
+}

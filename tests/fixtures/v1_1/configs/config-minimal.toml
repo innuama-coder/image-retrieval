@@ -1,0 +1,14 @@
+# Minimal runtime config — empty providers/channels, no VLM.
+# Used for testing default behavior and self-check readiness reporting.
+
+[limits]
+max_required_image_count = 1000
+max_retry_limit = 3
+
+[policy]
+allow_paid_channels = false
+respect_robots = true
+robots_unknown_behavior = "warn"
+
+[vlm_evaluation]
+enabled = false

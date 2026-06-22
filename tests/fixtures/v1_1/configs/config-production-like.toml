@@ -1,0 +1,40 @@
+# Production-like config template for real-service smoke testing.
+# Credential env var NAMES are referenced, never their values.
+# This fixture is a template — actual values come from environment variables.
+
+[limits]
+max_required_image_count = 1000
+max_retry_limit = 3
+
+[output]
+write_diagnostics = true
+
+[policy]
+allow_paid_channels = false
+respect_robots = true
+robots_unknown_behavior = "warn"
+
+[[providers]]
+provider_id = "serpapi_google_images"
+provider_kind = "serpapi_google_images"
+enabled = true
+weight = 1
+endpoint = "https://serpapi.com/search"
+credential_env = "SERPAPI_API_KEY"
+
+[providers.default_query_params]
+engine = "google_images"
+
+[[retrieval_channels]]
+channel_id = "normal_web_fetch"
+channel_kind = "normal_web_fetch"
+tier = "web_fetch"
+enabled = true
+
+[vlm_evaluation]
+enabled = true
+fixture_mode = false
+provider_id = "qwen_3_5_vlm"
+provider_kind = "qwen_3_5_vlm"
+model = "qwen-3.5"
+credential_env = "QWEN_API_TOKEN"

@@ -1,0 +1,14 @@
+{
+  "description": "sunset over mountain landscape with vibrant orange sky",
+  "required_image_count": 1,
+  "quality": "general",
+  "query_texts": [
+    "sunset mountain landscape",
+    "vibrant orange sunset sky"
+  ],
+  "material_types": ["photo"],
+  "visual_requirements": ["high contrast", "warm colors"],
+  "negative_scope": ["night", "black and white"],
+  "source_diversity_requirement": null,
+  "retry_limit": 3
+}

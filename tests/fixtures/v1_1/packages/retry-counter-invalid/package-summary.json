@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "query_plan_id": "qp-retry-invalid-001",
+  "package_status": "passed",
+  "full_attempt_count": 5,
+  "retry_count": 0,
+  "accepted_count": 1,
+  "requested_count": 1
+}

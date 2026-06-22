@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "query_plan_id": "qp-meta-only-001",
+  "candidates": {
+    "cand-001": {
+      "candidate_id": "cand-001",
+      "status": "delivered_qualified",
+      "local_artifact": null,
+      "checksum": "fakechecksum12345"
+    }
+  }
+}

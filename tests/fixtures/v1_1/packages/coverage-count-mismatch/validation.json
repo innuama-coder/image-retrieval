@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "query_plan_id": "qp-coverage-mismatch-001",
+  "validation_passed": false,
+  "issues": [
+    {
+      "code": "PKG_COVERAGE_COUNT_MISMATCH",
+      "severity": "error",
+      "message": "Package summary reports accepted_count=1 but coverage report shows mismatched required_count=2 with accepted_count=1"
+    }
+  ]
+}

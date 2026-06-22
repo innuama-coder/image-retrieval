@@ -1,0 +1,5 @@
+{
+  "schema_version": 1,
+  "query_plan_id": "qp-secret-leak-001",
+  "review_verdict": "rejected_unsafe"
+}

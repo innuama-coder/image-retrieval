@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "query_plan_id": "qp-fixture-passed-001",
+  "required_count": 1,
+  "accepted_count": 1,
+  "coverage_gap": 0,
+  "source_diversity": {"unique_sources": 1, "target": null},
+  "gaps": [],
+  "status": "covered"
+}

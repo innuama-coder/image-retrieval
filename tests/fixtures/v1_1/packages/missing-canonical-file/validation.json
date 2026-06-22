@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "query_plan_id": "qp-missing-file-001",
+  "validation_passed": false,
+  "issues": [
+    {
+      "code": "PKG_REQUIRED_FILE_MISSING",
+      "severity": "error",
+      "file": "retrieved-images.json",
+      "message": "Required canonical file 'retrieved-images.json' is missing from the package"
+    }
+  ]
+}

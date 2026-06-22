@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "query_plan_id": "qp-fixture-passed-001",
+  "handoff_ready": true,
+  "package_status": "passed",
+  "blockers": [],
+  "downstream_readiness": {
+    "images_available": true,
+    "evidence_available": true,
+    "validation_passed": true,
+    "review_complete": true
+  },
+  "notes": "Fixture-mode package. Not production delivery evidence."
+}

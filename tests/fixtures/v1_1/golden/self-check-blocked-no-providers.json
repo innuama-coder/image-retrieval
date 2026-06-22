@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "check_id": "golden-self-check-002",
+  "status": "blocked",
+  "blockers": [
+    "No ready search providers available — at least one real provider with credentials is required",
+    "No ready retrieval channels available — at least one non-fixture channel is required"
+  ],
+  "query_plan_valid": true,
+  "provider_summary": {
+    "total": 0,
+    "ready": 0,
+    "missing_credentials": 0,
+    "disabled": 0
+  },
+  "channel_summary": {
+    "total": 0,
+    "ready": 0,
+    "disabled": 0
+  },
+  "vlm_readiness": {
+    "available": false,
+    "fixture_mode": false,
+    "failure_code": "VLM_EVALUATION_DISABLED"
+  },
+  "policy_readiness": {
+    "paid_enabled": false,
+    "robots_unknown_behavior": "warn"
+  }
+}

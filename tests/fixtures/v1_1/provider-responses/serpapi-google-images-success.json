@@ -1,0 +1,51 @@
+{
+  "search_metadata": {
+    "id": "fixture-serpapi-001",
+    "status": "Success",
+    "created_at": "2026-06-21T12:00:00Z",
+    "total_time_taken": 1.23
+  },
+  "search_parameters": {
+    "engine": "google_images",
+    "q": "sunset mountain landscape",
+    "location_requested": "United States",
+    "google_domain": "google.com",
+    "hl": "en",
+    "gl": "us",
+    "device": "desktop"
+  },
+  "image_results": [
+    {
+      "position": 1,
+      "title": "Beautiful Mountain Sunset Landscape",
+      "link": "https://example.com/sunset-mountains",
+      "original": "https://example.com/images/sunset-mountains-1920x1080.jpg",
+      "thumbnail": "https://example.com/thumbs/sunset-mountains-200x113.jpg",
+      "original_width": 1920,
+      "original_height": 1080,
+      "source": "example.com",
+      "license": "creative commons attribution"
+    },
+    {
+      "position": 2,
+      "title": "Vibrant Orange Sky Over Mountains",
+      "link": "https://photos.example.com/orange-sky-mountains",
+      "original": "https://photos.example.com/images/orange-sky-1600x900.jpg",
+      "thumbnail": "https://photos.example.com/thumbs/orange-sky-200x113.jpg",
+      "original_width": 1600,
+      "original_height": 900,
+      "source": "photos.example.com"
+    },
+    {
+      "position": 3,
+      "title": "Alpine Sunset Landscape Photography",
+      "link": "https://images.example.com/alpine-sunset",
+      "original": "https://images.example.com/photos/alpine-sunset-2048x1152.jpg",
+      "thumbnail": "https://images.example.com/thumbs/alpine-sunset-200x113.jpg",
+      "original_width": 2048,
+      "original_height": 1152,
+      "source": "images.example.com",
+      "license": "public domain"
+    }
+  ]
+}

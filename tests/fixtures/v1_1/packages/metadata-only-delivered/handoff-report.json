@@ -1,0 +1,6 @@
+{
+  "schema_version": 1,
+  "query_plan_id": "qp-meta-only-001",
+  "handoff_ready": false,
+  "blockers": ["metadata_only_delivery"]
+}

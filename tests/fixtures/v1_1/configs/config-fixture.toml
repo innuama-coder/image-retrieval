@@ -1,0 +1,32 @@
+# Fixture-mode runtime config for TASK-006 local testing.
+# All providers and channels are fixture-only — no real credentials required.
+
+[limits]
+max_required_image_count = 50
+max_retry_limit = 3
+
+[output]
+write_diagnostics = true
+
+[policy]
+allow_paid_channels = false
+respect_robots = true
+robots_unknown_behavior = "warn"
+
+[[providers]]
+provider_id = "fixture_search"
+provider_kind = "fixture"
+enabled = true
+weight = 1
+
+[[retrieval_channels]]
+channel_id = "fixture_web_fetch"
+channel_kind = "normal_web_fetch"
+tier = "web_fetch"
+enabled = true
+
+[vlm_evaluation]
+enabled = true
+fixture_mode = true
+provider_id = "fixture_vlm"
+provider_kind = "fixture"

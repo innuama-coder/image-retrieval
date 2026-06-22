@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "query_plan_id": "qp-meta-only-001",
+  "validation_passed": false,
+  "issues": [
+    {
+      "code": "PKG_DELIVERED_IMAGE_METADATA_ONLY",
+      "severity": "error",
+      "candidate_id": "cand-001",
+      "message": "Delivered image cand-001 is metadata-only — no local artifact path"
+    }
+  ]
+}

@@ -16,3 +16,4 @@ ureq = "2"
 uuid = { version = "1", features = ["v4"] }
 
 [dev-dependencies]
+toml = "0.8"

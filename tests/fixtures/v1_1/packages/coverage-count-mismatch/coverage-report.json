@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "query_plan_id": "qp-coverage-mismatch-001",
+  "required_count": 2,
+  "accepted_count": 1,
+  "coverage_gap": 1,
+  "status": "partial"
+}

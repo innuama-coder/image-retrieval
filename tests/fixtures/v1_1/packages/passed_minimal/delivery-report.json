@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "query_plan_id": "qp-fixture-passed-001",
+  "delivery_status": "passed",
+  "per_candidate": {
+    "cand-001": {
+      "candidate_id": "cand-001",
+      "retrieval_job_id": "ret-job-001",
+      "delivered_qualified": true,
+      "all_artifacts_present": true,
+      "checksum_present": true,
+      "media_type_match": true,
+      "mechanical_passed": true,
+      "vlm_passed": true,
+      "ownership_match": true,
+      "blocking_reasons": []
+    },
+    "cand-002": {
+      "candidate_id": "cand-002",
+      "retrieval_job_id": "ret-job-002",
+      "delivered_qualified": false,
+      "all_artifacts_present": true,
+      "checksum_present": true,
+      "media_type_match": true,
+      "mechanical_passed": true,
+      "vlm_passed": false,
+      "ownership_match": true,
+      "blocking_reasons": ["VLM image evaluation rejected"]
+    }
+  }
+}

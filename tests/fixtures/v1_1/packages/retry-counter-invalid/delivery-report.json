@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "query_plan_id": "qp-retry-invalid-001",
+  "delivery_status": "passed",
+  "per_candidate": {
+    "cand-001": {
+      "candidate_id": "cand-001",
+      "delivered_qualified": true
+    }
+  }
+}

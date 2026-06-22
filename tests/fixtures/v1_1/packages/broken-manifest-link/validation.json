@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "query_plan_id": "qp-broken-link-001",
+  "validation_passed": false,
+  "issues": [
+    {
+      "code": "PKG_MANIFEST_LINK_BROKEN",
+      "severity": "error",
+      "candidate_id": "cand-001",
+      "path": "images/nonexistent.jpg",
+      "message": "Manifest references artifact path 'images/nonexistent.jpg' that does not exist in the package"
+    }
+  ]
+}

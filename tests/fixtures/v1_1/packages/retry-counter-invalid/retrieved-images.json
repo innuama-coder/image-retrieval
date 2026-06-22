@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "query_plan_id": "qp-retry-invalid-001",
+  "processed_candidates": [],
+  "delivered_images": [
+    {
+      "candidate_id": "cand-001",
+      "retrieval_job_id": "ret-job-001",
+      "local_artifact_path": "images/photo.jpg",
+      "checksum_sha256": "abc123"
+    }
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "query_plan_id": "qp-fixture-passed-001",
+  "validation_passed": true,
+  "issues": [],
+  "checks_performed": [
+    "canonical_files_present",
+    "json_valid",
+    "artifacts_present",
+    "checksums_present",
+    "media_type_match",
+    "ownership_match",
+    "no_metadata_only",
+    "coverage_count_match",
+    "retry_counters_valid",
+    "manifest_links_valid",
+    "provider_readiness_present",
+    "retrieval_trace_present",
+    "secret_scan_pass"
+  ],
+  "execution_mode": "fixture",
+  "fixture_evidence": true
+}

@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "query_plan_id": "qp-no-checksum-001",
+  "delivered_images": [
+    {
+      "candidate_id": "cand-001",
+      "retrieval_job_id": "ret-job-001",
+      "image_url": "https://example.com/images/photo.jpg",
+      "local_artifact_path": "images/photo.jpg"
+    }
+  ]
+}

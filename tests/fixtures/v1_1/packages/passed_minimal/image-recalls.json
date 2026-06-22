@@ -1,0 +1,79 @@
+{
+  "schema_version": 1,
+  "query_plan_id": "qp-fixture-passed-001",
+  "query_plan_summary": {
+    "description": "sunset over mountain landscape with vibrant orange sky",
+    "required_image_count": 1,
+    "quality": "general",
+    "query_texts": ["sunset mountain landscape", "vibrant orange sunset sky"],
+    "material_types": ["photo"],
+    "visual_requirements": ["high contrast", "warm colors"],
+    "negative_scope": ["night", "black and white"],
+    "candidate_target": 20,
+    "retrieval_batch_target": 2,
+    "retry_limit": 3,
+    "full_attempt_limit": 4
+  },
+  "delivery_status": "passed",
+  "accepted_images": [
+    {
+      "candidate_id": "cand-001",
+      "retrieval_job_id": "ret-job-001",
+      "image_url": "https://example.com/images/sunset-mountains-1920x1080.jpg",
+      "local_artifact_path": "images/sunset-mountains-1920x1080.jpg",
+      "source_artifact_path": "evidence/source-sunset-mountains-1920x1080.jpg",
+      "source_sidecar_path": "evidence/sidecar-cand-001.json",
+      "content_summary_path": "evidence/summary-cand-001.json",
+      "task_report_path": "evidence/report-cand-001.json",
+      "visual_description_path": "evidence/vd-cand-001.txt",
+      "checksum_sha256": "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2",
+      "content_type": "image/jpeg",
+      "file_size_bytes": 245760,
+      "image_dimensions": {"width": 1920, "height": 1080},
+      "media_type_match": true,
+      "mechanical_passed": true,
+      "vlm_passed": true,
+      "provider_id": "fixture_search",
+      "provider_kind": "fixture",
+      "search_round": 1,
+      "provider_rank": 1,
+      "license_hint": "creative commons attribution",
+      "fetch_trace": ["direct_fetch"]
+    }
+  ],
+  "gap": {
+    "required_count": 1,
+    "accepted_count": 1,
+    "coverage_gap": 0
+  },
+  "candidate_summary": {
+    "total_candidates": 3,
+    "mechanically_blocked": 0,
+    "vlm_rejected": 1,
+    "vlm_uncertain": 0,
+    "retrievable": 2,
+    "retrieved": 2,
+    "image_accepted": 1
+  },
+  "retrieval_summary": {
+    "total_jobs": 2,
+    "complete": 2,
+    "failed": 0,
+    "fallback_used": false
+  },
+  "acceptance_summary": {
+    "mechanical_pass_rate": "2/2",
+    "vlm_pass_rate": "1/2",
+    "overall_pass_rate": "1/2"
+  },
+  "risk_summary": {
+    "fixture_mode": true,
+    "secret_scan_passed": true
+  },
+  "metrics": {},
+  "evidence_refs": [
+    "evidence/acceptance.json",
+    "evidence/rejection.json",
+    "diagnostics/diagnostic.json"
+  ]
+}

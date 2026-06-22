@@ -15,10 +15,11 @@
 use crate::domain::candidate::{
     CandidateRecord, ProviderId, VlmCandidateEvaluationRequest, VlmEvaluationResponse,
 };
-use crate::domain::config::{SearchProviderConfig, VlmEvaluationConfig};
+use crate::domain::config::{RetrievalChannelConfig, SearchProviderConfig, VlmEvaluationConfig};
 use crate::domain::image::{ImageAcceptanceDecision, ImageRecord, VlmImageEvaluationRequest};
 use crate::domain::retrieval::{
-    FallbackEligibilityFact, RetrievalBatch, RetrievalChannelTier, RetrievalResult,
+    RetrievalBatch, RetrievalBatchResult, RetrievalChannelCapabilities, RetrievalChannelId,
+    RetrievalChannelReadinessReport, RetrievalChannelTier,
 };
 use crate::domain::search::{
     ProviderConstraintSupport, ProviderReadinessReport, SearchError, SearchRequest, SearchResponse,
@@ -102,34 +103,182 @@ pub trait BaseProvider {
 // BaseRetrievalChannel — retrieval channel port
 // ---------------------------------------------------------------------------
 
-/// Retrieval channel contract.
+/// Retrieval channel contract — v1.1 artifact-backed port.
 ///
 /// Every retrieval channel (web fetch, self-hosted, paid) must satisfy
-/// this trait. Channels expose their capabilities, tier, and failure
-/// information; the orchestrator and policy layer decide fallback.
+/// this trait. Channels expose their identity, capabilities, readiness,
+/// and execute batch retrieval returning structured [`RetrievalBatchResult`].
+///
+/// # Security
+///
+/// - `readiness()` checks config shape, credential env var presence, and
+///   dependency availability. It must NOT perform actual retrieval.
+/// - `retrieve_batch()` returns artifact evidence. No credential values
+///   may appear in the result DTOs.
+/// - Fixture channels are test-only and must be marked `fixture_only = true`
+///   in capabilities. Production runs must reject fixture evidence.
 pub trait BaseRetrievalChannel {
-    /// Return the tier this channel operates at.
-    fn tier(&self) -> RetrievalChannelTier;
+    /// Stable unique identifier for this channel.
+    fn channel_id(&self) -> RetrievalChannelId;
 
     /// Human-readable name for diagnostics and delivery manifests.
     fn display_name(&self) -> &str;
 
-    /// Check whether the channel is enabled and ready.
+    /// The tier this channel operates at.
+    fn tier(&self) -> RetrievalChannelTier;
+
+    /// Declared capabilities of this channel.
+    fn capabilities(&self) -> RetrievalChannelCapabilities;
+
+    /// Evaluate readiness against the given config.
     ///
-    /// For paid channels, readiness must return an error when the user
-    /// has not explicitly confirmed the paid tier.
-    fn readiness(&self) -> Result<()>;
+    /// Returns a structured report. Must not perform actual retrieval.
+    /// For paid channels, readiness must return `PaidUnconfirmed` when
+    /// the user has not explicitly confirmed the paid tier.
+    fn readiness(&self, config: &RetrievalChannelConfig) -> RetrievalChannelReadinessReport;
 
     /// Attempt to retrieve a batch of candidate images.
     ///
-    /// Returns one `RetrievalResult` per candidate in the batch.
+    /// Returns a structured [`RetrievalBatchResult`] with per-job artifact
+    /// evidence, attempt traces, fallback decisions, and diagnostics.
     /// Implementations must not silently skip access-control or
     /// authorization restrictions.
-    fn retrieve_batch(&self, batch: &RetrievalBatch) -> Result<Vec<RetrievalResult>>;
+    fn retrieve_batch(
+        &self,
+        batch: &RetrievalBatch,
+    ) -> std::result::Result<RetrievalBatchResult, RetrievalError>;
+}
 
-    /// Produce a fallback eligibility fact after this channel failed for
-    /// one or more candidates.
-    fn fallback_fact(&self, reason: &str) -> FallbackEligibilityFact;
+// ---------------------------------------------------------------------------
+// Retrieval error
+// ---------------------------------------------------------------------------
+
+/// Errors that can occur during retrieval execution.
+#[derive(Debug, Clone)]
+pub enum RetrievalError {
+    /// Channel is disabled by config.
+    ChannelDisabled { channel_id: String },
+    /// Required credential is missing.
+    CredentialMissing { env_var: String },
+    /// Channel dependency is missing.
+    DependencyMissing { detail: String },
+    /// Channel is misconfigured.
+    Misconfigured { reason: String },
+    /// Paid channel not confirmed.
+    PaidUnconfirmed,
+    /// Fixture channel used in production.
+    FixtureNotProduction,
+    /// Network / transport failure.
+    Network { message: String },
+    /// HTTP status prevented fetch.
+    HttpStatus { code: u16, message: String },
+    /// Access was restricted (401, 403, login, paywall).
+    AccessRestricted { message: String },
+    /// Source domain or URL is prohibited.
+    ProhibitedSource { domain: String },
+    /// Channel returned only metadata, no image artifact.
+    MetadataOnly { message: String },
+    /// Artifact write failed.
+    ArtifactWriteFailed { path: String, reason: String },
+    /// Retrieval timed out.
+    Timeout { message: String },
+    /// Unknown / internal error.
+    Internal { message: String },
+}
+
+impl std::fmt::Display for RetrievalError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ChannelDisabled { channel_id } => {
+                write!(f, "retrieval channel '{}' is disabled", channel_id)
+            }
+            Self::CredentialMissing { env_var } => {
+                write!(f, "retrieval credential env var '{}' is not set", env_var)
+            }
+            Self::DependencyMissing { detail } => {
+                write!(f, "retrieval dependency missing: {}", detail)
+            }
+            Self::Misconfigured { reason } => {
+                write!(f, "retrieval channel misconfigured: {}", reason)
+            }
+            Self::PaidUnconfirmed => {
+                write!(f, "paid retrieval requires explicit user confirmation")
+            }
+            Self::FixtureNotProduction => {
+                write!(f, "fixture channel cannot be used in production")
+            }
+            Self::Network { message } => write!(f, "retrieval network error: {}", message),
+            Self::HttpStatus { code, message } => {
+                write!(f, "retrieval HTTP {}: {}", code, message)
+            }
+            Self::AccessRestricted { message } => {
+                write!(f, "retrieval access restricted: {}", message)
+            }
+            Self::ProhibitedSource { domain } => {
+                write!(f, "retrieval prohibited source: {}", domain)
+            }
+            Self::MetadataOnly { message } => {
+                write!(f, "retrieval metadata-only result: {}", message)
+            }
+            Self::ArtifactWriteFailed { path, reason } => {
+                write!(f, "retrieval artifact write failed '{}': {}", path, reason)
+            }
+            Self::Timeout { message } => write!(f, "retrieval timeout: {}", message),
+            Self::Internal { message } => write!(f, "retrieval internal error: {}", message),
+        }
+    }
+}
+
+impl std::error::Error for RetrievalError {}
+
+impl RetrievalError {
+    /// Convert this error to a failure code for diagnostics.
+    pub fn to_failure_code(&self) -> crate::domain::retrieval::RetrievalFailureCode {
+        use crate::domain::retrieval::RetrievalFailureCode;
+        match self {
+            Self::ChannelDisabled { .. } => RetrievalFailureCode::RetrievalChannelDisabled,
+            Self::CredentialMissing { .. } => {
+                RetrievalFailureCode::RetrievalChannelCredentialMissing
+            }
+            Self::DependencyMissing { .. } => {
+                RetrievalFailureCode::RetrievalChannelDependencyMissing
+            }
+            Self::Misconfigured { .. } => RetrievalFailureCode::RetrievalChannelMisconfigured,
+            Self::PaidUnconfirmed => RetrievalFailureCode::RetrievalPaidUnconfirmed,
+            Self::FixtureNotProduction => RetrievalFailureCode::RetrievalFixtureNotProduction,
+            Self::Network { .. } => RetrievalFailureCode::RetrievalDirectFetchNetwork,
+            Self::HttpStatus { code, .. } if *code == 401 || *code == 403 => {
+                RetrievalFailureCode::RetrievalAccessRestricted
+            }
+            Self::HttpStatus { .. } => RetrievalFailureCode::RetrievalHttpStatus,
+            Self::AccessRestricted { .. } => RetrievalFailureCode::RetrievalAccessRestricted,
+            Self::ProhibitedSource { .. } => RetrievalFailureCode::RetrievalProhibitedSource,
+            Self::MetadataOnly { .. } => RetrievalFailureCode::RetrievalMetadataOnly,
+            Self::ArtifactWriteFailed { .. } => RetrievalFailureCode::RetrievalArtifactWriteFailed,
+            Self::Timeout { .. } => RetrievalFailureCode::RetrievalDirectFetchNetwork,
+            Self::Internal { .. } => RetrievalFailureCode::RetrievalUnavailable,
+        }
+    }
+
+    /// Whether this error allows fallback to a higher tier.
+    pub fn allows_fallback(&self) -> bool {
+        match self {
+            Self::AccessRestricted { .. }
+            | Self::ProhibitedSource { .. }
+            | Self::PaidUnconfirmed
+            | Self::FixtureNotProduction => false,
+            Self::ChannelDisabled { .. }
+            | Self::CredentialMissing { .. }
+            | Self::DependencyMissing { .. }
+            | Self::Misconfigured { .. }
+            | Self::Network { .. }
+            | Self::HttpStatus { .. }
+            | Self::MetadataOnly { .. }
+            | Self::ArtifactWriteFailed { .. }
+            | Self::Timeout { .. }
+            | Self::Internal { .. } => true,
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------

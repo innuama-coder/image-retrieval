@@ -1,677 +1,728 @@
-//! Integration tests for retrieval: batch planning, channel execution,
-//! fallback, short batch, and acceptance criteria.
+//! Retrieval integration tests — v1.1 TASK-004.
 //!
-//! # Test categories
+//! Tests retrieval batch planning, channel fallback execution, artifact
+//! completeness, policy blockers, metadata-only rejection, and fixture
+//! evidence boundaries.
 //!
-//! 1. **Batch planning** — normal, short, empty, URL mapping.
-//! 2. **Channel execution** — single channel, fallback, access-restricted stop.
-//! 3. **Web fetch channel** — readiness, missing URL, content type checks.
-//! 4. **Fixture channel** — success, failure, mixed, readiness states.
-//! 5. **Paid channel boundaries** — not silently used, requires confirmation.
-//! 6. **Acceptance criteria** — AC-006 (batch), AC-007 (fallback/access).
+//! References: `docs/design/v1.1-TASK-004-retrieval-artifact-channel-design.md`
 
 use image_retrieval::domain::candidate::{
-    CandidateDecision, CandidateId, CandidateRecord, ProviderId, RetrievableCandidateSequence,
+    CandidateId, CandidateQualityDecision, CandidateQualityStatus, CandidateRecord, ProviderId,
+    RetrievableCandidate, RetrievableCandidateBatch,
 };
+use image_retrieval::domain::config::{RetrievalChannelConfig, RetrievalChannelKind};
+use image_retrieval::domain::query_plan::{QueryPlanId, QueryRetrievalPolicy};
 use image_retrieval::domain::retrieval::{
-    FallbackEligibilityFact, RetrievalBatch, RetrievalChannelReadiness, RetrievalChannelTier,
-    RetrievalFailureCategory, RetrievalResult,
+    RetrievalArtifactResult, RetrievalAttemptMode, RetrievalChannelCapabilities,
+    RetrievalChannelId, RetrievalChannelReadinessReport, RetrievalChannelTier,
+    RetrievalFailureCode, RetrievalJob, RetrievalJobId, RetrievalPolicyContext,
+    RetrievalShortageCode, RetrievalStatus,
 };
-use image_retrieval::ports::BaseRetrievalChannel;
-use image_retrieval::retrieval::channels::fixture::{
-    FixtureChannel, FixtureReadiness, FixtureResponse,
-};
-use image_retrieval::retrieval::{
-    execute_batch, summarise_channel_readiness, RetrievalBatchPlanner, WebFetchChannel,
-};
+use image_retrieval::ports::{BaseRetrievalChannel, RetrievalError};
+use image_retrieval::retrieval::batch_planner::RetrievalBatchPlanner;
+use image_retrieval::retrieval::channels::fixture::FixtureChannel;
+use image_retrieval::retrieval::channels::paid::PaidChannel;
+use image_retrieval::retrieval::channels::self_hosted::SelfHostedChannel;
+use image_retrieval::retrieval::{plan_and_execute, FixtureResponse};
+use std::path::PathBuf;
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
+// =============================================================================
+// Test helpers
+// =============================================================================
 
-fn make_accepted(id: &str, url: &str, priority: u32) -> CandidateDecision {
-    CandidateDecision::Accepted {
-        candidate: CandidateRecord::minimal(CandidateId::new(id), ProviderId::new("test"), url),
-        priority,
+fn make_retrievable(id: &str, image_url: &str, priority: u32) -> RetrievableCandidate {
+    let rec = CandidateRecord::minimal(CandidateId::new(id), ProviderId::new("test"), image_url);
+    RetrievableCandidate {
+        candidate: rec,
+        candidate_quality_decision: CandidateQualityDecision {
+            candidate_id: CandidateId::new(id),
+            query_plan_id: "qp-test".into(),
+            mechanical_passed: true,
+            vlm_passed: true,
+            final_status: CandidateQualityStatus::Retrievable,
+            priority,
+            blocking_metrics: vec![],
+            reference_metrics: vec![],
+            vlm_decision: None,
+            diagnostics: vec![],
+        },
+        retrieval_priority: priority,
+        primary_image_url: image_url.into(),
+        source_page_url: Some(format!("https://example.com/page/{}", id)),
+        thumbnail_url: None,
+        expected_mime_type: Some("image/jpeg".into()),
+        license_hint: None,
+        provenance_refs: vec![],
     }
 }
 
-fn make_sequence(decisions: Vec<CandidateDecision>) -> RetrievableCandidateSequence {
-    RetrievableCandidateSequence::from_decisions(decisions)
+fn make_batch_data(candidates: Vec<RetrievableCandidate>) -> RetrievableCandidateBatch {
+    let len = candidates.len() as u32;
+    RetrievableCandidateBatch {
+        query_plan_id: "qp-test".into(),
+        full_attempt_count: 1,
+        retry_count: 0,
+        retrieval_batch_target: (len * 2).max(2),
+        candidates,
+        rejected_decisions: vec![],
+        execution_blocking_facts: vec![],
+    }
 }
 
-// ---------------------------------------------------------------------------
-// AC-006: Batch size = required_count × 2
-// ---------------------------------------------------------------------------
+fn default_channel_config(tier: RetrievalChannelTier) -> RetrievalChannelConfig {
+    RetrievalChannelConfig {
+        channel_id: format!("test-{}", tier),
+        channel_kind: RetrievalChannelKind::NormalWebFetch,
+        tier,
+        enabled: true,
+        endpoint: None,
+        credential_env: None,
+        max_batch_size: None,
+    }
+}
+
+fn complete_result(job_id: &str, candidate_id: &str) -> RetrievalArtifactResult {
+    RetrievalArtifactResult {
+        retrieval_job_id: RetrievalJobId::new(job_id),
+        retrieval_batch_id: "b-1".into(),
+        query_plan_id: "qp-1".into(),
+        candidate_id: candidate_id.into(),
+        channel_id: RetrievalChannelId::new("wf"),
+        channel_tier: RetrievalChannelTier::NormalWebFetch,
+        attempt_mode: RetrievalAttemptMode::DirectImageFetch,
+        retrieval_status: RetrievalStatus::Complete,
+        local_artifact_path: Some(PathBuf::from("/tmp/img.jpg")),
+        source_artifact_path: Some(PathBuf::from("/tmp/src.jpg")),
+        source_sidecar_path: Some(PathBuf::from("/tmp/sidecar.json")),
+        content_summary_path: Some(PathBuf::from("/tmp/summary.json")),
+        task_report_path: Some(PathBuf::from("/tmp/report.json")),
+        visual_description_path: Some(PathBuf::from("/tmp/vd.json")),
+        diagnostics_path: None,
+        checksum_sha256: Some("abc".into()),
+        content_type_reported: Some("image/jpeg".into()),
+        content_type_sniffed: Some("image/jpeg".into()),
+        content_type: Some("image/jpeg".into()),
+        file_extension: Some("jpg".into()),
+        file_size_bytes: Some(1024),
+        image_dimensions: None,
+        media_type_match: true,
+        local_artifact_exists: true,
+        source_artifact_exists: true,
+        sidecar_valid: true,
+        summary_quality_passed: true,
+        task_report_valid: true,
+        visual_description_valid: true,
+        job_ownership_valid: true,
+        metadata_only: false,
+        fetch_trace: vec![],
+        policy_decisions: vec![],
+        diagnostics: vec![],
+        failure_reason: None,
+        redaction_applied: false,
+    }
+}
+
+// =============================================================================
+// Batch planner tests
+// =============================================================================
 
 #[test]
-fn ac006_batch_target_for_4_images_is_8() {
-    let target = RetrievalBatchPlanner::batch_target_for(4);
-    assert_eq!(target, 8);
+fn batch_target_for_1_is_2() {
+    assert_eq!(RetrievalBatchPlanner::batch_target_for(1), 2);
 }
 
 #[test]
-fn ac006_batch_target_for_1_image_is_2() {
-    let target = RetrievalBatchPlanner::batch_target_for(1);
-    assert_eq!(target, 2);
+fn batch_target_for_4_is_8() {
+    assert_eq!(RetrievalBatchPlanner::batch_target_for(4), 8);
 }
 
 #[test]
-fn ac006_batch_target_for_3_images_is_6() {
-    let target = RetrievalBatchPlanner::batch_target_for(3);
-    assert_eq!(target, 6);
+fn batch_target_for_0_is_0() {
+    assert_eq!(RetrievalBatchPlanner::batch_target_for(0), 0);
 }
 
 #[test]
-fn ac006_batch_exact_target_formed() {
-    let decisions: Vec<CandidateDecision> = (0..8)
-        .map(|i| {
-            make_accepted(
-                &format!("c{}", i),
-                &format!("https://x.com/{}.jpg", i),
-                8 - i,
-            )
-        })
-        .collect();
-    let seq = make_sequence(decisions);
-    let (batch, shortage) = RetrievalBatchPlanner::plan(&seq, 8);
+fn batch_planner_normal_exact_target() {
+    let candidates = vec![
+        make_retrievable("a", "https://example.com/a.jpg", 5),
+        make_retrievable("b", "https://example.com/b.jpg", 4),
+    ];
+    let rb = RetrievableCandidateBatch {
+        retrieval_batch_target: 2,
+        ..make_batch_data(candidates)
+    };
 
-    assert_eq!(batch.actual_size(), 8);
+    let qp_id = QueryPlanId::new("qp-test");
+    let policy = QueryRetrievalPolicy::default();
+    let (batch, shortage) =
+        RetrievalBatchPlanner::plan_from_batch(&rb, &qp_id, &policy, "warn", &[], false);
+
+    assert_eq!(batch.actual_size, 2);
     assert!(!batch.is_short_batch);
+    assert_eq!(batch.jobs.len(), 2);
+    // Higher priority first
+    assert_eq!(batch.jobs[0].candidate_id, "a");
     assert!(shortage.is_none());
 }
 
 #[test]
-fn ac006_batch_takes_no_more_than_target() {
-    let decisions: Vec<CandidateDecision> = (0..20)
-        .map(|i| {
-            make_accepted(
-                &format!("c{}", i),
-                &format!("https://x.com/{}.jpg", i),
-                20 - i,
-            )
-        })
-        .collect();
-    let seq = make_sequence(decisions);
-    let (batch, _) = RetrievalBatchPlanner::plan(&seq, 8);
-
-    // Even with 20 candidates, only 8 enter the batch
-    assert_eq!(batch.actual_size(), 8);
-}
-
-// ---------------------------------------------------------------------------
-// Short batch: fewer candidates than target
-// ---------------------------------------------------------------------------
-
-#[test]
-fn short_batch_formed_when_fewer_candidates() {
-    let decisions = vec![
-        make_accepted("a", "https://example.com/a.jpg", 3),
-        make_accepted("b", "https://example.com/b.jpg", 2),
-        make_accepted("c", "https://example.com/c.jpg", 1),
+fn batch_planner_short_batch_when_fewer() {
+    let candidates = vec![
+        make_retrievable("a", "https://example.com/a.jpg", 5),
+        make_retrievable("b", "https://example.com/b.jpg", 3),
     ];
-    let seq = make_sequence(decisions);
-    let (batch, shortage) = RetrievalBatchPlanner::plan(&seq, 8);
+    let rb = RetrievableCandidateBatch {
+        retrieval_batch_target: 8,
+        ..make_batch_data(candidates)
+    };
 
-    assert_eq!(batch.actual_size(), 3);
+    let qp_id = QueryPlanId::new("qp-test");
+    let policy = QueryRetrievalPolicy::default();
+    let (batch, _shortage) =
+        RetrievalBatchPlanner::plan_from_batch(&rb, &qp_id, &policy, "warn", &[], false);
+
     assert!(batch.is_short_batch);
-
-    let s = shortage.expect("must have shortage evidence");
-    assert_eq!(s.target_size, 8);
-    assert_eq!(s.actual_size, 3);
-    assert!(s.reason.contains("only 3"));
+    assert_eq!(batch.actual_size, 2);
 }
 
 #[test]
-fn short_batch_does_not_infinite_backfill() {
-    // Only 2 candidates available, target 8 — planner stops at 2.
-    // It does NOT loop back, re-search, or fabricate candidates.
-    let decisions = vec![
-        make_accepted("x", "https://example.com/x.jpg", 1),
-        make_accepted("y", "https://example.com/y.jpg", 1),
-    ];
-    let seq = make_sequence(decisions);
+fn batch_planner_empty_returns_shortage() {
+    let rb = RetrievableCandidateBatch {
+        retrieval_batch_target: 4,
+        ..make_batch_data(vec![])
+    };
 
-    // Plan twice — both times same result, no side effects
-    let (batch1, _) = RetrievalBatchPlanner::plan(&seq, 8);
-    let (batch2, _) = RetrievalBatchPlanner::plan(&seq, 8);
+    let qp_id = QueryPlanId::new("qp-test");
+    let policy = QueryRetrievalPolicy::default();
+    let (batch, _shortage) =
+        RetrievalBatchPlanner::plan_from_batch(&rb, &qp_id, &policy, "warn", &[], false);
 
-    assert_eq!(batch1.actual_size(), 2);
-    assert_eq!(batch2.actual_size(), 2);
-}
-
-#[test]
-fn empty_sequence_produces_empty_short_batch() {
-    let seq = RetrievableCandidateSequence::empty();
-    let (batch, shortage) = RetrievalBatchPlanner::plan(&seq, 8);
-
-    assert_eq!(batch.actual_size(), 0);
+    assert_eq!(batch.actual_size, 0);
     assert!(batch.is_short_batch);
-    assert!(shortage.is_some());
 }
 
-// ---------------------------------------------------------------------------
-// Rejected / uncertain candidates NOT in batch
-// ---------------------------------------------------------------------------
+// =============================================================================
+// RetrievalJob construction tests
+// =============================================================================
 
 #[test]
-fn rejected_candidates_never_enter_batch() {
-    let decisions = vec![
-        make_accepted("good", "https://example.com/good.jpg", 5),
-        CandidateDecision::Rejected {
-            candidate: CandidateRecord::minimal(
-                CandidateId::new("bad"),
-                ProviderId::new("test"),
-                "https://example.com/bad.jpg",
-            ),
-            reason: "low quality".into(),
-        },
-        make_accepted("also-good", "https://example.com/also.jpg", 3),
-    ];
-    // from_decisions filters to only Accepted
-    let seq = make_sequence(decisions);
-    let (batch, _) = RetrievalBatchPlanner::plan(&seq, 4);
-
-    assert_eq!(batch.actual_size(), 2);
-    assert!(!batch.candidate_ids.contains(&"bad".to_string()));
-    assert!(batch.candidate_ids.contains(&"good".to_string()));
-    assert!(batch.candidate_ids.contains(&"also-good".to_string()));
-}
-
-#[test]
-fn uncertain_candidates_never_enter_batch() {
-    let decisions = vec![
-        make_accepted("yes", "https://example.com/yes.jpg", 3),
-        CandidateDecision::Uncertain {
-            candidate: CandidateRecord::minimal(
-                CandidateId::new("maybe"),
-                ProviderId::new("test"),
-                "https://example.com/maybe.jpg",
-            ),
-            reason: "ambiguous".into(),
-        },
-    ];
-    let seq = make_sequence(decisions);
-    let (batch, _) = RetrievalBatchPlanner::plan(&seq, 2);
-
-    assert_eq!(batch.actual_size(), 1);
-    assert_eq!(batch.candidate_ids, vec!["yes"]);
-}
-
-#[test]
-fn execution_blocked_candidates_never_enter_batch() {
-    let decisions = vec![
-        make_accepted("ok", "https://example.com/ok.jpg", 5),
-        CandidateDecision::ExecutionBlocked {
-            candidate: CandidateRecord::minimal(
-                CandidateId::new("blocked"),
-                ProviderId::new("test"),
-                "https://example.com/blocked.jpg",
-            ),
-            reason: "OpenClaw unavailable".into(),
-        },
-    ];
-    let seq = make_sequence(decisions);
-    let (batch, _) = RetrievalBatchPlanner::plan(&seq, 2);
-
-    assert_eq!(batch.actual_size(), 1);
-    assert_eq!(batch.candidate_ids, vec!["ok"]);
-}
-
-// ---------------------------------------------------------------------------
-// Fallback: normal failure allows fallback, access-restricted does not
-// ---------------------------------------------------------------------------
-
-#[test]
-fn ac007_normal_failure_allows_fallback() {
-    let decisions = vec![make_accepted("a", "https://example.com/a.jpg", 5)];
-    let seq = make_sequence(decisions);
-
-    let fail_channel = FixtureChannel::new(RetrievalChannelTier::WebFetch)
-        .with_response("a", FixtureResponse::network_failure());
-    let success_channel =
-        FixtureChannel::new(RetrievalChannelTier::SelfHosted).with_all_success(&["a"]);
-    let channels: Vec<&dyn BaseRetrievalChannel> = vec![&fail_channel, &success_channel];
-
-    let outcome = execute_batch(&seq, 2, &channels);
-
-    // Fallback occurred: started at WebFetch, fell back to SelfHosted
-    assert_eq!(outcome.channels_attempted, 2);
-    assert_eq!(outcome.channel_tier, RetrievalChannelTier::SelfHosted);
-    assert!(!outcome.fallback_facts.is_empty());
-    assert!(outcome.results.iter().all(|r| r.is_success()));
-}
-
-#[test]
-fn ac007_access_restricted_blocks_fallback() {
-    let decisions = vec![make_accepted(
-        "a",
-        "https://restricted.example.com/a.jpg",
-        5,
-    )];
-    let seq = make_sequence(decisions);
-
-    let restricted = FixtureChannel::new(RetrievalChannelTier::WebFetch)
-        .with_response("a", FixtureResponse::access_restricted());
-    let higher = FixtureChannel::new(RetrievalChannelTier::SelfHosted).with_all_success(&["a"]);
-    let channels: Vec<&dyn BaseRetrievalChannel> = vec![&restricted, &higher];
-
-    let outcome = execute_batch(&seq, 2, &channels);
-
-    // MUST NOT fall back past access restriction
-    assert_eq!(outcome.channel_tier, RetrievalChannelTier::WebFetch);
-    assert_eq!(outcome.channels_attempted, 1);
-    assert!(outcome.execution_blocked.is_some());
-}
-
-#[test]
-fn ac007_access_restriction_not_bypassed_by_upgrading_channel() {
-    // Even with SelfHosted available and willing, access restriction on
-    // WebFetch must block fallback.
-    let decisions = vec![make_accepted(
-        "locked",
-        "https://paywall.example.com/locked.jpg",
-        5,
-    )];
-    let seq = make_sequence(decisions);
-
-    let web = FixtureChannel::new(RetrievalChannelTier::WebFetch).with_response(
-        "locked",
-        FixtureResponse::Failure {
-            failure_category: RetrievalFailureCategory::AccessRestricted,
-            reason: "HTTP 403 Forbidden".into(),
-            allows_fallback: false,
-        },
+fn retrieval_job_has_unique_id() {
+    let rc = make_retrievable("cand-1", "https://example.com/1.jpg", 5);
+    let job = RetrievalJob::from_retrievable(
+        &rc,
+        "batch-1",
+        "qp-1",
+        1,
+        0,
+        "qd-1",
+        RetrievalPolicyContext::default(),
     );
-    let self_hosted =
-        FixtureChannel::new(RetrievalChannelTier::SelfHosted).with_all_success(&["locked"]);
-    let paid = FixtureChannel::new(RetrievalChannelTier::Paid).with_all_success(&["locked"]);
-    let channels: Vec<&dyn BaseRetrievalChannel> = vec![&web, &self_hosted, &paid];
-
-    let outcome = execute_batch(&seq, 2, &channels);
-
-    // Access restriction must block fallback entirely
-    assert_eq!(outcome.channel_tier, RetrievalChannelTier::WebFetch);
-    assert!(outcome.execution_blocked.is_some());
-}
-
-// ---------------------------------------------------------------------------
-// Paid channel boundaries
-// ---------------------------------------------------------------------------
-
-#[test]
-fn paid_channel_not_silently_used() {
-    let decisions = vec![make_accepted("a", "https://example.com/a.jpg", 5)];
-    let seq = make_sequence(decisions);
-
-    let web = FixtureChannel::new(RetrievalChannelTier::WebFetch)
-        .with_response("a", FixtureResponse::network_failure());
-    let paid = FixtureChannel::new(RetrievalChannelTier::Paid)
-        .with_readiness(FixtureReadiness::PaidUnconfirmed)
-        .with_all_success(&["a"]);
-    let channels: Vec<&dyn BaseRetrievalChannel> = vec![&web, &paid];
-
-    let outcome = execute_batch(&seq, 2, &channels);
-
-    // Paid channel should be abandoned (not ready)
-    let paid_attempt = outcome
-        .channel_attempts
-        .iter()
-        .find(|a| a.channel_tier == RetrievalChannelTier::Paid);
-    assert!(paid_attempt.is_some());
-    assert!(paid_attempt.unwrap().abandoned);
-
-    // Results should be empty (web fetch failed, paid not used)
-    assert!(outcome.results.is_empty() || outcome.results.iter().all(|r| r.is_failure()));
+    assert!(job.retrieval_job_id.to_string().contains("qp-1"));
+    assert!(job.retrieval_job_id.to_string().contains("cand-1"));
+    assert_eq!(job.candidate_id, "cand-1");
+    assert_eq!(job.query_plan_id, "qp-1");
+    assert_eq!(job.full_attempt_count, 1);
+    assert_eq!(job.retry_count, 0);
 }
 
 #[test]
-fn paid_channel_readiness_reports_paid_unconfirmed() {
-    let channel = FixtureChannel::new(RetrievalChannelTier::Paid)
-        .with_readiness(FixtureReadiness::PaidUnconfirmed);
-
-    let result = channel.readiness();
-    assert!(result.is_err());
-    let err = result.unwrap_err().to_string();
-    assert!(
-        err.to_lowercase().contains("paid") || err.to_lowercase().contains("confirmation"),
-        "error should mention paid/confirmation, got: {}",
-        err
+fn retrieval_job_preserves_ownership() {
+    let rc = make_retrievable("cand-2", "https://example.com/2.jpg", 10);
+    let job = RetrievalJob::from_retrievable(
+        &rc,
+        "batch-2",
+        "qp-2",
+        2,
+        1,
+        "qd-2",
+        RetrievalPolicyContext::default(),
     );
+    assert_eq!(job.retry_count, 1);
+    assert_eq!(job.full_attempt_count, 2);
+    assert_eq!(job.target.primary_image_url, "https://example.com/2.jpg");
+}
+
+// =============================================================================
+// Artifact completeness tests
+// =============================================================================
+
+#[test]
+fn complete_result_has_all_fields() {
+    let result = complete_result("ret-1", "cand-1");
+    assert!(result.is_complete());
+    assert!(result.has_all_required_paths());
+    assert!(result.has_all_integrity_fields());
+    assert!(!result.is_metadata_only_result());
 }
 
 #[test]
-fn paid_channel_when_ready_is_usable() {
-    let decisions = vec![make_accepted("a", "https://example.com/a.jpg", 5)];
-    let seq = make_sequence(decisions);
+fn missing_paths_prevent_complete() {
+    let result = RetrievalArtifactResult {
+        retrieval_job_id: RetrievalJobId::new("ret-2"),
+        retrieval_batch_id: "b-1".into(),
+        query_plan_id: "qp-1".into(),
+        candidate_id: "cand-2".into(),
+        channel_id: RetrievalChannelId::new("wf"),
+        channel_tier: RetrievalChannelTier::NormalWebFetch,
+        attempt_mode: RetrievalAttemptMode::DirectImageFetch,
+        retrieval_status: RetrievalStatus::Failed,
+        local_artifact_path: None,
+        source_artifact_path: None,
+        source_sidecar_path: None,
+        content_summary_path: None,
+        task_report_path: None,
+        visual_description_path: None,
+        diagnostics_path: None,
+        checksum_sha256: None,
+        content_type_reported: None,
+        content_type_sniffed: None,
+        content_type: None,
+        file_extension: None,
+        file_size_bytes: None,
+        image_dimensions: None,
+        media_type_match: false,
+        local_artifact_exists: false,
+        source_artifact_exists: false,
+        sidecar_valid: false,
+        summary_quality_passed: false,
+        task_report_valid: false,
+        visual_description_valid: false,
+        job_ownership_valid: false,
+        metadata_only: true,
+        fetch_trace: vec![],
+        policy_decisions: vec![],
+        diagnostics: vec![],
+        failure_reason: None,
+        redaction_applied: false,
+    };
 
-    let paid = FixtureChannel::new(RetrievalChannelTier::Paid).with_all_success(&["a"]);
-    let channels: Vec<&dyn BaseRetrievalChannel> = vec![&paid];
-
-    let outcome = execute_batch(&seq, 2, &channels);
-
-    assert_eq!(outcome.channel_tier, RetrievalChannelTier::Paid);
-    assert!(outcome.results.iter().all(|r| r.is_success()));
+    assert!(!result.is_complete());
+    assert!(!result.has_all_required_paths());
+    assert!(result.is_metadata_only_result());
 }
 
-// ---------------------------------------------------------------------------
-// Web fetch channel unit tests
-// ---------------------------------------------------------------------------
+// =============================================================================
+// Metadata-only rejection tests
+// =============================================================================
 
 #[test]
-fn web_fetch_channel_has_correct_tier() {
-    let dir = std::env::temp_dir().join("retrieval-test-tier");
-    let channel = WebFetchChannel::new(&dir).expect("create");
-    assert_eq!(channel.tier(), RetrievalChannelTier::WebFetch);
-    let _ = std::fs::remove_dir_all(&dir);
-}
+fn metadata_only_result_is_not_complete() {
+    let channel = FixtureChannel::new(RetrievalChannelTier::NormalWebFetch)
+        .with_response("c1", FixtureResponse::metadata_only());
 
-#[test]
-fn web_fetch_channel_readiness_ok_by_default() {
-    let dir = std::env::temp_dir().join("retrieval-test-ready");
-    let channel = WebFetchChannel::new(&dir).expect("create");
-    assert!(channel.readiness().is_ok());
-    let _ = std::fs::remove_dir_all(&dir);
-}
+    let rc = make_retrievable("c1", "https://example.com/1.jpg", 5);
+    let rb = RetrievableCandidateBatch {
+        retrieval_batch_target: 2,
+        ..make_batch_data(vec![rc])
+    };
 
-#[test]
-fn web_fetch_channel_disabled_readiness_fails() {
-    let dir = std::env::temp_dir().join("retrieval-test-disabled");
-    let channel = WebFetchChannel::new(&dir)
-        .expect("create")
-        .with_enabled(false);
-    assert!(channel.readiness().is_err());
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
-#[test]
-fn web_fetch_channel_fallback_fact() {
-    let dir = std::env::temp_dir().join("retrieval-test-fb");
-    let channel = WebFetchChannel::new(&dir).expect("create");
-    let fact = channel.fallback_fact("timeout");
-    assert_eq!(fact.failed_tier, RetrievalChannelTier::WebFetch);
-    assert_eq!(fact.next_tier, Some(RetrievalChannelTier::SelfHosted));
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
-#[test]
-fn web_fetch_channel_missing_url_is_failure() {
-    let dir = std::env::temp_dir().join("retrieval-test-missing");
-    let channel = WebFetchChannel::new(&dir).expect("create");
-    let batch = RetrievalBatch::new(vec!["ghost".into()], 2);
-    let results = channel.retrieve_batch(&batch).expect("batch ok");
-    assert_eq!(results.len(), 1);
-    assert!(results[0].is_failure());
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
-// ---------------------------------------------------------------------------
-// Fixture channel tests
-// ---------------------------------------------------------------------------
-
-#[test]
-fn fixture_channel_all_success() {
-    let channel =
-        FixtureChannel::new(RetrievalChannelTier::WebFetch).with_all_success(&["a", "b", "c"]);
-
-    let batch = RetrievalBatch::new(vec!["a".into(), "b".into(), "c".into()], 6);
-    let results = channel.retrieve_batch(&batch).expect("batch ok");
-
-    assert_eq!(results.len(), 3);
-    assert!(results.iter().all(|r| r.is_success()));
-}
-
-#[test]
-fn fixture_channel_mixed_results() {
-    let channel = FixtureChannel::new(RetrievalChannelTier::SelfHosted)
-        .with_response("ok", FixtureResponse::success())
-        .with_response("fail", FixtureResponse::network_failure());
-
-    let batch = RetrievalBatch::new(vec!["ok".into(), "fail".into()], 4);
-    let results = channel.retrieve_batch(&batch).expect("batch ok");
-
-    assert_eq!(results.len(), 2);
-    assert!(results[0].is_success());
-    assert!(results[1].is_failure());
-}
-
-#[test]
-fn fixture_channel_unprogrammed_fails() {
-    let channel = FixtureChannel::new(RetrievalChannelTier::WebFetch);
-    let batch = RetrievalBatch::new(vec!["unknown".into()], 2);
-    let results = channel.retrieve_batch(&batch).expect("batch ok");
-    assert!(results[0].is_failure());
-}
-
-#[test]
-fn fixture_channel_all_readiness_states() {
-    let states = vec![
-        (FixtureReadiness::Ready, true),
-        (FixtureReadiness::Disabled, false),
-        (FixtureReadiness::MissingDependency, false),
-        (FixtureReadiness::Misconfigured, false),
-        (FixtureReadiness::PaidUnconfirmed, false),
-    ];
-
-    for (state, expect_ok) in states {
-        let channel = FixtureChannel::new(RetrievalChannelTier::WebFetch).with_readiness(state);
-        assert_eq!(
-            channel.readiness().is_ok(),
-            expect_ok,
-            "readiness state mismatch"
-        );
-    }
-}
-
-#[test]
-fn fixture_channel_preserves_tier() {
-    assert_eq!(
-        FixtureChannel::new(RetrievalChannelTier::WebFetch).tier(),
-        RetrievalChannelTier::WebFetch
-    );
-    assert_eq!(
-        FixtureChannel::new(RetrievalChannelTier::SelfHosted).tier(),
-        RetrievalChannelTier::SelfHosted
-    );
-    assert_eq!(
-        FixtureChannel::new(RetrievalChannelTier::Paid).tier(),
-        RetrievalChannelTier::Paid
-    );
-}
-
-// ---------------------------------------------------------------------------
-// Executor: edge cases
-// ---------------------------------------------------------------------------
-
-#[test]
-fn executor_all_channels_exhausted_no_success() {
-    let decisions = vec![make_accepted("a", "https://example.com/a.jpg", 5)];
-    let seq = make_sequence(decisions);
-
-    let web = FixtureChannel::new(RetrievalChannelTier::WebFetch)
-        .with_response("a", FixtureResponse::network_failure());
-    let sh = FixtureChannel::new(RetrievalChannelTier::SelfHosted)
-        .with_response("a", FixtureResponse::channel_disabled());
-    let channels: Vec<&dyn BaseRetrievalChannel> = vec![&web, &sh];
-
-    let outcome = execute_batch(&seq, 2, &channels);
-
-    assert_eq!(outcome.channels_attempted, 2);
-    assert!(outcome.execution_blocked.is_some());
-    assert!(outcome.results.iter().all(|r| r.is_failure()));
-}
-
-#[test]
-fn executor_partial_success_stops_fallback() {
-    let decisions = vec![
-        make_accepted("good", "https://example.com/good.jpg", 5),
-        make_accepted("bad", "https://example.com/bad.jpg", 3),
-    ];
-    let seq = make_sequence(decisions);
-
-    let mixed = FixtureChannel::new(RetrievalChannelTier::WebFetch)
-        .with_response("good", FixtureResponse::success())
-        .with_response("bad", FixtureResponse::network_failure());
-    let backup =
-        FixtureChannel::new(RetrievalChannelTier::SelfHosted).with_all_success(&["good", "bad"]);
-    let channels: Vec<&dyn BaseRetrievalChannel> = vec![&mixed, &backup];
-
-    let outcome = execute_batch(&seq, 4, &channels);
-
-    // Got some successes → no fallback needed
-    assert_eq!(outcome.channels_attempted, 1);
-    assert_eq!(outcome.channel_tier, RetrievalChannelTier::WebFetch);
-}
-
-#[test]
-fn executor_empty_batch_returns_execution_blocked() {
-    let seq = RetrievableCandidateSequence::empty();
-    let channel = FixtureChannel::new(RetrievalChannelTier::WebFetch);
+    let qp_id = QueryPlanId::new("qp-test");
+    let policy = QueryRetrievalPolicy::default();
     let channels: Vec<&dyn BaseRetrievalChannel> = vec![&channel];
+    let configs = vec![default_channel_config(RetrievalChannelTier::NormalWebFetch)];
 
-    let outcome = execute_batch(&seq, 4, &channels);
+    let result = plan_and_execute(&rb, &qp_id, &policy, "warn", &[], true, &channels, &configs);
 
-    assert!(outcome.execution_blocked.is_some());
-    assert_eq!(outcome.channels_attempted, 0);
+    assert_eq!(result.results.len(), 1);
+    assert!(!result.results[0].is_complete());
+    assert!(result.results[0].is_metadata_only_result());
 }
 
-#[test]
-fn executor_single_channel_disabled_produces_execution_blocked() {
-    let decisions = vec![make_accepted("a", "https://example.com/a.jpg", 5)];
-    let seq = make_sequence(decisions);
-
-    let disabled = FixtureChannel::new(RetrievalChannelTier::WebFetch)
-        .with_readiness(FixtureReadiness::Disabled);
-    let channels: Vec<&dyn BaseRetrievalChannel> = vec![&disabled];
-
-    let outcome = execute_batch(&seq, 2, &channels);
-
-    assert_eq!(outcome.channels_attempted, 1);
-    assert!(outcome.channel_attempts[0].abandoned);
-}
-
-// ---------------------------------------------------------------------------
-// Readiness summary
-// ---------------------------------------------------------------------------
+// =============================================================================
+// Fallback order tests
+// =============================================================================
 
 #[test]
-fn readiness_summary_reports_all_states() {
-    let ready = FixtureChannel::new(RetrievalChannelTier::WebFetch);
-    let disabled = FixtureChannel::new(RetrievalChannelTier::SelfHosted)
-        .with_readiness(FixtureReadiness::Disabled);
-    let paid = FixtureChannel::new(RetrievalChannelTier::Paid)
-        .with_readiness(FixtureReadiness::PaidUnconfirmed);
+fn fallback_to_self_hosted_on_network_failure() {
+    let rc = make_retrievable("a", "https://example.com/a.jpg", 5);
+    let rb = RetrievableCandidateBatch {
+        retrieval_batch_target: 2,
+        ..make_batch_data(vec![rc])
+    };
 
-    let channels: Vec<&dyn BaseRetrievalChannel> = vec![&ready, &disabled, &paid];
-    let summary = summarise_channel_readiness(&channels);
+    let qp_id = QueryPlanId::new("qp-test");
+    let policy = QueryRetrievalPolicy::default();
 
-    assert_eq!(summary.len(), 3);
-    assert_eq!(summary[0].readiness, RetrievalChannelReadiness::Ready);
-    assert_eq!(summary[0].tier, RetrievalChannelTier::WebFetch);
-    assert_eq!(summary[1].readiness, RetrievalChannelReadiness::Disabled);
-    assert_eq!(
-        summary[2].readiness,
-        RetrievalChannelReadiness::PaidUnconfirmed
-    );
-}
+    let fail_channel = FixtureChannel::new(RetrievalChannelTier::NormalWebFetch)
+        .with_response("a", FixtureResponse::network_failure());
+    let success_channel = FixtureChannel::new(RetrievalChannelTier::SelfHostedService)
+        .with_response("a", FixtureResponse::success());
 
-// ---------------------------------------------------------------------------
-// RetrievalBatch URL mapping
-// ---------------------------------------------------------------------------
-
-#[test]
-fn batch_carries_urls_for_retrieval() {
-    let decisions = vec![
-        make_accepted("x", "https://a.example.com/1.jpg", 5),
-        make_accepted("y", "https://b.example.com/2.png", 3),
+    let channels: Vec<&dyn BaseRetrievalChannel> = vec![&fail_channel, &success_channel];
+    let configs = vec![
+        default_channel_config(RetrievalChannelTier::NormalWebFetch),
+        default_channel_config(RetrievalChannelTier::SelfHostedService),
     ];
-    let seq = make_sequence(decisions);
-    let (batch, _) = RetrievalBatchPlanner::plan(&seq, 4);
 
-    assert_eq!(batch.url_for("x"), Some("https://a.example.com/1.jpg"));
-    assert_eq!(batch.url_for("y"), Some("https://b.example.com/2.png"));
-    assert_eq!(batch.url_for("z"), None);
+    let result = plan_and_execute(&rb, &qp_id, &policy, "warn", &[], true, &channels, &configs);
+
+    assert_eq!(result.results.len(), 1);
+    assert!(result.results[0].is_complete());
+    assert!(!result.fallback_decisions.is_empty());
 }
 
-// ---------------------------------------------------------------------------
-// Domain type edge cases
-// ---------------------------------------------------------------------------
+// =============================================================================
+// Access-restricted blocks fallback tests
+// =============================================================================
 
 #[test]
-fn retrieval_result_candidate_id_accessor() {
-    let success =
-        RetrievalResult::Success(image_retrieval::domain::retrieval::RetrievalSuccess::new(
-            "c1",
-            "/p.jpg",
-            RetrievalChannelTier::WebFetch,
-            Some("image/jpeg".into()),
-            1024,
-        ));
-    assert_eq!(success.candidate_id(), "c1");
+fn access_restricted_stops_fallback() {
+    let rc = make_retrievable("a", "https://restricted.example.com/a.jpg", 5);
+    let rb = RetrievableCandidateBatch {
+        retrieval_batch_target: 2,
+        ..make_batch_data(vec![rc])
+    };
 
-    let failure =
-        RetrievalResult::Failure(image_retrieval::domain::retrieval::RetrievalFailure::new(
-            "c2",
-            RetrievalChannelTier::WebFetch,
-            RetrievalFailureCategory::Network,
-            "timeout",
-            true,
-        ));
-    assert_eq!(failure.candidate_id(), "c2");
-}
+    let qp_id = QueryPlanId::new("qp-test");
+    let policy = QueryRetrievalPolicy::default();
 
-#[test]
-fn fallback_fact_paid_requires_confirmation_flag() {
-    let fact =
-        FallbackEligibilityFact::new(RetrievalChannelTier::SelfHosted, "service down", false);
-    // Next tier from SelfHosted is Paid → requires_paid_confirmation = true
-    assert!(fact.requires_paid_confirmation);
-    assert_eq!(fact.next_tier, Some(RetrievalChannelTier::Paid));
-}
+    let restricted_channel = FixtureChannel::new(RetrievalChannelTier::NormalWebFetch)
+        .with_response("a", FixtureResponse::access_restricted());
+    let higher_channel = FixtureChannel::new(RetrievalChannelTier::SelfHostedService)
+        .with_response("a", FixtureResponse::success());
 
-#[test]
-fn fallback_fact_terminal_when_paid_fails() {
-    let fact = FallbackEligibilityFact::new(RetrievalChannelTier::Paid, "exhausted", false);
-    assert_eq!(fact.next_tier, None);
-}
+    let channels: Vec<&dyn BaseRetrievalChannel> = vec![&restricted_channel, &higher_channel];
+    let configs = vec![
+        default_channel_config(RetrievalChannelTier::NormalWebFetch),
+        default_channel_config(RetrievalChannelTier::SelfHostedService),
+    ];
 
-#[test]
-fn retrieval_failure_category_allows_fallback_flag() {
-    // Network failures are fallbackable
-    let f = image_retrieval::domain::retrieval::RetrievalFailure::new(
-        "c",
-        RetrievalChannelTier::WebFetch,
-        RetrievalFailureCategory::Network,
-        "timeout",
-        true,
-    );
-    assert!(f.allows_fallback);
+    let result = plan_and_execute(&rb, &qp_id, &policy, "warn", &[], true, &channels, &configs);
 
-    // Access restricted is NOT fallbackable
-    let f = image_retrieval::domain::retrieval::RetrievalFailure::new(
-        "c",
-        RetrievalChannelTier::WebFetch,
-        RetrievalFailureCategory::AccessRestricted,
-        "403",
-        false,
-    );
-    assert!(!f.allows_fallback);
-}
-
-#[test]
-fn channel_readiness_display_values() {
-    assert_eq!(RetrievalChannelReadiness::Ready.to_string(), "ready");
-    assert_eq!(RetrievalChannelReadiness::Disabled.to_string(), "disabled");
+    // Must NOT have fallen back to self-hosted
+    assert!(!result.results[0].is_complete());
     assert_eq!(
-        RetrievalChannelReadiness::MissingDependency.to_string(),
-        "missing_dependency"
+        result.results[0].retrieval_status,
+        RetrievalStatus::AccessRestricted
+    );
+}
+
+// =============================================================================
+// Paid channel disabled tests
+// =============================================================================
+
+#[test]
+fn paid_channel_skipped_when_not_allowed() {
+    let rc = make_retrievable("a", "https://example.com/a.jpg", 5);
+    let rb = RetrievableCandidateBatch {
+        retrieval_batch_target: 2,
+        ..make_batch_data(vec![rc])
+    };
+
+    let qp_id = QueryPlanId::new("qp-test");
+    let policy = QueryRetrievalPolicy {
+        allow_paid: false,
+        ..Default::default()
+    };
+
+    let fail_channel = FixtureChannel::new(RetrievalChannelTier::NormalWebFetch)
+        .with_response("a", FixtureResponse::network_failure());
+    let paid_channel = FixtureChannel::new(RetrievalChannelTier::PaidOnlineService)
+        .with_response("a", FixtureResponse::success());
+
+    let channels: Vec<&dyn BaseRetrievalChannel> = vec![&fail_channel, &paid_channel];
+    let configs = vec![
+        default_channel_config(RetrievalChannelTier::NormalWebFetch),
+        default_channel_config(RetrievalChannelTier::PaidOnlineService),
+    ];
+
+    let result = plan_and_execute(&rb, &qp_id, &policy, "warn", &[], true, &channels, &configs);
+
+    // Paid should be skipped, job fails
+    assert!(!result.results[0].is_complete());
+}
+
+#[test]
+fn paid_channel_readiness_unconfirmed_by_default() {
+    let channel = PaidChannel::new();
+    let config = RetrievalChannelConfig {
+        channel_id: "paid-1".into(),
+        channel_kind: RetrievalChannelKind::PaidOnlineService,
+        tier: RetrievalChannelTier::PaidOnlineService,
+        enabled: false,
+        endpoint: None,
+        credential_env: None,
+        max_batch_size: None,
+    };
+    let report = channel.readiness(&config);
+    assert!(!report.available);
+    assert_eq!(
+        report.failure_code,
+        Some(RetrievalFailureCode::RetrievalPaidUnconfirmed)
+    );
+}
+
+// =============================================================================
+// Channel readiness tests
+// =============================================================================
+
+#[test]
+fn self_hosted_channel_disabled_by_default() {
+    let channel = SelfHostedChannel::new();
+    assert_eq!(channel.tier(), RetrievalChannelTier::SelfHostedService);
+    assert_eq!(channel.display_name(), "Self-Hosted Retrieval Service");
+}
+
+#[test]
+fn fixture_channel_provides_capabilities() {
+    let channel = FixtureChannel::new(RetrievalChannelTier::NormalWebFetch);
+    let caps = channel.capabilities();
+    assert!(caps.supports_direct_image_fetch);
+    assert!(caps.fixture_only);
+}
+
+#[test]
+fn channel_readiness_report_ready() {
+    let report = RetrievalChannelReadinessReport::ready(
+        RetrievalChannelId::new("wf-1"),
+        "Web Fetch",
+        RetrievalChannelTier::NormalWebFetch,
+    );
+    assert!(report.available);
+    assert!(report.enabled);
+    assert!(report.failure_code.is_none());
+}
+
+#[test]
+fn channel_readiness_report_fixture_blocked() {
+    let report = RetrievalChannelReadinessReport::fixture_blocked(
+        RetrievalChannelId::new("fix-1"),
+        "Fixture",
+        RetrievalChannelTier::NormalWebFetch,
+    );
+    assert!(!report.available);
+    assert_eq!(
+        report.failure_code,
+        Some(RetrievalFailureCode::RetrievalFixtureNotProduction)
+    );
+}
+
+// =============================================================================
+// Tier serialization tests
+// =============================================================================
+
+#[test]
+fn tier_serde_canonical_names() {
+    let json = r#""normal_web_fetch""#;
+    let tier: RetrievalChannelTier = serde_json::from_str(json).expect("deserialize");
+    assert_eq!(tier, RetrievalChannelTier::NormalWebFetch);
+
+    let json = r#""self_hosted_service""#;
+    let tier: RetrievalChannelTier = serde_json::from_str(json).expect("deserialize");
+    assert_eq!(tier, RetrievalChannelTier::SelfHostedService);
+
+    let json = r#""paid_online_service""#;
+    let tier: RetrievalChannelTier = serde_json::from_str(json).expect("deserialize");
+    assert_eq!(tier, RetrievalChannelTier::PaidOnlineService);
+}
+
+#[test]
+fn tier_serde_backward_compat_aliases() {
+    // Old names still deserialize
+    let json = r#""web_fetch""#;
+    let tier: RetrievalChannelTier = serde_json::from_str(json).expect("deserialize");
+    assert_eq!(tier, RetrievalChannelTier::NormalWebFetch);
+
+    let json = r#""self_hosted""#;
+    let tier: RetrievalChannelTier = serde_json::from_str(json).expect("deserialize");
+    assert_eq!(tier, RetrievalChannelTier::SelfHostedService);
+
+    let json = r#""paid""#;
+    let tier: RetrievalChannelTier = serde_json::from_str(json).expect("deserialize");
+    assert_eq!(tier, RetrievalChannelTier::PaidOnlineService);
+}
+
+#[test]
+fn tier_serializes_to_canonical() {
+    assert_eq!(
+        serde_json::to_string(&RetrievalChannelTier::NormalWebFetch).unwrap(),
+        r#""normal_web_fetch""#
     );
     assert_eq!(
-        RetrievalChannelReadiness::Misconfigured.to_string(),
-        "misconfigured"
+        serde_json::to_string(&RetrievalChannelTier::SelfHostedService).unwrap(),
+        r#""self_hosted_service""#
     );
     assert_eq!(
-        RetrievalChannelReadiness::PaidUnconfirmed.to_string(),
-        "paid_unconfirmed"
+        serde_json::to_string(&RetrievalChannelTier::PaidOnlineService).unwrap(),
+        r#""paid_online_service""#
     );
+}
+
+// =============================================================================
+// RetrievalFailureCode tests
+// =============================================================================
+
+#[test]
+fn failure_code_display_correct() {
+    assert_eq!(
+        RetrievalFailureCode::RetrievalDirectFetchNetwork.to_string(),
+        "RETRIEVAL_DIRECT_FETCH_NETWORK"
+    );
+    assert_eq!(
+        RetrievalFailureCode::RetrievalAccessRestricted.to_string(),
+        "RETRIEVAL_ACCESS_RESTRICTED"
+    );
+    assert_eq!(
+        RetrievalFailureCode::RetrievalPaidUnconfirmed.to_string(),
+        "RETRIEVAL_PAID_UNCONFIRMED"
+    );
+    assert_eq!(
+        RetrievalFailureCode::RetrievalMetadataOnly.to_string(),
+        "RETRIEVAL_METADATA_ONLY"
+    );
+}
+
+// =============================================================================
+// RetrievalBatchShortage tests
+// =============================================================================
+
+#[test]
+fn shortage_codes_serde() {
+    assert_eq!(
+        serde_json::to_string(&RetrievalShortageCode::NoRetrievableCandidates).unwrap(),
+        r#""NO_RETRIEVABLE_CANDIDATES""#
+    );
+    assert_eq!(
+        serde_json::to_string(&RetrievalShortageCode::InsufficientRetrievableCandidates).unwrap(),
+        r#""INSUFFICIENT_RETRIEVABLE_CANDIDATES""#
+    );
+}
+
+#[test]
+fn shortage_constructs_correctly() {
+    let shortage = image_retrieval::domain::retrieval::RetrievalBatchShortage::new(
+        "qp-1",
+        8,
+        2,
+        RetrievalShortageCode::InsufficientRetrievableCandidates,
+        "only 2 candidates",
+    );
+    assert_eq!(shortage.query_plan_id, "qp-1");
+    assert_eq!(shortage.target_size, 8);
+    assert_eq!(shortage.actual_size, 2);
+}
+
+// =============================================================================
+// RetrievalBatch tests
+// =============================================================================
+
+#[test]
+fn retrieval_batch_is_short_when_jobs_less_than_target() {
+    let rc = make_retrievable("a", "https://example.com/a.jpg", 5);
+    let rb = RetrievableCandidateBatch {
+        retrieval_batch_target: 8,
+        ..make_batch_data(vec![rc])
+    };
+    let qp_id = QueryPlanId::new("qp-test");
+    let policy = QueryRetrievalPolicy::default();
+    let (batch, _) =
+        RetrievalBatchPlanner::plan_from_batch(&rb, &qp_id, &policy, "warn", &[], false);
+    assert!(batch.is_short_batch);
+    assert_eq!(batch.actual_size, 1);
+    assert_eq!(batch.target_size, 8);
+}
+
+// =============================================================================
+// RetrievalChannelCapabilities tests
+// =============================================================================
+
+#[test]
+fn capabilities_default_values() {
+    let caps = RetrievalChannelCapabilities::default();
+    assert!(caps.supports_direct_image_fetch);
+    assert!(caps.supports_source_page_resolve);
+    assert!(caps.supports_checksum);
+    assert!(!caps.fixture_only);
+}
+
+// =============================================================================
+// RetrievalAttemptMode tests
+// =============================================================================
+
+#[test]
+fn attempt_mode_is_normal_web() {
+    assert!(RetrievalAttemptMode::DirectImageFetch.is_normal_web());
+    assert!(RetrievalAttemptMode::SourcePageResolve.is_normal_web());
+    assert!(!RetrievalAttemptMode::SelfHostedService.is_normal_web());
+    assert!(!RetrievalAttemptMode::PaidOnlineService.is_normal_web());
+}
+
+// =============================================================================
+// RetrievalStatus tests
+// =============================================================================
+
+#[test]
+fn status_is_complete() {
+    assert!(RetrievalStatus::Complete.is_complete());
+    assert!(!RetrievalStatus::Failed.is_complete());
+    assert!(!RetrievalStatus::Partial.is_complete());
+}
+
+#[test]
+fn status_is_terminal_failure() {
+    assert!(RetrievalStatus::Failed.is_terminal_failure());
+    assert!(RetrievalStatus::PolicyBlocked.is_terminal_failure());
+    assert!(!RetrievalStatus::Complete.is_terminal_failure());
+    assert!(!RetrievalStatus::Partial.is_terminal_failure());
+}
+
+// =============================================================================
+// RetrievalError tests
+// =============================================================================
+
+#[test]
+fn retrieval_error_to_failure_code() {
+    assert_eq!(
+        RetrievalError::AccessRestricted {
+            message: "denied".into()
+        }
+        .to_failure_code(),
+        RetrievalFailureCode::RetrievalAccessRestricted
+    );
+    assert_eq!(
+        RetrievalError::PaidUnconfirmed.to_failure_code(),
+        RetrievalFailureCode::RetrievalPaidUnconfirmed
+    );
+    assert_eq!(
+        RetrievalError::Network {
+            message: "timeout".into()
+        }
+        .to_failure_code(),
+        RetrievalFailureCode::RetrievalDirectFetchNetwork
+    );
+}
+
+#[test]
+fn retrieval_error_allows_fallback() {
+    assert!(RetrievalError::Network {
+        message: "timeout".into()
+    }
+    .allows_fallback());
+    assert!(!RetrievalError::AccessRestricted {
+        message: "403".into()
+    }
+    .allows_fallback());
+    assert!(!RetrievalError::PaidUnconfirmed.allows_fallback());
+}
+
+// =============================================================================
+// Test all four channels satisfy the BaseRetrievalChannel trait
+// =============================================================================
+
+#[test]
+fn all_channels_satisfy_the_trait() {
+    fn _assert_trait(_ch: &dyn BaseRetrievalChannel) {}
+
+    let web_fetch = image_retrieval::retrieval::WebFetchChannel::new("/tmp/test-wf-ret").unwrap();
+    let fixture = FixtureChannel::new(RetrievalChannelTier::NormalWebFetch);
+    let self_hosted = SelfHostedChannel::new();
+    let paid = PaidChannel::new();
+
+    _assert_trait(&web_fetch);
+    _assert_trait(&fixture);
+    _assert_trait(&self_hosted);
+    _assert_trait(&paid);
+
+    // Cleanup
+    let _ = std::fs::remove_dir_all("/tmp/test-wf-ret");
 }

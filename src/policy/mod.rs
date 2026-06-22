@@ -487,8 +487,11 @@ mod tests {
 
     #[test]
     fn fallback_allowed_for_network_error() {
-        let fact =
-            FallbackEligibilityFact::new(RetrievalChannelTier::WebFetch, "network timeout", false);
+        let fact = FallbackEligibilityFact::new(
+            RetrievalChannelTier::NormalWebFetch,
+            "network timeout",
+            false,
+        );
         let decision = evaluate_fallback_eligibility(&fact);
         assert!(matches!(decision, PolicyDecision::Allow));
     }
@@ -496,7 +499,7 @@ mod tests {
     #[test]
     fn fallback_blocked_for_access_restriction() {
         let fact = FallbackEligibilityFact::new(
-            RetrievalChannelTier::WebFetch,
+            RetrievalChannelTier::NormalWebFetch,
             "HTTP 403 Forbidden",
             true,
         );
@@ -510,7 +513,7 @@ mod tests {
     #[test]
     fn fallback_blocked_for_paid_unconfirmed() {
         let fact = FallbackEligibilityFact::new(
-            RetrievalChannelTier::SelfHosted,
+            RetrievalChannelTier::SelfHostedService,
             "service unavailable",
             false,
         );
@@ -528,7 +531,7 @@ mod tests {
     fn execution_block_by_access_restriction_is_policy_block() {
         let fact = ExecutionBlockingFact {
             reason: "all channels blocked by access restriction".into(),
-            source_tier: Some(RetrievalChannelTier::WebFetch),
+            source_tier: Some(RetrievalChannelTier::NormalWebFetch),
             is_access_restricted: true,
             is_paid_unconfirmed: false,
         };
@@ -540,7 +543,7 @@ mod tests {
     fn execution_block_by_paid_unconfirmed_is_policy_block() {
         let fact = ExecutionBlockingFact {
             reason: "paid channel not confirmed".into(),
-            source_tier: Some(RetrievalChannelTier::Paid),
+            source_tier: Some(RetrievalChannelTier::PaidOnlineService),
             is_access_restricted: false,
             is_paid_unconfirmed: true,
         };

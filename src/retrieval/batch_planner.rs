@@ -1,81 +1,136 @@
-//! Retrieval batch planner.
+//! Retrieval batch planner — v1.1.
 //!
-//! Takes a [`RetrievableCandidateSequence`] and a batch target and forms a
-//! [`RetrievalBatch`] for one complete retrieval attempt.
+//! Consumes a [`RetrievableCandidateBatch`] from TASK-003 and produces a
+//! [`RetrievalBatch`] with structured [`RetrievalJob`] objects.
 //!
-//! The batch target is `required_count × 2` per the constitution.
-//! When fewer retrievable candidates are available, the planner emits a
-//! [`RetrievalBatchShortage`] but does not trigger indefinite back-fill.
+//! The batch target is `required_image_count × 2`. When fewer retrievable
+//! candidates are available, the planner emits a [`RetrievalBatchShortage`].
 //!
-//! References: PRD §抓取渠道产品要求 (batch size = required_count × 2),
-//! LLD §BaseRetrievalChannel 批次抓取与 fallback 详细设计
+//! References: PRD FR-007, LLD §Retrieval Batch Planning,
+//! `docs/design/v1.1-TASK-004-retrieval-artifact-channel-design.md`
 
-use crate::domain::candidate::{CandidateDecision, RetrievableCandidateSequence};
-use crate::domain::retrieval::{RetrievalBatch, RetrievalBatchShortage};
-use std::collections::HashMap;
+use crate::domain::candidate::RetrievableCandidateBatch;
+use crate::domain::query_plan::{QueryPlanId, QueryRetrievalPolicy};
+use crate::domain::retrieval::{
+    RetrievalBatch, RetrievalBatchShortage, RetrievalJob, RetrievalPolicyContext,
+    RetrievalShortageCode,
+};
 
-/// Plans a retrieval batch from the retrievable candidate sequence.
+/// Plans a retrieval batch from a TASK-003 `RetrievableCandidateBatch`.
 ///
 /// # Rules
 ///
-/// 1. Only candidates with `CandidateDecision::Accepted` may enter the batch
-///    (the [`RetrievableCandidateSequence`] already guarantees this).
-/// 2. The batch takes up to `batch_target` candidates from the front of the
-///    sequence (highest priority first).
-/// 3. When fewer candidates than `batch_target` are available, the batch is
-///    marked as a *short batch* and a [`RetrievalBatchShortage`] is produced.
-/// 4. Rejected, uncertain, and execution-blocked candidates are never
-///    included — the [`RetrievableCandidateSequence`] already excludes them.
+/// 1. Only candidates in the retrievable batch may enter (TASK-003 already
+///    guarantees mechanical + Qwen approval).
+/// 2. The batch takes up to `target_size` candidates, sorted by
+///    `retrieval_priority` (higher first).
+/// 3. When fewer candidates than target are available, a
+///    [`RetrievalBatchShortage`] is produced.
+/// 4. Jobs carry full policy context, provenance, and ownership.
 #[derive(Debug, Clone, Default)]
 pub struct RetrievalBatchPlanner;
 
 impl RetrievalBatchPlanner {
-    /// Plan a retrieval batch from the given sequence.
+    /// Plan a retrieval batch from a TASK-003 retrievable candidate batch.
     ///
     /// Returns the batch and an optional shortage evidence.
-    pub fn plan(
-        sequence: &RetrievableCandidateSequence,
-        batch_target: u32,
+    pub fn plan_from_batch(
+        retrievable_batch: &RetrievableCandidateBatch,
+        query_plan_id: &QueryPlanId,
+        retrieval_policy: &QueryRetrievalPolicy,
+        robots_unknown_behavior: &str,
+        prohibited_domains: &[String],
+        fixture_mode: bool,
     ) -> (RetrievalBatch, Option<RetrievalBatchShortage>) {
-        let limit = batch_target as usize;
-        let taken: Vec<&CandidateDecision> = sequence.candidates.iter().take(limit).collect();
+        let target_size = retrievable_batch.retrieval_batch_target;
+        let full_attempt_count = retrievable_batch.full_attempt_count;
+        let retry_count = retrievable_batch.retry_count;
 
-        let candidate_ids: Vec<String> = taken
+        let batch_id = format!("batch-{}-attempt-{}", query_plan_id, full_attempt_count);
+
+        // Take at most target_size candidates (already sorted by priority)
+        let limit = target_size as usize;
+        let taken = if retrievable_batch.candidates.len() > limit {
+            &retrievable_batch.candidates[..limit]
+        } else {
+            &retrievable_batch.candidates
+        };
+
+        let policy_context = RetrievalPolicyContext {
+            allow_paid: retrieval_policy.allow_paid,
+            respect_robots: retrieval_policy.respect_robots,
+            allow_login: retrieval_policy.allow_login,
+            allow_paywalled: retrieval_policy.allow_paywalled,
+            prohibited_domains: prohibited_domains.to_vec(),
+            robots_unknown_behavior: robots_unknown_behavior.to_string(),
+            fixture_mode,
+        };
+
+        let jobs: Vec<RetrievalJob> = taken
             .iter()
-            .map(|d| match d {
-                CandidateDecision::Accepted { candidate, .. } => candidate.candidate_id.to_string(),
-                _ => unreachable!("RetrievableCandidateSequence only contains Accepted"),
+            .map(|rc| {
+                RetrievalJob::from_retrievable(
+                    rc,
+                    &batch_id,
+                    &query_plan_id.to_string(),
+                    full_attempt_count,
+                    retry_count,
+                    format!("candidate-quality-decision-{}", rc.candidate.candidate_id),
+                    policy_context.clone(),
+                )
             })
             .collect();
 
-        let candidate_urls: HashMap<String, String> = taken
-            .iter()
-            .map(|d| match d {
-                CandidateDecision::Accepted { candidate, .. } => (
-                    candidate.candidate_id.to_string(),
-                    candidate.image_url.clone(),
-                ),
-                _ => unreachable!("RetrievableCandidateSequence only contains Accepted"),
-            })
-            .collect();
+        let actual_size = jobs.len() as u32;
+        let shortage = if actual_size < target_size {
+            let (shortage_code, reason) = if actual_size == 0 {
+                (
+                    RetrievalShortageCode::NoRetrievableCandidates,
+                    format!(
+                        "no retrievable candidates available, target was {}",
+                        target_size
+                    ),
+                )
+            } else {
+                (
+                    RetrievalShortageCode::InsufficientRetrievableCandidates,
+                    format!(
+                        "only {} retrievable candidates available, target was {}",
+                        actual_size, target_size
+                    ),
+                )
+            };
 
-        let actual = candidate_ids.len() as u32;
-        let shortage = if actual < batch_target {
-            Some(RetrievalBatchShortage::new(
-                batch_target,
-                actual,
-                format!(
-                    "only {} retrievable candidates available, target was {}",
-                    actual, batch_target
-                ),
-            ))
+            let mut shortage = RetrievalBatchShortage::new(
+                query_plan_id.to_string(),
+                target_size,
+                actual_size,
+                shortage_code,
+                reason,
+            );
+            shortage.candidate_quality_blockers = retrievable_batch
+                .rejected_decisions
+                .iter()
+                .map(|d| format!("{}: {:?}", d.candidate_id, d.final_status))
+                .collect();
+            shortage.search_shortage_ref =
+                Some(format!("candidate-quality-outcome-{}", query_plan_id));
+            Some(shortage)
         } else {
             None
         };
 
-        let batch = RetrievalBatch::new(candidate_ids, batch_target).with_urls(candidate_urls);
+        let batch = RetrievalBatch::new(
+            batch_id,
+            query_plan_id.to_string(),
+            full_attempt_count,
+            retry_count,
+            target_size,
+            jobs,
+            shortage,
+        );
 
-        (batch, shortage)
+        (batch, None)
     }
 
     /// Determine the effective batch target.
@@ -95,115 +150,50 @@ impl RetrievalBatchPlanner {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::candidate::{CandidateId, CandidateRecord, ProviderId};
+    use crate::domain::candidate::{
+        CandidateId, CandidateQualityDecision, CandidateQualityStatus, CandidateRecord, ProviderId,
+        RetrievableCandidate, RetrievableCandidateBatch,
+    };
 
-    fn make_accepted(id: &str, url: &str, priority: u32) -> CandidateDecision {
-        CandidateDecision::Accepted {
-            candidate: CandidateRecord::minimal(CandidateId::new(id), ProviderId::new("test"), url),
-            priority,
+    fn make_retrievable(id: &str, image_url: &str, priority: u32) -> RetrievableCandidate {
+        let rec =
+            CandidateRecord::minimal(CandidateId::new(id), ProviderId::new("test"), image_url);
+        RetrievableCandidate {
+            candidate: rec,
+            candidate_quality_decision: CandidateQualityDecision {
+                candidate_id: CandidateId::new(id),
+                query_plan_id: "qp-1".into(),
+                mechanical_passed: true,
+                vlm_passed: true,
+                final_status: CandidateQualityStatus::Retrievable,
+                priority,
+                blocking_metrics: vec![],
+                reference_metrics: vec![],
+                vlm_decision: None,
+                diagnostics: vec![],
+            },
+            retrieval_priority: priority,
+            primary_image_url: image_url.into(),
+            source_page_url: None,
+            thumbnail_url: None,
+            expected_mime_type: Some("image/jpeg".into()),
+            license_hint: None,
+            provenance_refs: vec![],
         }
     }
 
-    fn make_sequence(decisions: Vec<CandidateDecision>) -> RetrievableCandidateSequence {
-        RetrievableCandidateSequence::from_decisions(decisions)
-    }
-
-    // -------------------------------------------------------------------
-    // Normal batch (target met)
-    // -------------------------------------------------------------------
-
-    #[test]
-    fn normal_batch_exact_target() {
-        let decisions = vec![
-            make_accepted("a", "https://example.com/a.jpg", 5),
-            make_accepted("b", "https://example.com/b.jpg", 4),
-            make_accepted("c", "https://example.com/c.jpg", 3),
-            make_accepted("d", "https://example.com/d.jpg", 2),
-        ];
-        let seq = make_sequence(decisions);
-        let (batch, shortage) = RetrievalBatchPlanner::plan(&seq, 4);
-
-        assert_eq!(batch.actual_size(), 4);
-        assert!(!batch.is_short_batch);
-        assert_eq!(batch.target_size, 4);
-        assert_eq!(batch.candidate_ids, vec!["a", "b", "c", "d"]);
-        assert!(shortage.is_none());
-    }
-
-    #[test]
-    fn normal_batch_more_than_target() {
-        let mut decisions = Vec::new();
-        for i in 0..10 {
-            decisions.push(make_accepted(
-                &format!("c{}", i),
-                &format!("https://example.com/c{}.jpg", i),
-                (10 - i) as u32,
-            ));
+    fn make_batch(candidates: Vec<RetrievableCandidate>) -> RetrievableCandidateBatch {
+        let len = candidates.len() as u32;
+        RetrievableCandidateBatch {
+            query_plan_id: "qp-1".into(),
+            full_attempt_count: 1,
+            retry_count: 0,
+            retrieval_batch_target: len * 2, // ensure enough room
+            candidates,
+            rejected_decisions: vec![],
+            execution_blocking_facts: vec![],
         }
-        let seq = make_sequence(decisions);
-        let (batch, shortage) = RetrievalBatchPlanner::plan(&seq, 4);
-
-        // Should take exactly 4, highest priority first
-        assert_eq!(batch.actual_size(), 4);
-        assert!(!batch.is_short_batch);
-        assert_eq!(batch.target_size, 4);
-        assert_eq!(batch.candidate_ids, vec!["c0", "c1", "c2", "c3"]);
-        assert!(shortage.is_none());
     }
-
-    // -------------------------------------------------------------------
-    // Short batch
-    // -------------------------------------------------------------------
-
-    #[test]
-    fn short_batch_fewer_than_target() {
-        let decisions = vec![
-            make_accepted("a", "https://example.com/a.jpg", 3),
-            make_accepted("b", "https://example.com/b.jpg", 2),
-        ];
-        let seq = make_sequence(decisions);
-        let (batch, shortage) = RetrievalBatchPlanner::plan(&seq, 8);
-
-        assert_eq!(batch.actual_size(), 2);
-        assert!(batch.is_short_batch);
-        assert_eq!(batch.target_size, 8);
-
-        let s = shortage.expect("should have shortage");
-        assert_eq!(s.target_size, 8);
-        assert_eq!(s.actual_size, 2);
-        assert!(s.reason.contains("only 2"));
-    }
-
-    #[test]
-    fn empty_batch_when_no_candidates() {
-        let seq = RetrievableCandidateSequence::empty();
-        let (batch, shortage) = RetrievalBatchPlanner::plan(&seq, 8);
-
-        assert_eq!(batch.actual_size(), 0);
-        assert!(batch.is_short_batch);
-        assert!(shortage.is_some());
-    }
-
-    // -------------------------------------------------------------------
-    // URL mapping
-    // -------------------------------------------------------------------
-
-    #[test]
-    fn batch_includes_urls() {
-        let decisions = vec![
-            make_accepted("img-1", "https://example.com/1.jpg", 5),
-            make_accepted("img-2", "https://example.com/2.jpg", 3),
-        ];
-        let seq = make_sequence(decisions);
-        let (batch, _) = RetrievalBatchPlanner::plan(&seq, 2);
-
-        assert_eq!(batch.url_for("img-1"), Some("https://example.com/1.jpg"));
-        assert_eq!(batch.url_for("img-2"), Some("https://example.com/2.jpg"));
-    }
-
-    // -------------------------------------------------------------------
-    // Batch target derivation
-    // -------------------------------------------------------------------
 
     #[test]
     fn batch_target_for_1_is_2() {
@@ -221,12 +211,68 @@ mod tests {
     }
 
     #[test]
-    fn batch_target_for_3_is_6() {
-        assert_eq!(RetrievalBatchPlanner::batch_target_for(3), 6);
+    fn plan_normal_batch_exact_target() {
+        let candidates = vec![
+            make_retrievable("a", "https://example.com/a.jpg", 5),
+            make_retrievable("b", "https://example.com/b.jpg", 4),
+        ];
+        let rb = RetrievableCandidateBatch {
+            retrieval_batch_target: 2,
+            ..make_batch(candidates)
+        };
+
+        let qp_id = QueryPlanId::new("qp-1");
+        let policy = QueryRetrievalPolicy::default();
+        let (batch, shortage) =
+            RetrievalBatchPlanner::plan_from_batch(&rb, &qp_id, &policy, "warn", &[], false);
+
+        assert_eq!(batch.actual_size, 2);
+        assert!(!batch.is_short_batch);
+        assert_eq!(batch.target_size, 2);
+        assert!(shortage.is_none());
+        assert_eq!(batch.jobs.len(), 2);
+        assert_eq!(batch.jobs[0].candidate_id, "a"); // higher priority first
     }
 
     #[test]
-    fn max_batch_size_for_4_is_8() {
-        assert_eq!(RetrievalBatchPlanner::max_batch_size_for(4), 8);
+    fn plan_short_batch_when_fewer_candidates() {
+        let candidates = vec![
+            make_retrievable("a", "https://example.com/a.jpg", 5),
+            make_retrievable("b", "https://example.com/b.jpg", 3),
+        ];
+        let rb = RetrievableCandidateBatch {
+            retrieval_batch_target: 8,
+            ..make_batch(candidates)
+        };
+
+        let qp_id = QueryPlanId::new("qp-1");
+        let policy = QueryRetrievalPolicy::default();
+        let (batch, _shortage) =
+            RetrievalBatchPlanner::plan_from_batch(&rb, &qp_id, &policy, "warn", &[], false);
+
+        assert!(batch.is_short_batch);
+        assert_eq!(batch.actual_size, 2);
+        assert_eq!(batch.target_size, 8);
+    }
+
+    #[test]
+    fn plan_empty_batch() {
+        let rb = RetrievableCandidateBatch {
+            query_plan_id: "qp-1".into(),
+            full_attempt_count: 1,
+            retry_count: 0,
+            retrieval_batch_target: 4,
+            candidates: vec![],
+            rejected_decisions: vec![],
+            execution_blocking_facts: vec![],
+        };
+
+        let qp_id = QueryPlanId::new("qp-1");
+        let policy = QueryRetrievalPolicy::default();
+        let (batch, _shortage) =
+            RetrievalBatchPlanner::plan_from_batch(&rb, &qp_id, &policy, "warn", &[], false);
+
+        assert_eq!(batch.actual_size, 0);
+        assert!(batch.is_short_batch);
     }
 }

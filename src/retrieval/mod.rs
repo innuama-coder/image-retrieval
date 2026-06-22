@@ -1,575 +1,759 @@
-//! Retrieval module — batch planning and channel execution.
+//! Retrieval module — batch planning and channel fallback execution (v1.1).
 //!
-//! This module implements TASK-005: BaseRetrievalChannel batch planning,
-//! short-batch diagnosis, channel fallback, and retrieval failure
-//! classification.
+//! This module implements retrieval fallback execution across channels:
+
+#![allow(clippy::too_many_arguments)]
+//!
+//! 1. `normal_web_fetch.direct_image_fetch`
+//! 2. `normal_web_fetch.source_page_resolve`
+//! 3. `self_hosted_service`
+//! 4. `paid_online_service`
 //!
 //! # Structure
 //!
-//! - [`batch_planner`] — plans retrieval batches from candidate sequences.
-//! - [`channels`] — concrete channel implementations (web fetch, fixture).
+//! - [`batch_planner`] — plans retrieval batches from TASK-003 retrievable candidates.
+//! - [`channels`] — concrete channel implementations.
+//! - [`RetrievalExecutor`] — fallback execution orchestrator.
 //!
-//! References: PRD §抓取渠道产品要求, HLD §Retrieval Batch Planner,
-//! `docs/design/TASK-005-retrieval-channel-batch-design.md`
+//! References: PRD FR-008/FR-009, LLD §Retrieval,
+//! `docs/design/v1.1-TASK-004-retrieval-artifact-channel-design.md`
 
 pub mod batch_planner;
 pub mod channels;
 
 pub use batch_planner::RetrievalBatchPlanner;
+pub use channels::fixture::FixtureResponse;
 pub use channels::FixtureChannel;
+pub use channels::PaidChannel;
+pub use channels::SelfHostedChannel;
 pub use channels::WebFetchChannel;
 
-use crate::domain::candidate::RetrievableCandidateSequence;
+use crate::domain::candidate::RetrievableCandidateBatch;
+use crate::domain::config::RetrievalChannelConfig;
+use crate::domain::query_plan::{QueryPlanId, QueryRetrievalPolicy};
 use crate::domain::retrieval::{
-    ChannelAttemptResult, ExecutionBlockingFact, FallbackEligibilityFact, RetrievalBatch,
-    RetrievalBatchShortage, RetrievalChannelReadiness, RetrievalChannelTier, RetrievalOutcome,
-    RetrievalResult,
+    FallbackDecisionKind, RetrievalArtifactResult, RetrievalAttemptMode, RetrievalAttemptStatus,
+    RetrievalAttemptTrace, RetrievalBatch, RetrievalBatchResult, RetrievalChannelId,
+    RetrievalChannelReadinessReport, RetrievalChannelTier, RetrievalDiagnostic,
+    RetrievalExecutionBlock, RetrievalFailureCode, RetrievalFallbackDecision, RetrievalSeverity,
+    RetrievalStatus,
 };
-use crate::error::Error;
 use crate::ports::BaseRetrievalChannel;
 
+/// Fallback order for retrieval attempts.
+const FALLBACK_ORDER: &[(RetrievalChannelTier, RetrievalAttemptMode)] = &[
+    (
+        RetrievalChannelTier::NormalWebFetch,
+        RetrievalAttemptMode::DirectImageFetch,
+    ),
+    (
+        RetrievalChannelTier::NormalWebFetch,
+        RetrievalAttemptMode::SourcePageResolve,
+    ),
+    (
+        RetrievalChannelTier::SelfHostedService,
+        RetrievalAttemptMode::SelfHostedService,
+    ),
+    (
+        RetrievalChannelTier::PaidOnlineService,
+        RetrievalAttemptMode::PaidOnlineService,
+    ),
+];
+
 // ---------------------------------------------------------------------------
-// Retrieval executor — orchestrates a single batch attempt across channels
+// Retrieval executor
 // ---------------------------------------------------------------------------
 
-/// Execute a single retrieval batch attempt, starting from the given tier
-/// and falling back as needed.
+/// Executes retrieval across channels with fallback.
 ///
-/// # Fallback rules
-///
-/// 1. Start at `start_tier` (typically [`RetrievalChannelTier::WebFetch`]).
-/// 2. If the current channel is not ready, record an abandoned attempt and
-///    move to the next tier.
-/// 3. If the current channel produces failures that *allow* fallback, move
-///    to the next tier.
-/// 4. If the current channel produces failures that do **not** allow fallback
-///    (access-restricted, etc.), do NOT fallback — return the results as-is.
-/// 5. If all tiers are exhausted, return the results from the last attempted
-///    channel.
-/// 6. Fallback must never bypass access-control or authorization restrictions.
-///
-/// # Paid tier guard
-///
-/// When the next tier is [`RetrievalChannelTier::Paid`] and the channel is
-/// not ready (typically `PaidUnconfirmed`), the executor records an
-/// [`ExecutionBlockingFact`] and stops — it does not silently skip to paid.
-pub fn execute_batch(
-    sequence: &RetrievableCandidateSequence,
-    batch_target: u32,
+/// For each job in the batch, attempts channels in fallback order.
+/// Records attempt traces, fallback decisions, policy blocks, and
+/// produces a complete [`RetrievalBatchResult`].
+pub struct RetrievalExecutor;
+
+impl RetrievalExecutor {
+    /// Execute a retrieval batch using the configured channels.
+    ///
+    /// Returns a [`RetrievalBatchResult`] with per-job artifact evidence.
+    pub fn execute(
+        batch: &RetrievalBatch,
+        channels: &[&dyn BaseRetrievalChannel],
+        channel_configs: &[RetrievalChannelConfig],
+        retrieval_policy: &QueryRetrievalPolicy,
+        _robots_unknown_behavior: &str,
+        _prohibited_domains: &[String],
+        fixture_mode: bool,
+    ) -> RetrievalBatchResult {
+        let mut all_results: Vec<RetrievalArtifactResult> = Vec::new();
+        let mut all_traces: Vec<RetrievalAttemptTrace> = Vec::new();
+        let mut all_fallback_decisions: Vec<RetrievalFallbackDecision> = Vec::new();
+        let mut all_diagnostics: Vec<RetrievalDiagnostic> = Vec::new();
+        let mut execution_blocks: Vec<RetrievalExecutionBlock> = Vec::new();
+
+        // Evaluate channel readiness
+        let channel_readiness: Vec<RetrievalChannelReadinessReport> = channels
+            .iter()
+            .zip(channel_configs.iter())
+            .map(|(ch, cfg)| ch.readiness(cfg))
+            .collect();
+
+        // Check for fixture-in-production
+        if !fixture_mode {
+            for ch in channels {
+                let caps = ch.capabilities();
+                if caps.fixture_only {
+                    execution_blocks.push(RetrievalExecutionBlock {
+                        query_plan_id: batch.query_plan_id.clone(),
+                        retrieval_batch_id: Some(batch.retrieval_batch_id.clone()),
+                        dependency: format!("{} (fixture channel)", ch.display_name()),
+                        failure_code: RetrievalFailureCode::RetrievalFixtureNotProduction,
+                        reason: format!(
+                            "Fixture channel '{}' cannot be used in production mode.",
+                            ch.display_name()
+                        ),
+                        is_permanent: true,
+                        pending_job_count: batch.jobs.len(),
+                    });
+                }
+            }
+        }
+
+        // Build a lookup: tier -> channel
+        let channel_map: std::collections::BTreeMap<
+            RetrievalChannelTier,
+            &dyn BaseRetrievalChannel,
+        > = channels.iter().map(|ch| (ch.tier(), *ch)).collect();
+
+        // Process each job through fallback order
+        for job in &batch.jobs {
+            let mut job_complete = false;
+            let mut job_traces: Vec<RetrievalAttemptTrace> = Vec::new();
+
+            for &(tier, mode) in FALLBACK_ORDER {
+                if job_complete {
+                    break;
+                }
+
+                // Check if this tier is available
+                let channel = match channel_map.get(&tier) {
+                    Some(ch) => *ch,
+                    None => continue,
+                };
+
+                // Check channel readiness
+                let is_ready = channel_readiness
+                    .iter()
+                    .any(|r| r.channel_id == channel.channel_id() && r.available);
+
+                // For paid tier, check policy
+                if tier == RetrievalChannelTier::PaidOnlineService && !retrieval_policy.allow_paid {
+                    let fb = RetrievalFallbackDecision {
+                        retrieval_job_id: job.retrieval_job_id.clone(),
+                        from_tier: get_previous_tier(tier),
+                        from_attempt_mode: get_previous_mode(tier, mode),
+                        to_tier: Some(tier),
+                        to_attempt_mode: Some(mode),
+                        decision: FallbackDecisionKind::StopPaidUnconfirmed,
+                        reason_code: RetrievalFailureCode::RetrievalPaidUnconfirmed,
+                        policy_reason: Some(
+                            "Paid retrieval is not allowed by QueryPlan policy.".into(),
+                        ),
+                    };
+                    all_fallback_decisions.push(fb);
+
+                    all_diagnostics.push(
+                        RetrievalDiagnostic::new(
+                            RetrievalFailureCode::RetrievalPaidUnconfirmed,
+                            RetrievalSeverity::Blocker,
+                            &job.query_plan_id,
+                            "Paid channel skipped: not allowed by policy",
+                        )
+                        .with_job(job.retrieval_job_id.to_string())
+                        .with_candidate(&job.candidate_id),
+                    );
+                    break;
+                }
+
+                if !is_ready {
+                    // Record abandoned attempt
+                    let trace = RetrievalAttemptTrace {
+                        attempt_id: format!("attempt-{}-{}-abandoned", job.retrieval_job_id, tier),
+                        retrieval_job_id: job.retrieval_job_id.clone(),
+                        query_plan_id: job.query_plan_id.clone(),
+                        candidate_id: job.candidate_id.clone(),
+                        channel_id: channel.channel_id(),
+                        channel_tier: tier,
+                        attempt_mode: mode,
+                        started_at: String::new(),
+                        completed_at: None,
+                        target_url_redacted: None,
+                        source_page_url_redacted: None,
+                        final_url_redacted: None,
+                        http_status: None,
+                        bytes_received: None,
+                        status: RetrievalAttemptStatus::Abandoned,
+                        failure_code: Some(RetrievalFailureCode::RetrievalChannelDisabled),
+                        retryable: true,
+                        fallback_allowed: true,
+                        policy_reason: Some(format!("Channel {} not ready", tier)),
+                        artifact_refs: vec![],
+                        redaction_applied: false,
+                    };
+                    job_traces.push(trace);
+                    continue;
+                }
+
+                // Attempt retrieval through this channel
+                // The channel's retrieve_batch processes all jobs, but we only
+                // want the result for this specific job. We create a single-job
+                // sub-batch for the channel.
+                let sub_batch = RetrievalBatch::new(
+                    format!("{}-{}", batch.retrieval_batch_id, job.retrieval_job_id),
+                    &batch.query_plan_id,
+                    batch.full_attempt_count,
+                    batch.retry_count,
+                    1,
+                    vec![job.clone()],
+                    None,
+                );
+
+                match channel.retrieve_batch(&sub_batch) {
+                    Ok(sub_result) => {
+                        if let Some(job_result) = sub_result.results.first() {
+                            let mut result = job_result.clone();
+                            result.retrieval_batch_id = batch.retrieval_batch_id.clone();
+
+                            if !result.fetch_trace.is_empty() {
+                                job_traces.extend(result.fetch_trace.clone());
+                            }
+
+                            if result.is_complete() {
+                                job_complete = true;
+                                all_results.push(result);
+                            } else if result.retrieval_status == RetrievalStatus::AccessRestricted {
+                                // Access-restricted: record and stop fallback
+                                let fb = RetrievalFallbackDecision {
+                                    retrieval_job_id: job.retrieval_job_id.clone(),
+                                    from_tier: tier,
+                                    from_attempt_mode: mode,
+                                    to_tier: None,
+                                    to_attempt_mode: None,
+                                    decision: FallbackDecisionKind::StopAccessRestricted,
+                                    reason_code: RetrievalFailureCode::RetrievalAccessRestricted,
+                                    policy_reason: Some(
+                                        "Access restricted; cannot escalate to higher tier.".into(),
+                                    ),
+                                };
+                                all_fallback_decisions.push(fb);
+                                all_results.push(result);
+                                job_complete = true;
+                            } else {
+                                // Failed but fallbackable
+                                if let Some(next) = next_fallback(tier, mode) {
+                                    let fb = RetrievalFallbackDecision {
+                                        retrieval_job_id: job.retrieval_job_id.clone(),
+                                        from_tier: tier,
+                                        from_attempt_mode: mode,
+                                        to_tier: Some(next.0),
+                                        to_attempt_mode: Some(next.1),
+                                        decision: FallbackDecisionKind::Proceed,
+                                        reason_code: result
+                                            .failure_reason
+                                            .as_ref()
+                                            .map(|f| f.code.clone())
+                                            .unwrap_or(RetrievalFailureCode::RetrievalUnavailable),
+                                        policy_reason: None,
+                                    };
+                                    all_fallback_decisions.push(fb);
+                                } else {
+                                    let fb = RetrievalFallbackDecision {
+                                        retrieval_job_id: job.retrieval_job_id.clone(),
+                                        from_tier: tier,
+                                        from_attempt_mode: mode,
+                                        to_tier: None,
+                                        to_attempt_mode: None,
+                                        decision: FallbackDecisionKind::StopNoHigherTier,
+                                        reason_code: RetrievalFailureCode::RetrievalUnavailable,
+                                        policy_reason: Some(
+                                            "No higher tier available for fallback.".into(),
+                                        ),
+                                    };
+                                    all_fallback_decisions.push(fb);
+                                    all_results.push(result);
+                                    job_complete = true;
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        let failure_code = e.to_failure_code();
+                        let allows_fallback = e.allows_fallback();
+                        let trace = RetrievalAttemptTrace {
+                            attempt_id: format!("attempt-{}-{}-error", job.retrieval_job_id, tier),
+                            retrieval_job_id: job.retrieval_job_id.clone(),
+                            query_plan_id: job.query_plan_id.clone(),
+                            candidate_id: job.candidate_id.clone(),
+                            channel_id: channel.channel_id(),
+                            channel_tier: tier,
+                            attempt_mode: mode,
+                            started_at: String::new(),
+                            completed_at: None,
+                            target_url_redacted: None,
+                            source_page_url_redacted: None,
+                            final_url_redacted: None,
+                            http_status: None,
+                            bytes_received: None,
+                            status: RetrievalAttemptStatus::Failed,
+                            failure_code: Some(failure_code.clone()),
+                            retryable: allows_fallback,
+                            fallback_allowed: allows_fallback,
+                            policy_reason: None,
+                            artifact_refs: vec![],
+                            redaction_applied: false,
+                        };
+                        job_traces.push(trace.clone());
+
+                        if !allows_fallback {
+                            let failed_result = RetrievalArtifactResult::failed(
+                                job,
+                                &batch.retrieval_batch_id,
+                                channel.channel_id(),
+                                tier,
+                                mode,
+                                e.to_string(),
+                                failure_code,
+                                vec![trace],
+                                vec![],
+                            );
+                            let fb = RetrievalFallbackDecision {
+                                retrieval_job_id: job.retrieval_job_id.clone(),
+                                from_tier: tier,
+                                from_attempt_mode: mode,
+                                to_tier: None,
+                                to_attempt_mode: None,
+                                decision: FallbackDecisionKind::StopAccessRestricted,
+                                reason_code: RetrievalFailureCode::RetrievalAccessRestricted,
+                                policy_reason: Some(
+                                    "Access restricted; cannot escalate to higher tier.".into(),
+                                ),
+                            };
+                            all_fallback_decisions.push(fb);
+                            all_results.push(failed_result);
+                            job_complete = true;
+                        }
+                    }
+                }
+            }
+
+            // If job never completed and we ran out of fallback options
+            if !job_complete {
+                let failed_result = RetrievalArtifactResult::failed(
+                    job,
+                    &batch.retrieval_batch_id,
+                    RetrievalChannelId::new("exhausted"),
+                    RetrievalChannelTier::NormalWebFetch,
+                    RetrievalAttemptMode::DirectImageFetch,
+                    "all retrieval channels exhausted without success",
+                    RetrievalFailureCode::RetrievalUnavailable,
+                    job_traces.clone(),
+                    vec![],
+                );
+                all_results.push(failed_result);
+            }
+
+            all_traces.extend(job_traces);
+        }
+
+        RetrievalBatchResult::new(
+            &batch.retrieval_batch_id,
+            &batch.query_plan_id,
+            batch.full_attempt_count,
+            batch.retry_count,
+            batch.target_size,
+            channel_readiness,
+            all_results,
+            all_traces,
+            all_fallback_decisions,
+            batch.shortage.clone(),
+            execution_blocks,
+            all_diagnostics,
+        )
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Fallback order helpers
+// ---------------------------------------------------------------------------
+
+/// Get the previous tier in fallback order.
+fn get_previous_tier(current: RetrievalChannelTier) -> RetrievalChannelTier {
+    match current {
+        RetrievalChannelTier::SelfHostedService => RetrievalChannelTier::NormalWebFetch,
+        RetrievalChannelTier::PaidOnlineService => RetrievalChannelTier::SelfHostedService,
+        _ => RetrievalChannelTier::NormalWebFetch,
+    }
+}
+
+/// Get the previous attempt mode for fallback decision recording.
+fn get_previous_mode(
+    tier: RetrievalChannelTier,
+    mode: RetrievalAttemptMode,
+) -> RetrievalAttemptMode {
+    match (tier, mode) {
+        (RetrievalChannelTier::NormalWebFetch, RetrievalAttemptMode::SourcePageResolve) => {
+            RetrievalAttemptMode::DirectImageFetch
+        }
+        (RetrievalChannelTier::SelfHostedService, _) => RetrievalAttemptMode::SourcePageResolve,
+        (RetrievalChannelTier::PaidOnlineService, _) => RetrievalAttemptMode::SelfHostedService,
+        _ => mode,
+    }
+}
+
+/// Return the next (tier, mode) in fallback order, or None if exhausted.
+fn next_fallback(
+    tier: RetrievalChannelTier,
+    mode: RetrievalAttemptMode,
+) -> Option<(RetrievalChannelTier, RetrievalAttemptMode)> {
+    for i in 0..FALLBACK_ORDER.len() {
+        if FALLBACK_ORDER[i] == (tier, mode) {
+            if i + 1 < FALLBACK_ORDER.len() {
+                return Some(FALLBACK_ORDER[i + 1]);
+            }
+            return None;
+        }
+    }
+    None
+}
+
+// ---------------------------------------------------------------------------
+// Convenience: plan and execute in one call
+// ---------------------------------------------------------------------------
+
+/// Plan a batch from TASK-003 candidates and execute retrieval.
+pub fn plan_and_execute(
+    retrievable_batch: &RetrievableCandidateBatch,
+    query_plan_id: &QueryPlanId,
+    retrieval_policy: &QueryRetrievalPolicy,
+    robots_unknown_behavior: &str,
+    prohibited_domains: &[String],
+    fixture_mode: bool,
     channels: &[&dyn BaseRetrievalChannel],
-) -> RetrievalOutcome {
-    let (batch, shortage) = RetrievalBatchPlanner::plan(sequence, batch_target);
+    channel_configs: &[RetrievalChannelConfig],
+) -> RetrievalBatchResult {
+    let (batch, _shortage) = RetrievalBatchPlanner::plan_from_batch(
+        retrievable_batch,
+        query_plan_id,
+        retrieval_policy,
+        robots_unknown_behavior,
+        prohibited_domains,
+        fixture_mode,
+    );
 
-    if batch.candidate_ids.is_empty() {
-        return RetrievalOutcome {
-            batch,
-            results: vec![],
-            channel_tier: RetrievalChannelTier::WebFetch,
-            shortage,
-            channels_attempted: 0,
-            channel_attempts: vec![],
-            fallback_facts: vec![],
-            execution_blocked: Some(ExecutionBlockingFact {
-                reason: "no candidates in batch to retrieve".into(),
-                source_tier: None,
-                is_access_restricted: false,
-                is_paid_unconfirmed: false,
-            }),
-        };
-    }
-
-    let mut channel_attempts: Vec<ChannelAttemptResult> = Vec::new();
-    let mut fallback_facts: Vec<FallbackEligibilityFact> = Vec::new();
-    let mut last_results: Option<Vec<RetrievalResult>> = None;
-    let mut last_tier = RetrievalChannelTier::WebFetch;
-
-    for channel in channels {
-        let tier = channel.tier();
-        last_tier = tier;
-
-        // Check readiness
-        match channel.readiness() {
-            Ok(()) => { /* channel ready */ }
-            Err(e) => {
-                let abandon_reason = format!("channel not ready: {}", e);
-                channel_attempts.push(ChannelAttemptResult {
-                    channel_tier: tier,
-                    results: vec![],
-                    success_count: 0,
-                    failure_count: 0,
-                    abandoned: true,
-                    abandon_reason: Some(abandon_reason.clone()),
-                });
-
-                let fact = channel.fallback_fact(&abandon_reason);
-                let is_access = fact.is_access_restricted;
-                fallback_facts.push(fact);
-
-                if is_access {
-                    // Access restriction — stop here
-                    return build_outcome(
-                        batch,
-                        last_results.unwrap_or_default(),
-                        last_tier,
-                        shortage,
-                        channel_attempts,
-                        fallback_facts,
-                        Some(ExecutionBlockingFact {
-                            reason: "access restriction blocked retrieval".into(),
-                            source_tier: Some(tier),
-                            is_access_restricted: true,
-                            is_paid_unconfirmed: false,
-                        }),
-                    );
-                }
-                continue; // try next channel
-            }
-        }
-
-        // Attempt retrieval with this channel
-        let results = match channel.retrieve_batch(&batch) {
-            Ok(r) => r,
-            Err(e) => {
-                // Channel-level error → treat as all-failure
-                let reason = format!("channel error: {}", e);
-                let fact = channel.fallback_fact(&reason);
-                let is_access = fact.is_access_restricted;
-                fallback_facts.push(fact);
-
-                channel_attempts.push(ChannelAttemptResult {
-                    channel_tier: tier,
-                    results: vec![],
-                    success_count: 0,
-                    failure_count: batch.candidate_ids.len() as u32,
-                    abandoned: true,
-                    abandon_reason: Some(reason),
-                });
-
-                if is_access {
-                    return build_outcome(
-                        batch,
-                        vec![],
-                        tier,
-                        shortage,
-                        channel_attempts,
-                        fallback_facts,
-                        Some(ExecutionBlockingFact {
-                            reason: "access restriction blocked retrieval".into(),
-                            source_tier: Some(tier),
-                            is_access_restricted: true,
-                            is_paid_unconfirmed: false,
-                        }),
-                    );
-                }
-                continue;
-            }
-        };
-
-        let success_count = results.iter().filter(|r| r.is_success()).count() as u32;
-        let failure_count = results.iter().filter(|r| r.is_failure()).count() as u32;
-
-        // Check if any failure is non-fallbackable (e.g. access-restricted)
-        let has_non_fallbackable = results.iter().any(|r| match r {
-            RetrievalResult::Failure(f) => !f.allows_fallback,
-            _ => false,
-        });
-
-        if has_non_fallbackable {
-            // Record this attempt but do NOT fallback further
-            channel_attempts.push(ChannelAttemptResult {
-                channel_tier: tier,
-                results: results.clone(),
-                success_count,
-                failure_count,
-                abandoned: false,
-                abandon_reason: None,
-            });
-
-            let fact = FallbackEligibilityFact::new(
-                tier,
-                "non-fallbackable failure (access restricted)",
-                true,
-            );
-            fallback_facts.push(fact);
-
-            return build_outcome(
-                batch,
-                results,
-                tier,
-                shortage,
-                channel_attempts,
-                fallback_facts,
-                Some(ExecutionBlockingFact {
-                    reason: "access restriction blocked fallback to higher tier".into(),
-                    source_tier: Some(tier),
-                    is_access_restricted: true,
-                    is_paid_unconfirmed: false,
-                }),
-            );
-        }
-
-        // If we got at least some successes, we're done (no need to fallback
-        // just because some candidates failed with fallbackable errors).
-        // The orchestrator (TASK-006) decides whether the success count is
-        // sufficient.
-        if success_count > 0 {
-            channel_attempts.push(ChannelAttemptResult {
-                channel_tier: tier,
-                results: results.clone(),
-                success_count,
-                failure_count,
-                abandoned: false,
-                abandon_reason: None,
-            });
-
-            return build_outcome(
-                batch,
-                results,
-                tier,
-                shortage,
-                channel_attempts,
-                fallback_facts,
-                None,
-            );
-        }
-
-        // All failed, and all failures allow fallback → record and try next
-        channel_attempts.push(ChannelAttemptResult {
-            channel_tier: tier,
-            results: results.clone(),
-            success_count,
-            failure_count,
-            abandoned: false,
-            abandon_reason: None,
-        });
-
-        let fact = FallbackEligibilityFact::new(tier, "all candidates failed", false);
-        fallback_facts.push(fact);
-
-        last_results = Some(results);
-    }
-
-    // All channels exhausted
-    build_outcome(
-        batch,
-        last_results.unwrap_or_default(),
-        last_tier,
-        shortage,
-        channel_attempts,
-        fallback_facts,
-        Some(ExecutionBlockingFact {
-            reason: "all retrieval channels exhausted without success".into(),
-            source_tier: Some(last_tier),
-            is_access_restricted: false,
-            is_paid_unconfirmed: false,
-        }),
+    RetrievalExecutor::execute(
+        &batch,
+        channels,
+        channel_configs,
+        retrieval_policy,
+        robots_unknown_behavior,
+        prohibited_domains,
+        fixture_mode,
     )
-}
-
-/// Build a [`RetrievalOutcome`] from the gathered data.
-fn build_outcome(
-    batch: RetrievalBatch,
-    results: Vec<RetrievalResult>,
-    channel_tier: RetrievalChannelTier,
-    shortage: Option<RetrievalBatchShortage>,
-    channel_attempts: Vec<ChannelAttemptResult>,
-    fallback_facts: Vec<FallbackEligibilityFact>,
-    execution_blocked: Option<ExecutionBlockingFact>,
-) -> RetrievalOutcome {
-    let channels_attempted = channel_attempts.len() as u32;
-    RetrievalOutcome {
-        batch,
-        results,
-        channel_tier,
-        shortage,
-        channels_attempted,
-        channel_attempts,
-        fallback_facts,
-        execution_blocked,
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Convenience: summarise readiness of a set of channels
-// ---------------------------------------------------------------------------
-
-/// Readiness summary for one channel.
-#[derive(Debug, Clone)]
-pub struct ChannelReadinessRecord {
-    pub channel_id: String,
-    pub display_name: String,
-    pub tier: RetrievalChannelTier,
-    pub readiness: RetrievalChannelReadiness,
-}
-
-/// Check the readiness of a set of channels and return a summary.
-pub fn summarise_channel_readiness(
-    channels: &[&dyn BaseRetrievalChannel],
-) -> Vec<ChannelReadinessRecord> {
-    channels
-        .iter()
-        .enumerate()
-        .map(|(i, ch)| {
-            let readiness = match ch.readiness() {
-                Ok(()) => RetrievalChannelReadiness::Ready,
-                Err(e) => classify_readiness_error(&e, ch.tier()),
-            };
-            ChannelReadinessRecord {
-                channel_id: format!("channel-{}", i),
-                display_name: ch.display_name().to_string(),
-                tier: ch.tier(),
-                readiness,
-            }
-        })
-        .collect()
-}
-
-/// Heuristically classify an error from `readiness()` into a
-/// [`RetrievalChannelReadiness`].
-fn classify_readiness_error(
-    error: &Error,
-    _tier: RetrievalChannelTier,
-) -> RetrievalChannelReadiness {
-    let msg = error.to_string().to_lowercase();
-    if msg.contains("paid") || msg.contains("confirmation") {
-        RetrievalChannelReadiness::PaidUnconfirmed
-    } else if msg.contains("disabled") {
-        RetrievalChannelReadiness::Disabled
-    } else if msg.contains("dependency") || msg.contains("missing") {
-        RetrievalChannelReadiness::MissingDependency
-    } else if msg.contains("misconfigured") {
-        RetrievalChannelReadiness::Misconfigured
-    } else {
-        RetrievalChannelReadiness::MissingDependency
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::candidate::{CandidateDecision, CandidateId, CandidateRecord, ProviderId};
-    use crate::retrieval::channels::fixture::{FixtureReadiness, FixtureResponse};
+    use crate::domain::candidate::{
+        CandidateId, CandidateQualityDecision, CandidateQualityStatus, CandidateRecord, ProviderId,
+        RetrievableCandidate, RetrievableCandidateBatch,
+    };
+    use crate::domain::config::RetrievalChannelConfig;
+    use crate::retrieval::channels::fixture::FixtureChannel;
 
-    fn make_accepted(id: &str, url: &str, priority: u32) -> CandidateDecision {
-        CandidateDecision::Accepted {
-            candidate: CandidateRecord::minimal(CandidateId::new(id), ProviderId::new("test"), url),
-            priority,
+    fn make_retrievable(id: &str, image_url: &str, priority: u32) -> RetrievableCandidate {
+        let rec =
+            CandidateRecord::minimal(CandidateId::new(id), ProviderId::new("test"), image_url);
+        RetrievableCandidate {
+            candidate: rec,
+            candidate_quality_decision: CandidateQualityDecision {
+                candidate_id: CandidateId::new(id),
+                query_plan_id: "qp-test".into(),
+                mechanical_passed: true,
+                vlm_passed: true,
+                final_status: CandidateQualityStatus::Retrievable,
+                priority,
+                blocking_metrics: vec![],
+                reference_metrics: vec![],
+                vlm_decision: None,
+                diagnostics: vec![],
+            },
+            retrieval_priority: priority,
+            primary_image_url: image_url.into(),
+            source_page_url: None,
+            thumbnail_url: None,
+            expected_mime_type: Some("image/jpeg".into()),
+            license_hint: None,
+            provenance_refs: vec![],
         }
     }
 
-    fn make_sequence(decisions: Vec<CandidateDecision>) -> RetrievableCandidateSequence {
-        RetrievableCandidateSequence::from_decisions(decisions)
+    fn make_batch(candidates: Vec<RetrievableCandidate>) -> RetrievableCandidateBatch {
+        let len = candidates.len() as u32;
+        RetrievableCandidateBatch {
+            query_plan_id: "qp-test".into(),
+            full_attempt_count: 1,
+            retry_count: 0,
+            retrieval_batch_target: len * 2,
+            candidates,
+            rejected_decisions: vec![],
+            execution_blocking_facts: vec![],
+        }
+    }
+
+    fn default_config(tier: RetrievalChannelTier) -> RetrievalChannelConfig {
+        RetrievalChannelConfig {
+            channel_id: format!("test-{}", tier),
+            channel_kind: crate::domain::config::RetrievalChannelKind::NormalWebFetch,
+            tier,
+            enabled: true,
+            endpoint: None,
+            credential_env: None,
+            max_batch_size: None,
+        }
     }
 
     // -------------------------------------------------------------------
-    // Executor: single channel success
+    // Fallback order tests
     // -------------------------------------------------------------------
 
     #[test]
-    fn execute_batch_single_channel_all_success() {
-        let decisions = vec![
-            make_accepted("a", "https://example.com/a.jpg", 3),
-            make_accepted("b", "https://example.com/b.jpg", 2),
-        ];
-        let seq = make_sequence(decisions);
+    fn fallback_order_is_correct() {
+        assert_eq!(FALLBACK_ORDER[0].0, RetrievalChannelTier::NormalWebFetch);
+        assert_eq!(FALLBACK_ORDER[0].1, RetrievalAttemptMode::DirectImageFetch);
+        assert_eq!(FALLBACK_ORDER[1].1, RetrievalAttemptMode::SourcePageResolve);
+        assert_eq!(FALLBACK_ORDER[2].0, RetrievalChannelTier::SelfHostedService);
+        assert_eq!(FALLBACK_ORDER[3].0, RetrievalChannelTier::PaidOnlineService);
+    }
 
-        let channel =
-            FixtureChannel::new(RetrievalChannelTier::WebFetch).with_all_success(&["a", "b"]);
+    #[test]
+    fn next_fallback_chain() {
+        assert_eq!(
+            next_fallback(
+                RetrievalChannelTier::NormalWebFetch,
+                RetrievalAttemptMode::DirectImageFetch
+            ),
+            Some((
+                RetrievalChannelTier::NormalWebFetch,
+                RetrievalAttemptMode::SourcePageResolve
+            ))
+        );
+        assert_eq!(
+            next_fallback(
+                RetrievalChannelTier::PaidOnlineService,
+                RetrievalAttemptMode::PaidOnlineService
+            ),
+            None
+        );
+    }
+
+    // -------------------------------------------------------------------
+    // Executor: fixture channel success
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn executor_fixture_single_success() {
+        let candidates = vec![make_retrievable("a", "https://example.com/a.jpg", 5)];
+        let rb = RetrievableCandidateBatch {
+            retrieval_batch_target: 2,
+            ..make_batch(candidates)
+        };
+
+        let qp_id = QueryPlanId::new("qp-test");
+        let policy = QueryRetrievalPolicy::default();
+        let channel = FixtureChannel::new(RetrievalChannelTier::NormalWebFetch).with_response(
+            "a",
+            crate::retrieval::channels::fixture::FixtureResponse::success(),
+        );
         let channels: Vec<&dyn BaseRetrievalChannel> = vec![&channel];
+        let configs = vec![default_config(RetrievalChannelTier::NormalWebFetch)];
 
-        let outcome = execute_batch(&seq, 4, &channels);
+        let result = plan_and_execute(
+            &rb,
+            &qp_id,
+            &policy,
+            "warn",
+            &[],
+            true, // fixture mode
+            &channels,
+            &configs,
+        );
 
-        assert_eq!(outcome.results.len(), 2);
-        assert!(outcome.results.iter().all(|r| r.is_success()));
-        assert_eq!(outcome.channel_tier, RetrievalChannelTier::WebFetch);
-        assert_eq!(outcome.channels_attempted, 1);
-        assert!(outcome.execution_blocked.is_none());
+        assert_eq!(result.results.len(), 1);
+        assert!(result.results[0].is_complete());
     }
 
     // -------------------------------------------------------------------
-    // Executor: fallback on failure
+    // Executor: fixture channel failure with fallback
     // -------------------------------------------------------------------
 
     #[test]
-    fn execute_batch_fallback_to_second_channel() {
-        let decisions = vec![make_accepted("a", "https://example.com/a.jpg", 5)];
-        let seq = make_sequence(decisions);
+    fn executor_fallback_on_failure() {
+        let candidates = vec![make_retrievable("a", "https://example.com/a.jpg", 5)];
+        let rb = RetrievableCandidateBatch {
+            retrieval_batch_target: 2,
+            ..make_batch(candidates)
+        };
 
-        let fail_channel = FixtureChannel::new(RetrievalChannelTier::WebFetch)
-            .with_response("a", FixtureResponse::network_failure());
-        let success_channel =
-            FixtureChannel::new(RetrievalChannelTier::SelfHosted).with_all_success(&["a"]);
+        let qp_id = QueryPlanId::new("qp-test");
+        let policy = QueryRetrievalPolicy::default();
+
+        let fail_channel = FixtureChannel::new(RetrievalChannelTier::NormalWebFetch).with_response(
+            "a",
+            crate::retrieval::channels::fixture::FixtureResponse::network_failure(),
+        );
+        let success_channel = FixtureChannel::new(RetrievalChannelTier::SelfHostedService)
+            .with_response(
+                "a",
+                crate::retrieval::channels::fixture::FixtureResponse::success(),
+            );
+
         let channels: Vec<&dyn BaseRetrievalChannel> = vec![&fail_channel, &success_channel];
+        let configs = vec![
+            default_config(RetrievalChannelTier::NormalWebFetch),
+            default_config(RetrievalChannelTier::SelfHostedService),
+        ];
 
-        let outcome = execute_batch(&seq, 2, &channels);
+        let result = plan_and_execute(&rb, &qp_id, &policy, "warn", &[], true, &channels, &configs);
 
-        assert_eq!(outcome.channel_tier, RetrievalChannelTier::SelfHosted);
-        assert_eq!(outcome.channels_attempted, 2);
-        assert_eq!(outcome.fallback_facts.len(), 1);
-        assert!(outcome.results.iter().all(|r| r.is_success()));
+        assert_eq!(result.results.len(), 1);
+        // Should have succeeded via fallback
+        assert!(result.results[0].is_complete());
+        assert!(!result.fallback_decisions.is_empty());
     }
 
     // -------------------------------------------------------------------
-    // Executor: no fallback on access-restricted
+    // Executor: access-restricted stops fallback
     // -------------------------------------------------------------------
 
     #[test]
-    fn execute_batch_no_fallback_when_access_restricted() {
-        let decisions = vec![make_accepted(
+    fn executor_no_fallback_on_access_restricted() {
+        let candidates = vec![make_retrievable(
             "a",
             "https://restricted.example.com/a.jpg",
             5,
         )];
-        let seq = make_sequence(decisions);
+        let rb = RetrievableCandidateBatch {
+            retrieval_batch_target: 2,
+            ..make_batch(candidates)
+        };
 
-        let restricted_channel = FixtureChannel::new(RetrievalChannelTier::WebFetch)
-            .with_response("a", FixtureResponse::access_restricted());
-        let higher_channel =
-            FixtureChannel::new(RetrievalChannelTier::SelfHosted).with_all_success(&["a"]);
-        let channels: Vec<&dyn BaseRetrievalChannel> = vec![&restricted_channel, &higher_channel];
+        let qp_id = QueryPlanId::new("qp-test");
+        let policy = QueryRetrievalPolicy::default();
 
-        let outcome = execute_batch(&seq, 2, &channels);
+        let restricted_channel = FixtureChannel::new(RetrievalChannelTier::NormalWebFetch)
+            .with_response(
+                "a",
+                crate::retrieval::channels::fixture::FixtureResponse::access_restricted(),
+            );
+        let success_channel = FixtureChannel::new(RetrievalChannelTier::SelfHostedService)
+            .with_response(
+                "a",
+                crate::retrieval::channels::fixture::FixtureResponse::success(),
+            );
+
+        let channels: Vec<&dyn BaseRetrievalChannel> = vec![&restricted_channel, &success_channel];
+        let configs = vec![
+            default_config(RetrievalChannelTier::NormalWebFetch),
+            default_config(RetrievalChannelTier::SelfHostedService),
+        ];
+
+        let result = plan_and_execute(&rb, &qp_id, &policy, "warn", &[], true, &channels, &configs);
 
         // Must NOT have fallen back — access restriction blocks fallback
-        assert_eq!(outcome.channel_tier, RetrievalChannelTier::WebFetch);
-        assert_eq!(outcome.channels_attempted, 1);
-        assert!(outcome.execution_blocked.is_some());
-        if let Some(ref block) = outcome.execution_blocked {
-            assert!(block.is_access_restricted);
-        }
+        assert!(!result.results[0].is_complete());
     }
 
     // -------------------------------------------------------------------
-    // Executor: paid channel not silently used
+    // Executor: paid channel skipped when not allowed
     // -------------------------------------------------------------------
 
     #[test]
-    fn execute_batch_paid_channel_unconfirmed_detected() {
-        let decisions = vec![make_accepted("a", "https://example.com/a.jpg", 5)];
-        let seq = make_sequence(decisions);
+    fn executor_paid_skipped_when_not_allowed() {
+        let candidates = vec![make_retrievable("a", "https://example.com/a.jpg", 5)];
+        let rb = RetrievableCandidateBatch {
+            retrieval_batch_target: 2,
+            ..make_batch(candidates)
+        };
 
-        let web_fetch = FixtureChannel::new(RetrievalChannelTier::WebFetch)
-            .with_response("a", FixtureResponse::network_failure());
-        let paid = FixtureChannel::new(RetrievalChannelTier::Paid)
-            .with_readiness(FixtureReadiness::PaidUnconfirmed)
-            .with_all_success(&["a"]);
-        let channels: Vec<&dyn BaseRetrievalChannel> = vec![&web_fetch, &paid];
+        let qp_id = QueryPlanId::new("qp-test");
+        let policy = QueryRetrievalPolicy {
+            allow_paid: false,
+            ..Default::default()
+        };
 
-        let outcome = execute_batch(&seq, 2, &channels);
+        let fail_channel = FixtureChannel::new(RetrievalChannelTier::NormalWebFetch).with_response(
+            "a",
+            crate::retrieval::channels::fixture::FixtureResponse::network_failure(),
+        );
+        let paid_channel = FixtureChannel::new(RetrievalChannelTier::PaidOnlineService)
+            .with_response(
+                "a",
+                crate::retrieval::channels::fixture::FixtureResponse::success(),
+            );
 
-        // Paid channel should have been skipped (not ready), resulting in
-        // all channels exhausted
-        assert_eq!(outcome.channels_attempted, 2);
-        // Check that the paid channel attempt was abandoned
-        let paid_attempt = outcome
-            .channel_attempts
-            .iter()
-            .find(|a| a.channel_tier == RetrievalChannelTier::Paid);
-        assert!(paid_attempt.is_some());
-        assert!(paid_attempt.unwrap().abandoned);
-    }
-
-    // -------------------------------------------------------------------
-    // Executor: empty batch
-    // -------------------------------------------------------------------
-
-    #[test]
-    fn execute_batch_empty_sequence_no_candidates() {
-        let seq = RetrievableCandidateSequence::empty();
-        let channel = FixtureChannel::new(RetrievalChannelTier::WebFetch);
-        let channels: Vec<&dyn BaseRetrievalChannel> = vec![&channel];
-
-        let outcome = execute_batch(&seq, 4, &channels);
-
-        assert!(outcome.results.is_empty());
-        assert!(outcome.execution_blocked.is_some());
-        assert_eq!(outcome.channels_attempted, 0);
-    }
-
-    // -------------------------------------------------------------------
-    // Executor: short batch
-    // -------------------------------------------------------------------
-
-    #[test]
-    fn execute_batch_short_batch_when_fewer_candidates() {
-        let decisions = vec![
-            make_accepted("a", "https://example.com/a.jpg", 5),
-            make_accepted("b", "https://example.com/b.jpg", 3),
+        let channels: Vec<&dyn BaseRetrievalChannel> = vec![&fail_channel, &paid_channel];
+        let configs = vec![
+            default_config(RetrievalChannelTier::NormalWebFetch),
+            default_config(RetrievalChannelTier::PaidOnlineService),
         ];
-        let seq = make_sequence(decisions);
 
-        let channel =
-            FixtureChannel::new(RetrievalChannelTier::WebFetch).with_all_success(&["a", "b"]);
-        let channels: Vec<&dyn BaseRetrievalChannel> = vec![&channel];
+        let result = plan_and_execute(&rb, &qp_id, &policy, "warn", &[], true, &channels, &configs);
 
-        let outcome = execute_batch(&seq, 8, &channels);
-
-        assert!(outcome.batch.is_short_batch);
-        assert!(outcome.shortage.is_some());
-        if let Some(ref s) = outcome.shortage {
-            assert_eq!(s.target_size, 8);
-            assert_eq!(s.actual_size, 2);
-        }
+        // Paid channel should be skipped, job should fail
+        assert!(!result.results[0].is_complete());
     }
 
     // -------------------------------------------------------------------
-    // Executor: batch target for 4 images = 8
+    // Executor: metadata-only rejected
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn executor_metadata_only_rejected() {
+        let candidates = vec![make_retrievable("a", "https://example.com/a.jpg", 5)];
+        let rb = RetrievableCandidateBatch {
+            retrieval_batch_target: 2,
+            ..make_batch(candidates)
+        };
+
+        let qp_id = QueryPlanId::new("qp-test");
+        let policy = QueryRetrievalPolicy::default();
+
+        let metadata_channel = FixtureChannel::new(RetrievalChannelTier::NormalWebFetch)
+            .with_response(
+                "a",
+                crate::retrieval::channels::fixture::FixtureResponse::metadata_only(),
+            );
+
+        let channels: Vec<&dyn BaseRetrievalChannel> = vec![&metadata_channel];
+        let configs = vec![default_config(RetrievalChannelTier::NormalWebFetch)];
+
+        let result = plan_and_execute(&rb, &qp_id, &policy, "warn", &[], true, &channels, &configs);
+
+        assert!(!result.results[0].is_complete());
+        assert!(result.results[0].is_metadata_only_result());
+    }
+
+    // -------------------------------------------------------------------
+    // Batch target test
     // -------------------------------------------------------------------
 
     #[test]
     fn batch_target_for_4_images_is_8() {
-        let target = RetrievalBatchPlanner::batch_target_for(4);
-        assert_eq!(target, 8);
+        assert_eq!(RetrievalBatchPlanner::batch_target_for(4), 8);
     }
 
-    // -------------------------------------------------------------------
-    // Executor: partial success, stop fallback
-    // -------------------------------------------------------------------
-
     #[test]
-    fn execute_batch_stops_fallback_when_some_succeed() {
-        let decisions = vec![
-            make_accepted("good", "https://example.com/good.jpg", 5),
-            make_accepted("bad", "https://example.com/bad.jpg", 3),
-        ];
-        let seq = make_sequence(decisions);
-
-        // First channel succeeds partially (one good, one bad but fallbackable)
-        let mixed_channel = FixtureChannel::new(RetrievalChannelTier::WebFetch)
-            .with_response("good", FixtureResponse::success())
-            .with_response("bad", FixtureResponse::network_failure());
-        let higher_channel = FixtureChannel::new(RetrievalChannelTier::SelfHosted)
-            .with_all_success(&["good", "bad"]);
-        let channels: Vec<&dyn BaseRetrievalChannel> = vec![&mixed_channel, &higher_channel];
-
-        let outcome = execute_batch(&seq, 4, &channels);
-
-        // Should NOT have fallen back since we got at least some successes
-        assert_eq!(outcome.channels_attempted, 1);
-        assert_eq!(outcome.channel_tier, RetrievalChannelTier::WebFetch);
-    }
-
-    // -------------------------------------------------------------------
-    // Summarise channel readiness
-    // -------------------------------------------------------------------
-
-    #[test]
-    fn summarise_readiness_reports_all_channels() {
-        let ready_ch = FixtureChannel::new(RetrievalChannelTier::WebFetch);
-        let disabled_ch = FixtureChannel::new(RetrievalChannelTier::SelfHosted)
-            .with_readiness(FixtureReadiness::Disabled);
-        let paid_ch = FixtureChannel::new(RetrievalChannelTier::Paid)
-            .with_readiness(FixtureReadiness::PaidUnconfirmed);
-
-        let channels: Vec<&dyn BaseRetrievalChannel> = vec![&ready_ch, &disabled_ch, &paid_ch];
-        let summary = summarise_channel_readiness(&channels);
-
-        assert_eq!(summary.len(), 3);
-        assert_eq!(summary[0].readiness, RetrievalChannelReadiness::Ready);
-        assert_eq!(summary[1].readiness, RetrievalChannelReadiness::Disabled);
-        assert_eq!(
-            summary[2].readiness,
-            RetrievalChannelReadiness::PaidUnconfirmed
-        );
+    fn batch_target_for_1_is_2() {
+        assert_eq!(RetrievalBatchPlanner::batch_target_for(1), 2);
     }
 }

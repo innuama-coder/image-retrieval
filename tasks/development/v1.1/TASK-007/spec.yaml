@@ -4,10 +4,10 @@ repo:
   url: "https://github.com/innuama-coder/image-retrieval.git"
   branch: "main"
 task_dir: "tasks/development/v1.1/TASK-007"
-executor: "codex"
+executor: "claude"
 deliverables:
   - path: "tasks/development/v1.1/acceptance-report.md"
-    verify: 'powershell -NoProfile -Command "$p=''tasks/development/v1.1/acceptance-report.md''; if(!(Test-Path $p)){exit 1}; $t=Get-Content -Raw $p; foreach($s in ''verdict'',''evidence'',''SerpApi'',''retrieval'',''Qwen'',''package'',''real-service''){if($t -notmatch $s){exit 1}}"'
+    verify: 'p=tasks/development/v1.1/acceptance-report.md; test -s "$p" || exit 1; for s in verdict evidence SerpApi retrieval Qwen package real-service; do grep -qF "$s" "$p" || exit 1; done'
 execution:
   poll_interval_sec: 5
   idle_timeout_sec: 120

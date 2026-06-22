@@ -4,7 +4,7 @@ repo:
   url: "https://github.com/innuama-coder/image-retrieval.git"
   branch: "main"
 task_dir: "tasks/development/v1.1/TASK-006"
-executor: "codex"
+executor: "claude"
 deliverables:
   - path: "tests"
     verify: "cargo test --all"

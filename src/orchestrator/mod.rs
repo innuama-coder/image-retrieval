@@ -1069,7 +1069,7 @@ mod tests {
     fn validate_and_create_orchestrator_valid_input() {
         let input = QueryPlanInput {
             description: "sunset".into(),
-            required_count: 2,
+            required_image_count: 2,
             ..Default::default()
         };
         let evaluator = FixtureImageEvaluator::new(vec![]);

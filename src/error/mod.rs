@@ -61,6 +61,15 @@ pub enum Error {
     /// I/O, serialization). These are wrapped for fallback handling but
     /// the user-facing diagnostic is always sanitised.
     Internal { message: String },
+
+    /// Admission failed — QueryPlan or config validation blocked the task.
+    AdmissionBlocked { code: String, reason: String },
+
+    /// Config loading or readiness failed.
+    ConfigError { component: String, reason: String },
+
+    /// Policy violation — an action was blocked by policy rules.
+    PolicyViolation { code: String, reason: String },
 }
 
 impl fmt::Display for Error {
@@ -113,6 +122,15 @@ impl fmt::Display for Error {
             }
             Self::Internal { message } => {
                 write!(f, "internal error: {}", message)
+            }
+            Self::AdmissionBlocked { code, reason } => {
+                write!(f, "admission blocked [{}]: {}", code, reason)
+            }
+            Self::ConfigError { component, reason } => {
+                write!(f, "config error in '{}': {}", component, reason)
+            }
+            Self::PolicyViolation { code, reason } => {
+                write!(f, "policy violation [{}]: {}", code, reason)
             }
         }
     }
@@ -256,6 +274,27 @@ impl Error {
             message: message.into(),
         }
     }
+
+    pub fn admission_blocked(code: impl Into<String>, reason: impl Into<String>) -> Self {
+        Self::AdmissionBlocked {
+            code: code.into(),
+            reason: reason.into(),
+        }
+    }
+
+    pub fn config_error(component: impl Into<String>, reason: impl Into<String>) -> Self {
+        Self::ConfigError {
+            component: component.into(),
+            reason: reason.into(),
+        }
+    }
+
+    pub fn policy_violation(code: impl Into<String>, reason: impl Into<String>) -> Self {
+        Self::PolicyViolation {
+            code: code.into(),
+            reason: reason.into(),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -323,5 +362,26 @@ mod tests {
         assert_eq!(diag.status, "limited_delivery");
         assert_eq!(diag.items.len(), 2);
         assert_eq!(diag.items[0].level, DiagnosticLevel::Error);
+    }
+
+    #[test]
+    fn admission_blocked_display() {
+        let err = Error::admission_blocked("INPUT_DESCRIPTION_MISSING", "description is empty");
+        assert!(err.to_string().contains("admission blocked"));
+        assert!(err.to_string().contains("INPUT_DESCRIPTION_MISSING"));
+    }
+
+    #[test]
+    fn config_error_display() {
+        let err = Error::config_error("serpapi", "SERPAPI_API_KEY not set");
+        assert!(err.to_string().contains("config error"));
+        assert!(err.to_string().contains("serpapi"));
+    }
+
+    #[test]
+    fn policy_violation_display() {
+        let err = Error::policy_violation("POLICY_PAID_UNCONFIRMED", "paid channel not confirmed");
+        assert!(err.to_string().contains("policy violation"));
+        assert!(err.to_string().contains("POLICY_PAID_UNCONFIRMED"));
     }
 }

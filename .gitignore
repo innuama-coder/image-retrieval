@@ -6,3 +6,7 @@
 
 # Local diagnostic bundles (not for the repo)
 tasks/development/spec-exec-rust-toolchain-bug.zip
+
+# spec-executor run metadata (not for the repo)
+.spec-executor/
+CLAUDE.md.bak.*

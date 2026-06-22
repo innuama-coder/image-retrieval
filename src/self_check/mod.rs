@@ -538,7 +538,7 @@ fn check_query_plan(
             warnings: plan_warnings,
         } => {
             // Record defaults that were applied
-            if request.query_plan_input.required_count == 0 {
+            if request.query_plan_input.required_image_count == 0 {
                 default_explanations
                     .push("required_count 为 0，已应用默认值 1（不会搜索候选或抓取图片）。".into());
             }
@@ -549,9 +549,7 @@ fn check_query_plan(
             }
 
             // Default explanations for fields that were not explicitly set
-            if request.query_plan_input.quality_tier
-                == crate::domain::query_plan::QualityTier::General
-            {
+            if request.query_plan_input.quality == crate::domain::query_plan::QualityTier::General {
                 default_explanations
                     .push("quality_tier 未指定或为默认值，已应用通用质量 (general)。".into());
             }
@@ -1231,12 +1229,13 @@ mod tests {
     fn sample_query_plan() -> QueryPlanInput {
         QueryPlanInput {
             description: "test image search".into(),
-            required_count: 2,
-            quality_tier: QualityTier::General,
+            required_image_count: 2,
+            quality: QualityTier::General,
             content_constraints: ContentConstraints::default(),
             authorization_preference: AuthorizationPreference::Default,
             output_preference: OutputPreference::Human,
             retry_limit: 3,
+            ..Default::default()
         }
     }
 
@@ -1633,7 +1632,7 @@ mod tests {
         let request = SelfCheckRequest {
             query_plan_input: QueryPlanInput {
                 description: "test".into(),
-                required_count: 200, // large count → warning
+                required_image_count: 200, // large count → warning
                 ..Default::default()
             },
             policy_risks: vec![PolicyRiskEntry {
@@ -1659,8 +1658,8 @@ mod tests {
         let request = SelfCheckRequest {
             query_plan_input: QueryPlanInput {
                 description: "test".into(),
-                required_count: 1,
-                quality_tier: QualityTier::General,
+                required_image_count: 1,
+                quality: QualityTier::General,
                 output_preference: OutputPreference::Human,
                 retry_limit: 3,
                 ..Default::default()

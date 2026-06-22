@@ -243,14 +243,31 @@ mod tests {
     use crate::domain::candidate::{CandidateId, ProviderId};
 
     fn make_candidate(id: &str) -> CandidateRecord {
+        let cid = CandidateId::new(id);
+        let url = format!("https://example.com/{}.jpg", id);
         CandidateRecord {
-            id: CandidateId::new(id),
+            candidate_id: cid.clone(),
+            query_plan_id: "qp-test".into(),
             provider_id: ProviderId::new("test-provider"),
-            source_url: format!("https://example.com/{}.jpg", id),
+            provider_kind: "fixture".into(),
+            search_request_id: "sr-test".into(),
+            search_round: 1,
+            provider_rank: 1,
+            global_rank_hint: None,
+            image_url: url.clone(),
+            source_page_url: None,
             thumbnail_url: None,
             title: Some(format!("Image {}", id)),
-            page_url: None,
-            dimensions: None,
+            snippet: None,
+            width: None,
+            height: None,
+            mime_type: None,
+            license_hint: None,
+            attribution: None,
+            dedupe_key: CandidateRecord::build_dedupe_key(&url),
+            origin_candidate_ids: vec![cid],
+            provenance: crate::domain::candidate::CandidateProvenance::new(1, "test", 1, 1),
+            normalization_warnings: Vec::new(),
         }
     }
 
@@ -360,7 +377,7 @@ mod tests {
         assert!(decision.is_accepted());
         match decision {
             CandidateDecision::Accepted { candidate, .. } => {
-                assert_eq!(candidate.id, CandidateId::new("c1"));
+                assert_eq!(candidate.candidate_id, CandidateId::new("c1"));
             }
             _ => panic!("expected Accepted"),
         }
@@ -376,7 +393,7 @@ mod tests {
         assert!(!decision.is_accepted());
         match decision {
             CandidateDecision::Rejected { candidate, reason } => {
-                assert_eq!(candidate.id, CandidateId::new("c2"));
+                assert_eq!(candidate.candidate_id, CandidateId::new("c2"));
                 assert_eq!(reason, "irrelevant");
             }
             _ => panic!("expected Rejected"),
@@ -393,7 +410,7 @@ mod tests {
         assert!(!decision.is_accepted());
         match decision {
             CandidateDecision::Uncertain { candidate, reason } => {
-                assert_eq!(candidate.id, CandidateId::new("c3"));
+                assert_eq!(candidate.candidate_id, CandidateId::new("c3"));
                 assert_eq!(reason, "ambiguous");
             }
             _ => panic!("expected Uncertain"),
@@ -410,7 +427,7 @@ mod tests {
         assert!(!decision.is_accepted());
         match decision {
             CandidateDecision::ExecutionBlocked { candidate, reason } => {
-                assert_eq!(candidate.id, CandidateId::new("c4"));
+                assert_eq!(candidate.candidate_id, CandidateId::new("c4"));
                 assert_eq!(reason, "OpenClaw down");
             }
             _ => panic!("expected ExecutionBlocked"),

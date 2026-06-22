@@ -34,15 +34,10 @@ use std::collections::HashSet;
 // ---------------------------------------------------------------------------
 
 fn make_candidate(id: &str, url: &str, title: Option<&str>) -> CandidateRecord {
-    CandidateRecord {
-        id: CandidateId::new(id),
-        provider_id: ProviderId::new("test-provider"),
-        source_url: url.into(),
-        thumbnail_url: None,
-        title: title.map(|s| s.into()),
-        page_url: None,
-        dimensions: None,
-    }
+    let cid = CandidateId::new(id);
+    let mut record = CandidateRecord::minimal(cid, ProviderId::new("test-provider"), url);
+    record.title = title.map(|s| s.into());
+    record
 }
 
 fn make_query_plan() -> ValidatedQueryPlan {
@@ -122,7 +117,7 @@ fn candidate_quality_mechanical_block_prevents_openclaw() {
         plan.authorization_preference,
         good.provider_id.to_string(),
     );
-    assert_eq!(request.candidate.id, CandidateId::new("good-1"));
+    assert_eq!(request.candidate.candidate_id, CandidateId::new("good-1"));
 }
 
 // ---------------------------------------------------------------------------
@@ -190,7 +185,7 @@ fn candidate_quality_only_approved_candidates_enter_sequence() {
         let evidence =
             validate_candidate_mechanical(c, &seen, &plan.content_constraints, plan.quality_tier);
         assert!(evidence.passed_mechanical());
-        seen.insert(c.source_url.clone());
+        seen.insert(c.image_url.clone());
         passed.push((c.clone(), evidence));
     }
 
@@ -214,7 +209,7 @@ fn candidate_quality_only_approved_candidates_enter_sequence() {
     assert_eq!(seq.len(), 1, "only approved candidates enter the sequence");
     match &seq.candidates[0] {
         CandidateDecision::Accepted { candidate, .. } => {
-            assert_eq!(candidate.id, CandidateId::new("c1"));
+            assert_eq!(candidate.candidate_id, CandidateId::new("c1"));
         }
         _ => panic!("expected Accepted"),
     }
@@ -343,7 +338,7 @@ fn candidate_quality_does_not_decide_final_delivery() {
             candidate,
             priority,
         } => {
-            assert_eq!(candidate.id, CandidateId::new("c1"));
+            assert_eq!(candidate.candidate_id, CandidateId::new("c1"));
             assert_eq!(priority, 0);
         }
         _ => panic!("expected Accepted"),
@@ -371,7 +366,7 @@ fn candidate_quality_duplicates_blocked_mechanically_not_by_openclaw() {
         let evidence =
             validate_candidate_mechanical(c, &seen, &plan.content_constraints, plan.quality_tier);
         if evidence.passed_mechanical() {
-            seen.insert(c.source_url.clone());
+            seen.insert(c.image_url.clone());
             passed += 1;
         } else {
             blocked += 1;
@@ -602,8 +597,8 @@ fn candidate_quality_full_pipeline_integration() {
         let evidence =
             validate_candidate_mechanical(c, &seen, &plan.content_constraints, plan.quality_tier);
         if evidence.passed_mechanical() {
-            if !c.source_url.trim().is_empty() {
-                seen.insert(c.source_url.clone());
+            if !c.image_url.trim().is_empty() {
+                seen.insert(c.image_url.clone());
             }
             mechanically_passed.push((c.clone(), evidence));
         } else {
@@ -655,8 +650,8 @@ fn candidate_quality_full_pipeline_integration() {
             candidate,
             priority: _,
         } => {
-            assert_eq!(candidate.id, CandidateId::new("c1"));
-            assert_eq!(candidate.source_url, "https://a.com/sunset.jpg");
+            assert_eq!(candidate.candidate_id, CandidateId::new("c1"));
+            assert_eq!(candidate.image_url, "https://a.com/sunset.jpg");
         }
         _ => panic!("expected Accepted"),
     }

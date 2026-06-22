@@ -1,33 +1,72 @@
 //! Port definitions — external capability boundaries.
 //!
-//! Defines the three external capability contracts required by the HLD:
+//! Defines the external capability contracts required by the HLD:
 //!
-//! - [`BaseProvider`] — search provider port (HLD canonical term for the
-//!   constitution's `BaseSearchProvider`; per ADR-008 these are the same
-//!   contract).
+//! - [`BaseSearchProvider`] — canonical v1.1 search provider port.
+//! - [`BaseProvider`] — legacy search provider port (deprecated).
 //! - [`BaseRetrievalChannel`] — retrieval channel port.
 //! - [`OpenClawEvaluationPort`] — OpenClaw subjective evaluation port.
 //!
-//! These are trait definitions only. Concrete provider/channel/OpenClaw
-//! implementations belong to downstream tasks (TASK-003, TASK-004,
-//! TASK-005, TASK-006).
+//! References: PRD FR-004/FR-005, HLD §Core Interfaces,
+//! `docs/design/v1.1-TASK-002-search-provider-candidate-design.md`
 
 use crate::domain::candidate::{CandidateRecord, ProviderId};
+use crate::domain::config::SearchProviderConfig;
 use crate::domain::image::{ImageAcceptanceDecision, ImageRecord};
 use crate::domain::retrieval::{
     FallbackEligibilityFact, RetrievalBatch, RetrievalChannelTier, RetrievalResult,
 };
+use crate::domain::search::{
+    ProviderConstraintSupport, ProviderReadinessReport, SearchError, SearchRequest, SearchResponse,
+};
 use crate::error::Result;
 
 // ---------------------------------------------------------------------------
-// BaseProvider — search provider port
+// BaseSearchProvider — canonical v1.1 search provider port
 // ---------------------------------------------------------------------------
 
-/// Search provider contract.
+/// Canonical v1.1 search provider contract.
 ///
-/// `BaseProvider` is the HLD canonical term for the search-service boundary.
-/// It is the same contract the constitution calls `BaseSearchProvider`
-/// (ADR-008). Every image search engine adapter must satisfy this trait.
+/// Every image search engine adapter must satisfy this trait.
+/// Production adapters (e.g. `serpapi_google_images`) implement this directly.
+///
+/// # Security
+///
+/// - `readiness()` must NOT perform a full search. It checks config shape,
+///   credential env var presence, endpoint parseability, and quota signals.
+/// - `search()` receives a package-safe [`SearchRequest`]; no credential
+///   values may appear in the request or response DTOs.
+pub trait BaseSearchProvider: Send + Sync {
+    /// Return a stable, unique identifier for this provider.
+    fn provider_id(&self) -> ProviderId;
+
+    /// Human-readable display name.
+    fn display_name(&self) -> &str;
+
+    /// The adapter family.
+    fn provider_kind(&self) -> crate::domain::config::SearchProviderKind;
+
+    /// Declared constraint support for scheduling decisions.
+    fn supported_constraints(&self) -> ProviderConstraintSupport;
+
+    /// Evaluate readiness against the given config.
+    ///
+    /// Returns a structured report. Must not perform a full search.
+    fn readiness(&self, config: &SearchProviderConfig) -> ProviderReadinessReport;
+
+    /// Execute a search and return normalized results.
+    fn search(&self, request: &SearchRequest) -> std::result::Result<SearchResponse, SearchError>;
+}
+
+// ---------------------------------------------------------------------------
+// BaseProvider — legacy search provider port (deprecated)
+// ---------------------------------------------------------------------------
+
+/// Legacy search provider contract.
+///
+/// **Deprecated for v1.1**: new providers should implement
+/// [`BaseSearchProvider`]. This trait is retained for backward
+/// compatibility with existing code and tests.
 pub trait BaseProvider {
     /// Return a stable, unique identifier for this provider.
     fn provider_id(&self) -> ProviderId;
@@ -133,6 +172,11 @@ mod tests {
     //! (can be used as `dyn Trait`).
 
     use super::*;
+
+    #[test]
+    fn base_search_provider_is_object_safe() {
+        fn _assert(_p: &dyn BaseSearchProvider) {}
+    }
 
     #[test]
     fn base_provider_is_object_safe() {

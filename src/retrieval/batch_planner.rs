@@ -43,7 +43,7 @@ impl RetrievalBatchPlanner {
         let candidate_ids: Vec<String> = taken
             .iter()
             .map(|d| match d {
-                CandidateDecision::Accepted { candidate, .. } => candidate.id.to_string(),
+                CandidateDecision::Accepted { candidate, .. } => candidate.candidate_id.to_string(),
                 _ => unreachable!("RetrievableCandidateSequence only contains Accepted"),
             })
             .collect();
@@ -51,9 +51,10 @@ impl RetrievalBatchPlanner {
         let candidate_urls: HashMap<String, String> = taken
             .iter()
             .map(|d| match d {
-                CandidateDecision::Accepted { candidate, .. } => {
-                    (candidate.id.to_string(), candidate.source_url.clone())
-                }
+                CandidateDecision::Accepted { candidate, .. } => (
+                    candidate.candidate_id.to_string(),
+                    candidate.image_url.clone(),
+                ),
                 _ => unreachable!("RetrievableCandidateSequence only contains Accepted"),
             })
             .collect();
@@ -98,15 +99,7 @@ mod tests {
 
     fn make_accepted(id: &str, url: &str, priority: u32) -> CandidateDecision {
         CandidateDecision::Accepted {
-            candidate: CandidateRecord {
-                id: CandidateId::new(id),
-                provider_id: ProviderId::new("test"),
-                source_url: url.to_string(),
-                thumbnail_url: None,
-                title: None,
-                page_url: None,
-                dimensions: None,
-            },
+            candidate: CandidateRecord::minimal(CandidateId::new(id), ProviderId::new("test"), url),
             priority,
         }
     }

@@ -169,8 +169,8 @@ impl<'a> CandidateQualityGate<'a> {
 
             if evidence.passed_mechanical() {
                 // Track the URL for future duplicate detection
-                if !candidate.source_url.trim().is_empty() {
-                    seen_urls.insert(candidate.source_url.clone());
+                if !candidate.image_url.trim().is_empty() {
+                    seen_urls.insert(candidate.image_url.clone());
                 }
                 mechanically_passed.push((candidate, evidence));
             } else {
@@ -376,14 +376,30 @@ mod tests {
     // -----------------------------------------------------------------------
 
     fn make_candidate(id: &str, url: &str, title: Option<&str>) -> CandidateRecord {
+        let cid = CandidateId::new(id);
         CandidateRecord {
-            id: CandidateId::new(id),
+            candidate_id: cid.clone(),
+            query_plan_id: "qp-test".into(),
             provider_id: ProviderId::new("test-provider"),
-            source_url: url.into(),
+            provider_kind: "fixture".into(),
+            search_request_id: "sr-test".into(),
+            search_round: 1,
+            provider_rank: 1,
+            global_rank_hint: None,
+            image_url: url.into(),
+            source_page_url: None,
             thumbnail_url: None,
             title: title.map(|s| s.into()),
-            page_url: None,
-            dimensions: None,
+            snippet: None,
+            width: None,
+            height: None,
+            mime_type: None,
+            license_hint: None,
+            attribution: None,
+            dedupe_key: CandidateRecord::build_dedupe_key(url),
+            origin_candidate_ids: vec![cid],
+            provenance: crate::domain::candidate::CandidateProvenance::new(1, "test", 1, 1),
+            normalization_warnings: Vec::new(),
         }
     }
 
@@ -438,8 +454,8 @@ mod tests {
                 plan.quality_tier,
             );
             if evidence.passed_mechanical() {
-                if !c.source_url.trim().is_empty() {
-                    seen.insert(c.source_url.clone());
+                if !c.image_url.trim().is_empty() {
+                    seen.insert(c.image_url.clone());
                 }
                 mechanically_passed.push((c.clone(), evidence));
             } else {
@@ -449,7 +465,10 @@ mod tests {
 
         assert_eq!(mechanically_blocked.len(), 1);
         assert_eq!(mechanically_passed.len(), 1);
-        assert_eq!(mechanically_passed[0].0.id, CandidateId::new("good-1"));
+        assert_eq!(
+            mechanically_passed[0].0.candidate_id,
+            CandidateId::new("good-1")
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -519,8 +538,8 @@ mod tests {
                 plan.quality_tier,
             );
             if evidence.passed_mechanical() {
-                if !c.source_url.trim().is_empty() {
-                    seen.insert(c.source_url.clone());
+                if !c.image_url.trim().is_empty() {
+                    seen.insert(c.image_url.clone());
                 }
                 passed.push((c.clone(), evidence));
             } else {
@@ -564,7 +583,7 @@ mod tests {
         // The only accepted candidate should be c1
         match &seq.candidates[0] {
             CandidateDecision::Accepted { candidate, .. } => {
-                assert_eq!(candidate.id, CandidateId::new("c1"));
+                assert_eq!(candidate.candidate_id, CandidateId::new("c1"));
             }
             _ => panic!("expected Accepted"),
         }
@@ -608,8 +627,8 @@ mod tests {
                 plan.quality_tier,
             );
             if evidence.passed_mechanical() {
-                if !c.source_url.trim().is_empty() {
-                    seen.insert(c.source_url.clone());
+                if !c.image_url.trim().is_empty() {
+                    seen.insert(c.image_url.clone());
                 }
                 passed.push((c.clone(), evidence));
             } else {
@@ -714,7 +733,7 @@ mod tests {
                 plan.quality_tier,
             );
             if evidence.passed_mechanical() {
-                seen.insert(c.source_url.clone());
+                seen.insert(c.image_url.clone());
                 passed.push(c.clone());
             } else {
                 blocked.push((c.clone(), evidence));
@@ -724,7 +743,7 @@ mod tests {
         assert_eq!(blocked.len(), 1);
         assert_eq!(passed.len(), 2);
         // The blocked one should be c2 (duplicate of c1)
-        assert_eq!(blocked[0].0.id, CandidateId::new("c2"));
+        assert_eq!(blocked[0].0.candidate_id, CandidateId::new("c2"));
         assert!(matches!(
             blocked[0].1.blocking_findings[0],
             CandidateBlockingReason::Duplicate { .. }
@@ -762,7 +781,7 @@ mod tests {
                 plan.quality_tier,
             );
             if evidence.passed_mechanical() {
-                seen.insert(c.source_url.clone());
+                seen.insert(c.image_url.clone());
                 passed_count += 1;
             } else {
                 blocked_count += 1;
@@ -809,7 +828,7 @@ mod tests {
             total_invocations: 1,
             candidate_target: 20,
             target_met: false,
-            shortage_reason: Some(CandidateShortageReason::NoAvailableProviders),
+            shortage_reason: Some(CandidateShortageReason::NoAvailableSearchProvider),
             readiness_summary: vec![],
         };
 

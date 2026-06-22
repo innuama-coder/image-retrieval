@@ -1,18 +1,17 @@
-//! Search module — provider registry, weighted random scheduling, and test
-//! fixtures.
+//! Search module — provider registry, weighted random scheduling,
+//! SerpApi Google Images adapter, and test fixtures.
 //!
-//! This module implements TASK-003: BaseProvider search port integration,
-//! provider registry with readiness checks, weighted random scheduling,
-//! candidate normalisation, deduplication, source tracking, and shortage
-//! diagnosis.
+//! v1.1: implements the search provider contract per LLD and
+//! `docs/design/v1.1-TASK-002-search-provider-candidate-design.md`.
 //!
-//! References: PRD §搜索与候选产品要求, HLD §Search Scheduler,
-//! `docs/design/TASK-003-base-provider-search-design.md`
+//! References: PRD FR-004/FR-005, HLD §Search Scheduler, LLD §Search Provider Contract
 
 pub mod fixture;
 pub mod registry;
 pub mod scheduler;
+pub mod serpapi;
 
 // Re-export key types for convenience.
 pub use registry::ProviderRegistry;
 pub use scheduler::SearchScheduler;
+pub use serpapi::SerpApiGoogleImagesAdapter;

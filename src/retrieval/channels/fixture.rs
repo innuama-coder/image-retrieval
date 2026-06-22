@@ -1,98 +1,89 @@
 //! Fixture retrieval channel for internal testing.
 //!
-//! Provides a configurable channel that can be programmed to return
-//! specific results, simulate failures, and test fallback behaviour
-//! without touching real networks.
+//! Provides a configurable channel for deterministic retrieval tests.
+//! Fixture channels are **test-only** — production retrieval must reject
+//! fixture evidence.
 //!
-//! # Non-production
-//!
-//! This channel is for internal verification only. It must never be used
-//! as production delivery evidence (per constitution).
-//!
-//! References: PRD §fixture/mock 只能用于内部验证
+//! References: `docs/design/v1.1-TASK-004-retrieval-artifact-channel-design.md`
 
+#![allow(clippy::too_many_arguments)]
+
+use crate::domain::config::RetrievalChannelConfig;
 use crate::domain::retrieval::{
-    FallbackEligibilityFact, RetrievalBatch, RetrievalChannelReadiness, RetrievalChannelTier,
-    RetrievalFailure, RetrievalFailureCategory, RetrievalResult, RetrievalSuccess,
+    RetrievalArtifactResult, RetrievalAttemptMode, RetrievalAttemptStatus, RetrievalAttemptTrace,
+    RetrievalBatch, RetrievalBatchResult, RetrievalChannelCapabilities, RetrievalChannelId,
+    RetrievalChannelReadinessReport, RetrievalChannelTier, RetrievalFailureCode, RetrievalJobId,
+    RetrievalStatus,
 };
-use crate::error::{Error, Result};
-use crate::ports::BaseRetrievalChannel;
+use crate::ports::{BaseRetrievalChannel, RetrievalError};
 use std::collections::HashMap;
+use std::path::PathBuf;
 
 /// Pre-programmed response for a single candidate in the fixture channel.
 #[derive(Debug, Clone)]
 pub enum FixtureResponse {
-    /// Return a successful retrieval with the given parameters.
-    Success {
-        local_path: String,
-        content_type: Option<String>,
-        file_size_bytes: u64,
+    /// Return a successful complete artifact result.
+    Complete {
+        local_path: PathBuf,
+        source_path: PathBuf,
+        sidecar_path: PathBuf,
+        summary_path: PathBuf,
+        report_path: PathBuf,
+        visual_desc_path: PathBuf,
+        checksum: String,
+        content_type: String,
+        file_size: u64,
     },
     /// Return a failure with the given parameters.
     Failure {
-        failure_category: RetrievalFailureCategory,
+        failure_code: RetrievalFailureCode,
         reason: String,
         allows_fallback: bool,
     },
+    /// Return a metadata-only result (rejected).
+    MetadataOnly { reason: String },
+    /// Return an access-restricted result.
+    AccessRestricted { reason: String },
 }
 
 impl FixtureResponse {
-    /// Create a standard success response.
+    /// Standard success.
     pub fn success() -> Self {
-        Self::Success {
-            local_path: "/tmp/fixture-test.jpg".into(),
-            content_type: Some("image/jpeg".into()),
-            file_size_bytes: 4096,
+        Self::Complete {
+            local_path: PathBuf::from("/tmp/fixture/img.jpg"),
+            source_path: PathBuf::from("/tmp/fixture/src.jpg"),
+            sidecar_path: PathBuf::from("/tmp/fixture/sidecar.json"),
+            summary_path: PathBuf::from("/tmp/fixture/summary.json"),
+            report_path: PathBuf::from("/tmp/fixture/report.json"),
+            visual_desc_path: PathBuf::from("/tmp/fixture/vd.json"),
+            checksum: "fixture-sha256-abc123".into(),
+            content_type: "image/jpeg".into(),
+            file_size: 4096,
         }
     }
 
-    /// Create a standard network failure response.
+    /// Standard network failure.
     pub fn network_failure() -> Self {
         Self::Failure {
-            failure_category: RetrievalFailureCategory::Network,
+            failure_code: RetrievalFailureCode::RetrievalDirectFetchNetwork,
             reason: "simulated network error".into(),
             allows_fallback: true,
         }
     }
 
-    /// Create an access-restricted failure response.
+    /// Access-restricted failure.
     pub fn access_restricted() -> Self {
-        Self::Failure {
-            failure_category: RetrievalFailureCategory::AccessRestricted,
+        Self::AccessRestricted {
             reason: "HTTP 403 — simulated access restriction".into(),
-            allows_fallback: false,
         }
     }
 
-    /// Create a channel-disabled failure response.
-    pub fn channel_disabled() -> Self {
-        Self::Failure {
-            failure_category: RetrievalFailureCategory::ChannelDisabled,
-            reason: "channel disabled by configuration".into(),
-            allows_fallback: true,
+    /// Metadata-only response.
+    pub fn metadata_only() -> Self {
+        Self::MetadataOnly {
+            reason: "remote-only metadata response".into(),
         }
     }
-}
-
-/// A configurable retrieval channel for testing.
-///
-/// Each candidate ID can be pre-programmed with a specific response.
-/// Candidates not in the fixture map fail with `Other`.
-pub struct FixtureChannel {
-    /// The tier this fixture pretends to be.
-    tier: RetrievalChannelTier,
-
-    /// Human-readable display name.
-    name: String,
-
-    /// Pre-programmed responses keyed by candidate ID.
-    responses: HashMap<String, FixtureResponse>,
-
-    /// Readiness state to report.
-    readiness_state: FixtureReadiness,
-
-    /// Fallback fact override (if set, used instead of auto-generated).
-    fallback_fact_override: Option<FallbackEligibilityFact>,
 }
 
 /// Readiness configuration for the fixture channel.
@@ -105,37 +96,36 @@ pub enum FixtureReadiness {
     PaidUnconfirmed,
 }
 
-impl FixtureReadiness {
-    #[allow(dead_code)]
-    fn to_domain(&self) -> RetrievalChannelReadiness {
-        match self {
-            Self::Ready => RetrievalChannelReadiness::Ready,
-            Self::Disabled => RetrievalChannelReadiness::Disabled,
-            Self::MissingDependency => RetrievalChannelReadiness::MissingDependency,
-            Self::Misconfigured => RetrievalChannelReadiness::Misconfigured,
-            Self::PaidUnconfirmed => RetrievalChannelReadiness::PaidUnconfirmed,
-        }
-    }
+/// A configurable retrieval channel for testing.
+pub struct FixtureChannel {
+    channel_id: RetrievalChannelId,
+    tier: RetrievalChannelTier,
+    name: String,
+    responses: HashMap<String, FixtureResponse>,
+    readiness_state: FixtureReadiness,
+    fixture_only: bool,
 }
 
 impl FixtureChannel {
     /// Create a new fixture channel for the given tier.
     pub fn new(tier: RetrievalChannelTier) -> Self {
         let name = match tier {
-            RetrievalChannelTier::WebFetch => "Fixture Web Fetch",
-            RetrievalChannelTier::SelfHosted => "Fixture Self-Hosted",
-            RetrievalChannelTier::Paid => "Fixture Paid Service",
+            RetrievalChannelTier::NormalWebFetch => "Fixture Normal Web Fetch",
+            RetrievalChannelTier::SelfHostedService => "Fixture Self-Hosted",
+            RetrievalChannelTier::PaidOnlineService => "Fixture Paid Service",
         };
+        let channel_id = RetrievalChannelId::new(format!("fixture-{}", tier));
         Self {
+            channel_id,
             tier,
             name: name.into(),
             responses: HashMap::new(),
             readiness_state: FixtureReadiness::Ready,
-            fallback_fact_override: None,
+            fixture_only: true,
         }
     }
 
-    /// Set the readiness state for this fixture.
+    /// Set the readiness state.
     pub fn with_readiness(mut self, state: FixtureReadiness) -> Self {
         self.readiness_state = state;
         self
@@ -151,19 +141,7 @@ impl FixtureChannel {
         self
     }
 
-    /// Set a custom display name.
-    pub fn with_name(mut self, name: impl Into<String>) -> Self {
-        self.name = name.into();
-        self
-    }
-
-    /// Override the fallback fact.
-    pub fn with_fallback_fact(mut self, fact: FallbackEligibilityFact) -> Self {
-        self.fallback_fact_override = Some(fact);
-        self
-    }
-
-    /// Bulk-load responses: all given IDs succeed, others fail.
+    /// Bulk-load all given IDs to succeed.
     pub fn with_all_success(mut self, candidate_ids: &[&str]) -> Self {
         for id in candidate_ids {
             self.responses
@@ -171,260 +149,436 @@ impl FixtureChannel {
         }
         self
     }
+
+    fn make_trace(
+        job_id: &RetrievalJobId,
+        query_plan_id: &str,
+        candidate_id: &str,
+        channel_id: &RetrievalChannelId,
+        tier: RetrievalChannelTier,
+        mode: RetrievalAttemptMode,
+        status: RetrievalAttemptStatus,
+        failure_code: Option<RetrievalFailureCode>,
+    ) -> RetrievalAttemptTrace {
+        RetrievalAttemptTrace {
+            attempt_id: format!("attempt-{}-{}", job_id, "fixture"),
+            retrieval_job_id: job_id.clone(),
+            query_plan_id: query_plan_id.to_string(),
+            candidate_id: candidate_id.to_string(),
+            channel_id: channel_id.clone(),
+            channel_tier: tier,
+            attempt_mode: mode,
+            started_at: String::new(),
+            completed_at: None,
+            target_url_redacted: None,
+            source_page_url_redacted: None,
+            final_url_redacted: None,
+            http_status: None,
+            bytes_received: None,
+            status,
+            failure_code,
+            retryable: true,
+            fallback_allowed: true,
+            policy_reason: None,
+            artifact_refs: vec![],
+            redaction_applied: false,
+        }
+    }
 }
 
 impl BaseRetrievalChannel for FixtureChannel {
-    fn tier(&self) -> RetrievalChannelTier {
-        self.tier
+    fn channel_id(&self) -> RetrievalChannelId {
+        self.channel_id.clone()
     }
 
     fn display_name(&self) -> &str {
         &self.name
     }
 
-    fn readiness(&self) -> Result<()> {
-        match self.readiness_state {
-            FixtureReadiness::Ready => Ok(()),
-            FixtureReadiness::Disabled => Err(Error::retrieval_failure(
-                None::<&str>,
-                self.tier.to_string(),
-                "fixture channel is disabled",
-            )),
-            FixtureReadiness::MissingDependency => Err(Error::retrieval_failure(
-                None::<&str>,
-                self.tier.to_string(),
-                "fixture channel missing dependency",
-            )),
-            FixtureReadiness::Misconfigured => Err(Error::retrieval_failure(
-                None::<&str>,
-                self.tier.to_string(),
-                "fixture channel misconfigured",
-            )),
-            FixtureReadiness::PaidUnconfirmed => Err(Error::retrieval_failure(
-                None::<&str>,
-                self.tier.to_string(),
-                "paid channel requires explicit user confirmation",
-            )),
+    fn tier(&self) -> RetrievalChannelTier {
+        self.tier
+    }
+
+    fn capabilities(&self) -> RetrievalChannelCapabilities {
+        RetrievalChannelCapabilities {
+            fixture_only: self.fixture_only,
+            ..Default::default()
         }
     }
 
-    fn retrieve_batch(&self, batch: &RetrievalBatch) -> Result<Vec<RetrievalResult>> {
-        let results: Vec<RetrievalResult> = batch
-            .candidate_ids
-            .iter()
-            .map(|cid| match self.responses.get(cid.as_str()) {
-                Some(FixtureResponse::Success {
+    fn readiness(&self, _config: &RetrievalChannelConfig) -> RetrievalChannelReadinessReport {
+        match self.readiness_state {
+            FixtureReadiness::Ready => RetrievalChannelReadinessReport::ready(
+                self.channel_id.clone(),
+                self.name.clone(),
+                self.tier,
+            ),
+            FixtureReadiness::Disabled => RetrievalChannelReadinessReport::disabled(
+                self.channel_id.clone(),
+                self.name.clone(),
+                self.tier,
+                RetrievalFailureCode::RetrievalChannelDisabled,
+            ),
+            FixtureReadiness::MissingDependency => RetrievalChannelReadinessReport::disabled(
+                self.channel_id.clone(),
+                self.name.clone(),
+                self.tier,
+                RetrievalFailureCode::RetrievalChannelDependencyMissing,
+            ),
+            FixtureReadiness::Misconfigured => RetrievalChannelReadinessReport::disabled(
+                self.channel_id.clone(),
+                self.name.clone(),
+                self.tier,
+                RetrievalFailureCode::RetrievalChannelMisconfigured,
+            ),
+            FixtureReadiness::PaidUnconfirmed => RetrievalChannelReadinessReport::paid_unconfirmed(
+                self.channel_id.clone(),
+                self.name.clone(),
+            ),
+        }
+    }
+
+    fn retrieve_batch(
+        &self,
+        batch: &RetrievalBatch,
+    ) -> std::result::Result<RetrievalBatchResult, RetrievalError> {
+        let mut results: Vec<RetrievalArtifactResult> = Vec::new();
+        let mut all_traces: Vec<RetrievalAttemptTrace> = Vec::new();
+
+        for job in &batch.jobs {
+            let cid = &job.candidate_id;
+            let response = self.responses.get(cid);
+
+            match response {
+                Some(FixtureResponse::Complete {
                     local_path,
+                    source_path,
+                    sidecar_path,
+                    summary_path,
+                    report_path,
+                    visual_desc_path,
+                    checksum,
                     content_type,
-                    file_size_bytes,
-                }) => RetrievalResult::Success(RetrievalSuccess::new(
-                    cid,
-                    local_path.clone(),
-                    self.tier,
-                    content_type.clone(),
-                    *file_size_bytes,
-                )),
+                    file_size,
+                }) => {
+                    let trace = Self::make_trace(
+                        &job.retrieval_job_id,
+                        &job.query_plan_id,
+                        cid,
+                        &self.channel_id,
+                        self.tier,
+                        RetrievalAttemptMode::DirectImageFetch,
+                        RetrievalAttemptStatus::Succeeded,
+                        None,
+                    );
+                    all_traces.push(trace.clone());
+
+                    let result = RetrievalArtifactResult {
+                        retrieval_job_id: job.retrieval_job_id.clone(),
+                        retrieval_batch_id: batch.retrieval_batch_id.clone(),
+                        query_plan_id: job.query_plan_id.clone(),
+                        candidate_id: cid.clone(),
+                        channel_id: self.channel_id.clone(),
+                        channel_tier: self.tier,
+                        attempt_mode: RetrievalAttemptMode::DirectImageFetch,
+                        retrieval_status: RetrievalStatus::Complete,
+                        local_artifact_path: Some(local_path.clone()),
+                        source_artifact_path: Some(source_path.clone()),
+                        source_sidecar_path: Some(sidecar_path.clone()),
+                        content_summary_path: Some(summary_path.clone()),
+                        task_report_path: Some(report_path.clone()),
+                        visual_description_path: Some(visual_desc_path.clone()),
+                        diagnostics_path: None,
+                        checksum_sha256: Some(checksum.clone()),
+                        content_type_reported: Some(content_type.clone()),
+                        content_type_sniffed: Some(content_type.clone()),
+                        content_type: Some(content_type.clone()),
+                        file_extension: Some("jpg".into()),
+                        file_size_bytes: Some(*file_size),
+                        image_dimensions: None,
+                        media_type_match: true,
+                        local_artifact_exists: true,
+                        source_artifact_exists: true,
+                        sidecar_valid: true,
+                        summary_quality_passed: true,
+                        task_report_valid: true,
+                        visual_description_valid: true,
+                        job_ownership_valid: true,
+                        metadata_only: false,
+                        fetch_trace: vec![trace],
+                        policy_decisions: vec![],
+                        diagnostics: vec![],
+                        failure_reason: None,
+                        redaction_applied: false,
+                    };
+                    results.push(result);
+                }
+
                 Some(FixtureResponse::Failure {
-                    failure_category,
+                    failure_code,
                     reason,
                     allows_fallback,
-                }) => RetrievalResult::Failure(RetrievalFailure::new(
-                    cid,
-                    self.tier,
-                    failure_category.clone(),
-                    reason.clone(),
-                    *allows_fallback,
-                )),
-                None => {
-                    // Unprogrammed candidate → generic failure
-                    RetrievalResult::Failure(RetrievalFailure::new(
+                }) => {
+                    let status = match failure_code {
+                        RetrievalFailureCode::RetrievalAccessRestricted => {
+                            RetrievalAttemptStatus::AccessRestricted
+                        }
+                        _ => RetrievalAttemptStatus::Failed,
+                    };
+                    let trace = Self::make_trace(
+                        &job.retrieval_job_id,
+                        &job.query_plan_id,
                         cid,
+                        &self.channel_id,
                         self.tier,
-                        RetrievalFailureCategory::Other,
-                        format!(
-                            "no fixture response programmed for '{}' on {} channel",
-                            cid, self.tier
-                        ),
-                        true,
-                    ))
+                        RetrievalAttemptMode::DirectImageFetch,
+                        status,
+                        Some(failure_code.clone()),
+                    );
+                    all_traces.push(trace.clone());
+
+                    let mut result = RetrievalArtifactResult::failed(
+                        job,
+                        &batch.retrieval_batch_id,
+                        self.channel_id.clone(),
+                        self.tier,
+                        RetrievalAttemptMode::DirectImageFetch,
+                        reason,
+                        failure_code.clone(),
+                        vec![trace],
+                        vec![],
+                    );
+                    if !allows_fallback {
+                        result.retrieval_status = RetrievalStatus::AccessRestricted;
+                    }
+                    results.push(result);
                 }
-            })
-            .collect();
 
-        Ok(results)
-    }
+                Some(FixtureResponse::MetadataOnly { reason }) => {
+                    let trace = Self::make_trace(
+                        &job.retrieval_job_id,
+                        &job.query_plan_id,
+                        cid,
+                        &self.channel_id,
+                        self.tier,
+                        RetrievalAttemptMode::DirectImageFetch,
+                        RetrievalAttemptStatus::MetadataOnlyRejected,
+                        Some(RetrievalFailureCode::RetrievalMetadataOnly),
+                    );
+                    all_traces.push(trace.clone());
 
-    fn fallback_fact(&self, reason: &str) -> FallbackEligibilityFact {
-        if let Some(ref fact) = self.fallback_fact_override {
-            return fact.clone();
+                    let result = RetrievalArtifactResult::failed(
+                        job,
+                        &batch.retrieval_batch_id,
+                        self.channel_id.clone(),
+                        self.tier,
+                        RetrievalAttemptMode::DirectImageFetch,
+                        reason,
+                        RetrievalFailureCode::RetrievalMetadataOnly,
+                        vec![trace],
+                        vec![],
+                    );
+                    results.push(result);
+                }
+
+                Some(FixtureResponse::AccessRestricted { reason }) => {
+                    let trace = Self::make_trace(
+                        &job.retrieval_job_id,
+                        &job.query_plan_id,
+                        cid,
+                        &self.channel_id,
+                        self.tier,
+                        RetrievalAttemptMode::DirectImageFetch,
+                        RetrievalAttemptStatus::AccessRestricted,
+                        Some(RetrievalFailureCode::RetrievalAccessRestricted),
+                    );
+                    all_traces.push(trace.clone());
+
+                    let mut result = RetrievalArtifactResult::failed(
+                        job,
+                        &batch.retrieval_batch_id,
+                        self.channel_id.clone(),
+                        self.tier,
+                        RetrievalAttemptMode::DirectImageFetch,
+                        reason,
+                        RetrievalFailureCode::RetrievalAccessRestricted,
+                        vec![trace],
+                        vec![],
+                    );
+                    result.retrieval_status = RetrievalStatus::AccessRestricted;
+                    results.push(result);
+                }
+
+                None => {
+                    let trace = Self::make_trace(
+                        &job.retrieval_job_id,
+                        &job.query_plan_id,
+                        cid,
+                        &self.channel_id,
+                        self.tier,
+                        RetrievalAttemptMode::DirectImageFetch,
+                        RetrievalAttemptStatus::Failed,
+                        Some(RetrievalFailureCode::RetrievalUnavailable),
+                    );
+                    all_traces.push(trace.clone());
+
+                    let result = RetrievalArtifactResult::failed(
+                        job,
+                        &batch.retrieval_batch_id,
+                        self.channel_id.clone(),
+                        self.tier,
+                        RetrievalAttemptMode::DirectImageFetch,
+                        format!("no fixture response programmed for '{}'", cid),
+                        RetrievalFailureCode::RetrievalUnavailable,
+                        vec![trace],
+                        vec![],
+                    );
+                    results.push(result);
+                }
+            }
         }
-        FallbackEligibilityFact::new(self.tier, reason, false)
+
+        Ok(RetrievalBatchResult::new(
+            batch.retrieval_batch_id.clone(),
+            batch.query_plan_id.clone(),
+            batch.full_attempt_count,
+            batch.retry_count,
+            batch.target_size,
+            vec![],
+            results,
+            all_traces,
+            vec![],
+            batch.shortage.clone(),
+            vec![],
+            vec![],
+        ))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::config::RetrievalChannelConfig;
+    use crate::domain::retrieval::{
+        RetrievalJob, RetrievalPolicyContext, RetrievalTarget, RetrievalTargetType,
+    };
+
+    fn make_job(id: &str, cid: &str, qp_id: &str, url: &str) -> RetrievalJob {
+        RetrievalJob {
+            retrieval_job_id: RetrievalJobId::new(id),
+            query_plan_id: qp_id.into(),
+            candidate_id: cid.into(),
+            full_attempt_count: 1,
+            retry_count: 0,
+            retrieval_priority: 5,
+            target: RetrievalTarget {
+                target_type: RetrievalTargetType::Image,
+                primary_image_url: url.into(),
+                alternate_source_page_url: None,
+                thumbnail_url: None,
+                expected_mime_type: None,
+                license_hint: None,
+                provider_id: "p1".into(),
+                candidate_provenance_refs: vec![],
+            },
+            candidate_quality_decision_ref: "qd-1".into(),
+            requested_outputs: vec![],
+            policy_context: RetrievalPolicyContext::default(),
+        }
+    }
+
+    fn make_batch(jobs: Vec<RetrievalJob>) -> RetrievalBatch {
+        RetrievalBatch::new("b-1", "qp-1", 1, 0, jobs.len() as u32, jobs, None)
+    }
 
     #[test]
-    fn fixture_channel_returns_programmed_success() {
-        let channel = FixtureChannel::new(RetrievalChannelTier::WebFetch)
+    fn fixture_channel_returns_complete_result() {
+        let channel = FixtureChannel::new(RetrievalChannelTier::NormalWebFetch)
             .with_response("c1", FixtureResponse::success());
 
-        let batch = RetrievalBatch::new(vec!["c1".into()], 2);
-        let results = channel.retrieve_batch(&batch).expect("batch should work");
-        assert_eq!(results.len(), 1);
-        assert!(results[0].is_success());
-        if let RetrievalResult::Success(s) = &results[0] {
-            assert_eq!(s.candidate_id, "c1");
-            assert_eq!(s.channel_tier, RetrievalChannelTier::WebFetch);
-        }
+        let batch = make_batch(vec![make_job(
+            "ret-1",
+            "c1",
+            "qp-1",
+            "https://example.com/1.jpg",
+        )]);
+        let result = channel.retrieve_batch(&batch).expect("batch should work");
+
+        assert_eq!(result.results.len(), 1);
+        assert!(result.results[0].is_complete());
+        assert!(result.results[0].has_all_required_paths());
+        assert_eq!(
+            result.results[0].checksum_sha256,
+            Some("fixture-sha256-abc123".into())
+        );
     }
 
     #[test]
-    fn fixture_channel_returns_programmed_failure() {
-        let channel = FixtureChannel::new(RetrievalChannelTier::WebFetch)
-            .with_response("c2", FixtureResponse::access_restricted());
+    fn fixture_channel_returns_failure() {
+        let channel = FixtureChannel::new(RetrievalChannelTier::NormalWebFetch)
+            .with_response("c2", FixtureResponse::network_failure());
 
-        let batch = RetrievalBatch::new(vec!["c2".into()], 2);
-        let results = channel.retrieve_batch(&batch).expect("batch should work");
-        assert!(results[0].is_failure());
-        if let RetrievalResult::Failure(f) = &results[0] {
-            assert_eq!(
-                f.failure_category,
-                RetrievalFailureCategory::AccessRestricted
-            );
-            assert!(!f.allows_fallback);
-        }
+        let batch = make_batch(vec![make_job(
+            "ret-2",
+            "c2",
+            "qp-1",
+            "https://example.com/2.jpg",
+        )]);
+        let result = channel.retrieve_batch(&batch).expect("batch should work");
+
+        assert_eq!(result.results.len(), 1);
+        assert!(!result.results[0].is_complete());
     }
 
     #[test]
-    fn fixture_channel_unprogrammed_candidate_fails() {
-        let channel = FixtureChannel::new(RetrievalChannelTier::WebFetch);
+    fn fixture_channel_access_restricted() {
+        let channel = FixtureChannel::new(RetrievalChannelTier::NormalWebFetch)
+            .with_response("c3", FixtureResponse::access_restricted());
 
-        let batch = RetrievalBatch::new(vec!["unknown".into()], 2);
-        let results = channel.retrieve_batch(&batch).expect("batch should work");
-        assert!(results[0].is_failure());
+        let batch = make_batch(vec![make_job(
+            "ret-3",
+            "c3",
+            "qp-1",
+            "https://restricted.example.com/3.jpg",
+        )]);
+        let result = channel.retrieve_batch(&batch).expect("batch should work");
+
+        assert_eq!(
+            result.results[0].retrieval_status,
+            RetrievalStatus::AccessRestricted
+        );
     }
 
     #[test]
-    fn fixture_channel_mixed_results() {
-        let channel = FixtureChannel::new(RetrievalChannelTier::SelfHosted)
-            .with_response("good", FixtureResponse::success())
-            .with_response("bad", FixtureResponse::network_failure());
+    fn fixture_channel_metadata_only_rejected() {
+        let channel = FixtureChannel::new(RetrievalChannelTier::NormalWebFetch)
+            .with_response("c4", FixtureResponse::metadata_only());
 
-        let batch = RetrievalBatch::new(vec!["good".into(), "bad".into()], 4);
-        let results = channel.retrieve_batch(&batch).expect("batch should work");
-        assert_eq!(results.len(), 2);
-        assert!(results[0].is_success());
-        assert!(results[1].is_failure());
+        let batch = make_batch(vec![make_job(
+            "ret-4",
+            "c4",
+            "qp-1",
+            "https://example.com/4.jpg",
+        )]);
+        let result = channel.retrieve_batch(&batch).expect("batch should work");
+
+        assert!(result.results[0].is_metadata_only_result());
     }
 
     #[test]
-    fn fixture_channel_readiness_ready() {
-        let channel = FixtureChannel::new(RetrievalChannelTier::WebFetch);
-        assert!(channel.readiness().is_ok());
-    }
-
-    #[test]
-    fn fixture_channel_readiness_disabled() {
-        let channel = FixtureChannel::new(RetrievalChannelTier::WebFetch)
-            .with_readiness(FixtureReadiness::Disabled);
-        assert!(channel.readiness().is_err());
-    }
-
-    #[test]
-    fn fixture_channel_readiness_paid_unconfirmed() {
-        let channel = FixtureChannel::new(RetrievalChannelTier::Paid)
-            .with_readiness(FixtureReadiness::PaidUnconfirmed);
-        let result = channel.readiness();
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert!(err.to_string().contains("paid"));
-    }
-
-    #[test]
-    fn fixture_channel_tier_reported() {
-        let wf = FixtureChannel::new(RetrievalChannelTier::WebFetch);
-        assert_eq!(wf.tier(), RetrievalChannelTier::WebFetch);
-
-        let sh = FixtureChannel::new(RetrievalChannelTier::SelfHosted);
-        assert_eq!(sh.tier(), RetrievalChannelTier::SelfHosted);
-
-        let pd = FixtureChannel::new(RetrievalChannelTier::Paid);
-        assert_eq!(pd.tier(), RetrievalChannelTier::Paid);
-    }
-
-    #[test]
-    fn fixture_channel_fallback_fact() {
-        let channel = FixtureChannel::new(RetrievalChannelTier::WebFetch);
-        let fact = channel.fallback_fact("test");
-        assert_eq!(fact.failed_tier, RetrievalChannelTier::WebFetch);
-        assert_eq!(fact.next_tier, Some(RetrievalChannelTier::SelfHosted));
-    }
-
-    #[test]
-    fn fixture_channel_fallback_fact_override() {
-        let custom = FallbackEligibilityFact {
-            failed_tier: RetrievalChannelTier::SelfHosted,
-            next_tier: None,
-            reason: "custom override".into(),
-            is_access_restricted: true,
-            requires_paid_confirmation: false,
+    fn fixture_channel_readiness() {
+        let channel = FixtureChannel::new(RetrievalChannelTier::NormalWebFetch);
+        let config = RetrievalChannelConfig {
+            channel_id: "test".into(),
+            channel_kind: crate::domain::config::RetrievalChannelKind::Fixture,
+            tier: RetrievalChannelTier::NormalWebFetch,
+            enabled: true,
+            endpoint: None,
+            credential_env: None,
+            max_batch_size: None,
         };
-        let channel =
-            FixtureChannel::new(RetrievalChannelTier::WebFetch).with_fallback_fact(custom);
-
-        let fact = channel.fallback_fact("ignored");
-        assert!(fact.is_access_restricted);
-        assert_eq!(fact.reason, "custom override");
-    }
-
-    #[test]
-    fn fixture_channel_with_all_success() {
-        let channel =
-            FixtureChannel::new(RetrievalChannelTier::WebFetch).with_all_success(&["a", "b", "c"]);
-
-        let batch = RetrievalBatch::new(vec!["a".into(), "b".into(), "c".into()], 6);
-        let results = channel.retrieve_batch(&batch).expect("batch should work");
-        assert_eq!(results.len(), 3);
-        assert!(results.iter().all(|r| r.is_success()));
-    }
-
-    #[test]
-    fn fixture_response_constructors() {
-        let success = FixtureResponse::success();
-        match success {
-            FixtureResponse::Success { content_type, .. } => {
-                assert_eq!(content_type, Some("image/jpeg".into()));
-            }
-            _ => panic!("expected success"),
-        }
-
-        let net_fail = FixtureResponse::network_failure();
-        match net_fail {
-            FixtureResponse::Failure {
-                failure_category,
-                allows_fallback,
-                ..
-            } => {
-                assert_eq!(failure_category, RetrievalFailureCategory::Network);
-                assert!(allows_fallback);
-            }
-            _ => panic!("expected failure"),
-        }
-
-        let access = FixtureResponse::access_restricted();
-        match access {
-            FixtureResponse::Failure {
-                failure_category,
-                allows_fallback,
-                ..
-            } => {
-                assert_eq!(failure_category, RetrievalFailureCategory::AccessRestricted);
-                assert!(!allows_fallback);
-            }
-            _ => panic!("expected failure"),
-        }
+        let report = channel.readiness(&config);
+        assert!(report.available);
+        assert!(channel.capabilities().fixture_only);
     }
 }

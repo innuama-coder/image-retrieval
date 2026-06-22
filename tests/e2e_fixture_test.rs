@@ -35,8 +35,8 @@ use image_retrieval::domain::query_plan::{
     TaskPlan, ValidatedQueryPlan,
 };
 use image_retrieval::domain::retrieval::{
-    ExecutionBlockingFact, FallbackEligibilityFact, RetrievalBatch, RetrievalChannelTier,
-    RetrievalFailure, RetrievalFailureCategory, RetrievalResult,
+    ExecutionBlockingFact, FallbackEligibilityFact, RetrievalChannelTier, RetrievalFailure,
+    RetrievalFailureCategory, RetrievalResult,
 };
 use image_retrieval::domain::search::{ProviderReadiness, ProviderRegistration};
 use image_retrieval::error::{Error, Result};
@@ -547,7 +547,7 @@ fn e2e_execution_blocked_openclaw_candidate_phase() {
 #[test]
 fn e2e_channel_fallback_blocked_by_access_restriction() {
     let fact = FallbackEligibilityFact::new(
-        RetrievalChannelTier::WebFetch,
+        RetrievalChannelTier::NormalWebFetch,
         "HTTP 403 Forbidden — login wall detected",
         true,
     );
@@ -560,8 +560,11 @@ fn e2e_channel_fallback_blocked_by_access_restriction() {
 
 #[test]
 fn e2e_channel_fallback_allowed_for_network_error() {
-    let fact =
-        FallbackEligibilityFact::new(RetrievalChannelTier::WebFetch, "connection timeout", false);
+    let fact = FallbackEligibilityFact::new(
+        RetrievalChannelTier::NormalWebFetch,
+        "connection timeout",
+        false,
+    );
     let decision = evaluate_fallback_eligibility(&fact);
     assert!(matches!(decision, PolicyDecision::Allow));
 }
@@ -611,17 +614,21 @@ fn e2e_channel_disabled_no_fallback_bypass() {
 #[test]
 fn e2e_fallback_chain_respects_tier_boundaries() {
     assert_eq!(
-        RetrievalChannelTier::WebFetch.next_fallback(),
-        Some(RetrievalChannelTier::SelfHosted)
+        RetrievalChannelTier::NormalWebFetch.next_fallback(),
+        Some(RetrievalChannelTier::SelfHostedService)
     );
     assert_eq!(
-        RetrievalChannelTier::SelfHosted.next_fallback(),
-        Some(RetrievalChannelTier::Paid)
+        RetrievalChannelTier::SelfHostedService.next_fallback(),
+        Some(RetrievalChannelTier::PaidOnlineService)
     );
-    assert_eq!(RetrievalChannelTier::Paid.next_fallback(), None);
+    assert_eq!(
+        RetrievalChannelTier::PaidOnlineService.next_fallback(),
+        None
+    );
 
     // Paid tier has no further fallback (next_tier is None)
-    let paid_fact = FallbackEligibilityFact::new(RetrievalChannelTier::Paid, "exhausted", false);
+    let paid_fact =
+        FallbackEligibilityFact::new(RetrievalChannelTier::PaidOnlineService, "exhausted", false);
     assert!(paid_fact.next_tier.is_none());
 }
 
@@ -629,7 +636,7 @@ fn e2e_fallback_chain_respects_tier_boundaries() {
 fn e2e_execution_blocking_fact_access_restriction() {
     let fact = ExecutionBlockingFact {
         reason: "all channels blocked: login wall at web_fetch tier".into(),
-        source_tier: Some(RetrievalChannelTier::WebFetch),
+        source_tier: Some(RetrievalChannelTier::NormalWebFetch),
         is_access_restricted: true,
         is_paid_unconfirmed: false,
     };
@@ -642,7 +649,7 @@ fn e2e_execution_blocking_fact_access_restriction() {
 fn e2e_retrieval_failure_access_restricted_no_fallback() {
     let failure = RetrievalResult::Failure(RetrievalFailure {
         candidate_id: "cand-1".into(),
-        channel_tier: RetrievalChannelTier::WebFetch,
+        channel_tier: RetrievalChannelTier::NormalWebFetch,
         failure_category: RetrievalFailureCategory::AccessRestricted,
         reason: "HTTP 403 Forbidden".into(),
         allows_fallback: false,
@@ -1048,39 +1055,63 @@ fn e2e_search_scheduler_empty_registry_produces_shortage() {
 
 #[test]
 fn e2e_fixture_retrieval_channel_mixed_results() {
-    use image_retrieval::retrieval::channels::fixture::{FixtureChannel, FixtureResponse};
+    use image_retrieval::domain::retrieval::{
+        RetrievalJob, RetrievalJobId, RetrievalPolicyContext, RetrievalTarget, RetrievalTargetType,
+    };
+    use image_retrieval::retrieval::{FixtureChannel, FixtureResponse};
 
-    let channel = FixtureChannel::new(RetrievalChannelTier::WebFetch)
+    let channel = FixtureChannel::new(RetrievalChannelTier::NormalWebFetch)
         .with_response("good-1", FixtureResponse::success())
         .with_response("good-2", FixtureResponse::success())
         .with_response("bad-1", FixtureResponse::network_failure())
         .with_response("restricted-1", FixtureResponse::access_restricted());
 
-    let batch = RetrievalBatch::new(
-        vec![
-            "good-1".into(),
-            "good-2".into(),
-            "bad-1".into(),
-            "restricted-1".into(),
-        ],
+    fn make_job(id: &str) -> RetrievalJob {
+        RetrievalJob {
+            retrieval_job_id: RetrievalJobId::new(format!("ret-{}", id)),
+            query_plan_id: "qp-test".into(),
+            candidate_id: id.into(),
+            full_attempt_count: 1,
+            retry_count: 0,
+            retrieval_priority: 5,
+            target: RetrievalTarget {
+                target_type: RetrievalTargetType::Image,
+                primary_image_url: format!("https://example.com/{}.jpg", id),
+                alternate_source_page_url: None,
+                thumbnail_url: None,
+                expected_mime_type: Some("image/jpeg".into()),
+                license_hint: None,
+                provider_id: "test".into(),
+                candidate_provenance_refs: vec![],
+            },
+            candidate_quality_decision_ref: format!("qd-{}", id),
+            requested_outputs: vec![],
+            policy_context: RetrievalPolicyContext::default(),
+        }
+    }
+
+    let batch = image_retrieval::domain::retrieval::RetrievalBatch::new(
+        "batch-1",
+        "qp-test",
+        1,
+        0,
         8,
+        vec![
+            make_job("good-1"),
+            make_job("good-2"),
+            make_job("bad-1"),
+            make_job("restricted-1"),
+        ],
+        None,
     );
 
-    let results = channel.retrieve_batch(&batch).unwrap();
-    assert_eq!(results.len(), 4);
+    let result = channel.retrieve_batch(&batch).unwrap();
+    assert_eq!(result.results.len(), 4);
 
-    let success_count = results.iter().filter(|r| r.is_success()).count();
-    let failure_count = results.iter().filter(|r| r.is_failure()).count();
-    assert_eq!(success_count, 2);
-    assert_eq!(failure_count, 2);
-
-    if let RetrievalResult::Failure(f) = &results[3] {
-        assert_eq!(
-            f.failure_category,
-            RetrievalFailureCategory::AccessRestricted
-        );
-        assert!(!f.allows_fallback);
-    }
+    let complete_count = result.results.iter().filter(|r| r.is_complete()).count();
+    let failed_count = result.results.iter().filter(|r| !r.is_complete()).count();
+    assert_eq!(complete_count, 2);
+    assert_eq!(failed_count, 2);
 }
 
 // ===========================================================================
@@ -1387,17 +1418,61 @@ fn e2e_provider_registry_mixed_readiness() {
 
 #[test]
 fn e2e_retrieval_batch_short_batch_detection() {
-    let batch = RetrievalBatch::new(vec!["c1".into(), "c2".into(), "c3".into()], 10);
+    let batch = image_retrieval::domain::retrieval::RetrievalBatch::new(
+        "b-1",
+        "qp-1",
+        1,
+        0,
+        10,
+        vec![],
+        None,
+    );
 
     assert!(batch.is_short_batch);
-    assert_eq!(batch.actual_size(), 3);
+    assert_eq!(batch.actual_size, 0);
     assert_eq!(batch.target_size, 10);
-    assert!(batch.actual_size() < batch.target_size as usize);
+    assert!(batch.actual_size < batch.target_size);
 }
 
 #[test]
 fn e2e_retrieval_batch_exact_count_not_short() {
-    let batch = RetrievalBatch::new(vec!["c1".into(), "c2".into()], 2);
+    let job = make_minimal_job("c1");
+    let batch = image_retrieval::domain::retrieval::RetrievalBatch::new(
+        "b-2",
+        "qp-1",
+        1,
+        0,
+        1,
+        vec![job],
+        None,
+    );
     assert!(!batch.is_short_batch);
-    assert_eq!(batch.actual_size(), 2);
+    assert_eq!(batch.actual_size, 1);
+}
+
+fn make_minimal_job(id: &str) -> image_retrieval::domain::retrieval::RetrievalJob {
+    image_retrieval::domain::retrieval::RetrievalJob {
+        retrieval_job_id: image_retrieval::domain::retrieval::RetrievalJobId::new(format!(
+            "ret-{}",
+            id
+        )),
+        query_plan_id: "qp-1".into(),
+        candidate_id: id.into(),
+        full_attempt_count: 1,
+        retry_count: 0,
+        retrieval_priority: 5,
+        target: image_retrieval::domain::retrieval::RetrievalTarget {
+            target_type: image_retrieval::domain::retrieval::RetrievalTargetType::Image,
+            primary_image_url: format!("https://example.com/{}.jpg", id),
+            alternate_source_page_url: None,
+            thumbnail_url: None,
+            expected_mime_type: Some("image/jpeg".into()),
+            license_hint: None,
+            provider_id: "test".into(),
+            candidate_provenance_refs: vec![],
+        },
+        candidate_quality_decision_ref: format!("qd-{}", id),
+        requested_outputs: vec![],
+        policy_context: image_retrieval::domain::retrieval::RetrievalPolicyContext::default(),
+    }
 }

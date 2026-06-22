@@ -229,14 +229,19 @@ impl SerpApiGoogleImagesAdapter {
         let _metadata = parsed.get("search_metadata");
         let _search_params = parsed.get("search_parameters");
 
-        // Extract image_results array
-        let image_results = match parsed.get("image_results") {
+        // Extract the image results array. The live SerpApi Google Images API
+        // returns `images_results` (plural); older fixtures use `image_results`.
+        // Accept either so the adapter works against the real service and tests.
+        let image_results = match parsed
+            .get("images_results")
+            .or_else(|| parsed.get("image_results"))
+        {
             Some(serde_json::Value::Array(arr)) => arr,
             Some(_) => {
-                return Err(SearchError::parse("image_results is not an array"));
+                return Err(SearchError::parse("images_results is not an array"));
             }
             None => {
-                // No image_results — could be an empty search
+                // No results field present — treat as an empty search.
                 return Ok(Vec::new());
             }
         };
@@ -738,6 +743,28 @@ mod tests {
         // Third result — missing image URL
         assert_eq!(results[2].provider_rank, 3);
         assert!(results[2].image_url.is_none());
+    }
+
+    #[test]
+    fn serpapi_parse_live_images_results_field() {
+        // The live SerpApi Google Images API returns `images_results` (plural),
+        // not `image_results`. Regression guard for the field-name mismatch that
+        // caused zero candidates against the real service.
+        let adapter = SerpApiGoogleImagesAdapter::fixture();
+        let body = r#"{
+            "search_metadata": {"status": "Success"},
+            "images_results": [
+                {"position": 1, "original": "https://example.com/a.jpg",
+                 "link": "https://example.com/a", "title": "A",
+                 "original_width": 1024, "original_height": 768}
+            ]
+        }"#;
+        let results = adapter.parse_image_results(body).unwrap();
+        assert_eq!(results.len(), 1, "live images_results field must be parsed");
+        assert_eq!(
+            results[0].image_url.as_deref(),
+            Some("https://example.com/a.jpg")
+        );
     }
 
     #[test]

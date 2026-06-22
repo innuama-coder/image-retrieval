@@ -13,8 +13,20 @@
 //!
 //! References: PRD §用户旅程与核心流程, HLD §Task Orchestrator,
 //! `docs/design/TASK-006-image-acceptance-orchestrator-design.md`
+//!
+//! ## v1.1 Extensions (TASK-005)
+//!
+//! The `RunOrchestrator` below drives the full v1.1 workflow: admission,
+//! search, candidate quality, retrieval, image acceptance, package build,
+//! validation, review, and handoff. It uses `RunState` from the domain
+//! and produces `RunOutcome` with canonical `PackageStatus`.
 
 use crate::domain::delivery::DeliveryDecision;
+use crate::domain::delivery::{
+    CoverageGap, CoverageGapType, DeliveredImageRecord, ExecutionMode, PackageStatus,
+    PipelineStage, RunAttemptRecord, RunOutcome, RunRequest, RunState, WorkflowDiagnostic,
+    WorkflowFailureCode,
+};
 use crate::domain::image::ImageAcceptanceDecision;
 use crate::domain::metrics::{MetricEvent, MetricKind};
 use crate::domain::query_plan::TaskPlan;
@@ -1155,5 +1167,470 @@ mod tests {
         orchestrator.record_retry().unwrap();
         assert_eq!(orchestrator.qualified_count(), 2);
         assert_eq!(orchestrator.counter().full_attempt_count, 2);
+    }
+}
+
+// ===========================================================================
+// v1.1 RunOrchestrator — full workflow driver (TASK-005)
+// ===========================================================================
+
+/// The v1.1 full-workflow orchestrator.
+///
+/// Drives the complete pipeline: admission → search → candidate quality →
+/// retrieval → image acceptance → package → validation → review → handoff.
+///
+/// Uses [`RunState`] for attempt tracking and produces [`RunOutcome`]
+/// with canonical [`PackageStatus`].
+pub struct RunOrchestrator {
+    pub state: RunState,
+    pub execution_mode: ExecutionMode,
+    pub output_dir: std::path::PathBuf,
+    pub diagnostics: Vec<WorkflowDiagnostic>,
+    pub attempts: Vec<RunAttemptRecord>,
+    /// Accumulated accepted images across all attempts.
+    pub accepted_images: Vec<DeliveredImageRecord>,
+    /// Accumulated coverage gaps.
+    pub gaps: Vec<CoverageGap>,
+}
+
+impl RunOrchestrator {
+    /// Create a new RunOrchestrator for a full run.
+    pub fn new(request: RunRequest) -> Self {
+        let state = RunState::new(
+            request.run_id.clone(),
+            request.query_plan_id.clone(),
+            request.required_image_count,
+            request.retry_limit,
+        );
+        Self {
+            state,
+            execution_mode: request.execution_mode,
+            output_dir: request.output_dir,
+            diagnostics: Vec::new(),
+            attempts: Vec::new(),
+            accepted_images: Vec::new(),
+            gaps: Vec::new(),
+        }
+    }
+
+    // --- Accessors ---
+
+    pub fn status(&self) -> PackageStatus {
+        self.state.status
+    }
+
+    pub fn accepted_count(&self) -> u32 {
+        self.accepted_images.len() as u32
+    }
+
+    pub fn required_count(&self) -> u32 {
+        self.state.required_image_count
+    }
+
+    pub fn gap_count(&self) -> u32 {
+        self.required_count().saturating_sub(self.accepted_count())
+    }
+
+    /// Whether more attempts are allowed.
+    pub fn can_attempt(&self) -> bool {
+        self.state.can_retry() && self.accepted_count() < self.required_count()
+    }
+
+    // --- Attempt lifecycle ---
+
+    /// Start a new attempt. Call this before invoking search/retrieval/eval.
+    pub fn start_attempt(&mut self) -> RunAttemptRecord {
+        let attempt = RunAttemptRecord {
+            attempt_id: format!(
+                "attempt-{}-{}",
+                self.state.run_id, self.state.full_attempt_count
+            ),
+            full_attempt_count: self.state.full_attempt_count,
+            retry_count: self.state.retry_count,
+            started_at: "now".into(), // placeholder
+            finished_at: None,
+            search_candidate_count: 0,
+            retrievable_candidate_count: 0,
+            retrieval_job_count: 0,
+            retrieval_complete_count: 0,
+            accepted_delta_count: 0,
+            gap_delta_count: 0,
+            terminal_reason: None,
+            diagnostics: Vec::new(),
+        };
+        self.attempts.push(attempt.clone());
+        attempt
+    }
+
+    /// Complete the current attempt and update state.
+    pub fn finish_attempt(&mut self, attempt: RunAttemptRecord) {
+        if let Some(last) = self.attempts.last_mut() {
+            last.search_candidate_count = attempt.search_candidate_count;
+            last.retrievable_candidate_count = attempt.retrievable_candidate_count;
+            last.retrieval_job_count = attempt.retrieval_job_count;
+            last.retrieval_complete_count = attempt.retrieval_complete_count;
+            last.accepted_delta_count = attempt.accepted_delta_count;
+            last.gap_delta_count = attempt.gap_delta_count;
+            last.terminal_reason = attempt.terminal_reason.clone();
+            last.finished_at = Some("now".into());
+        }
+
+        self.state.accepted_images = self.accepted_images.clone();
+        self.state.gaps = self.gaps.clone();
+        self.state.attempts = self.attempts.clone();
+        self.state.update_status();
+        self.state.diagnostics = self.diagnostics.clone();
+    }
+
+    /// Record a gap from the current attempt.
+    pub fn record_gap(
+        &mut self,
+        gap_type: CoverageGapType,
+        missing_count: u32,
+        code: WorkflowFailureCode,
+        stage: PipelineStage,
+        message: impl Into<String>,
+        retryable: bool,
+    ) {
+        let gap = CoverageGap {
+            gap_id: format!("gap-{}-{}", self.state.run_id, self.gaps.len() + 1),
+            query_plan_id: self.state.query_plan_id.clone(),
+            full_attempt_count: self.state.full_attempt_count,
+            retry_count: self.state.retry_count,
+            gap_type,
+            missing_count,
+            primary_code: code,
+            source_stage: stage,
+            evidence_refs: Vec::new(),
+            retryable,
+            message: message.into(),
+        };
+        self.gaps.push(gap);
+    }
+
+    /// Record a workflow diagnostic.
+    pub fn record_diagnostic(&mut self, diag: WorkflowDiagnostic) {
+        self.diagnostics.push(diag);
+    }
+
+    /// Add an accepted image. Skips duplicates.
+    /// Syncs to the inner RunState automatically.
+    pub fn add_accepted_image(&mut self, image: DeliveredImageRecord) {
+        if !self
+            .accepted_images
+            .iter()
+            .any(|a| a.delivered_image_id == image.delivered_image_id)
+        {
+            self.accepted_images.push(image);
+            self.state.accepted_images = self.accepted_images.clone();
+        }
+    }
+
+    /// Advance to the next attempt (retry). Returns false if exhausted.
+    pub fn advance_to_retry(&mut self) -> bool {
+        if !self.can_attempt() {
+            return false;
+        }
+        self.state.record_retry();
+        true
+    }
+
+    // --- Decision helpers ---
+
+    /// Check if we've met the required count.
+    pub fn target_met(&self) -> bool {
+        self.accepted_count() >= self.required_count()
+    }
+
+    /// Check if we've exhausted all retries without meeting the target.
+    pub fn is_exhausted_without_target(&self) -> bool {
+        self.state.is_exhausted() && !self.target_met()
+    }
+
+    /// Build the final RunOutcome from current state.
+    pub fn build_outcome(&self) -> RunOutcome {
+        RunOutcome {
+            run_id: self.state.run_id.clone(),
+            query_plan_id: self.state.query_plan_id.clone(),
+            status: self.state.status,
+            full_attempt_count: self.state.full_attempt_count,
+            retry_count: self.state.retry_count,
+            required_image_count: self.state.required_image_count,
+            accepted_image_count: self.accepted_count(),
+            gap_count: self.gap_count(),
+            package_dir: Some(self.output_dir.join("package").display().to_string()),
+            validation_status: None,
+            primary_reason: Some(match self.state.status {
+                PackageStatus::Passed => "Requested image count reached.".into(),
+                PackageStatus::Partial => format!(
+                    "Retries exhausted: {} of {} images delivered.",
+                    self.accepted_count(),
+                    self.required_count()
+                ),
+                PackageStatus::Blocked => {
+                    if self.diagnostics.last().is_some() {
+                        self.diagnostics.last().unwrap().message.clone()
+                    } else {
+                        "Delivery blocked — no accepted artifact-backed images.".into()
+                    }
+                }
+            }),
+            diagnostics: self.diagnostics.clone(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod v11_tests {
+    use super::*;
+
+    #[test]
+    fn run_orchestrator_initial_state() {
+        let request = RunRequest {
+            query_plan_id: "qp-1".into(),
+            description: "test".into(),
+            required_image_count: 5,
+            retry_limit: 3,
+            candidate_target: 100,
+            retrieval_batch_target: 10,
+            execution_mode: ExecutionMode::Fixture,
+            output_dir: std::path::PathBuf::from("/tmp/test"),
+            run_id: "run-1".into(),
+        };
+        let orch = RunOrchestrator::new(request);
+
+        assert_eq!(orch.state.full_attempt_count, 1);
+        assert_eq!(orch.state.retry_count, 0);
+        assert_eq!(orch.state.retry_limit, 3);
+        assert_eq!(orch.required_count(), 5);
+        assert_eq!(orch.accepted_count(), 0);
+        assert!(orch.can_attempt());
+        assert!(!orch.is_exhausted_without_target());
+    }
+
+    #[test]
+    fn run_orchestrator_meets_target() {
+        let request = RunRequest {
+            query_plan_id: "qp-1".into(),
+            description: "test".into(),
+            required_image_count: 2,
+            retry_limit: 3,
+            candidate_target: 40,
+            retrieval_batch_target: 4,
+            execution_mode: ExecutionMode::Fixture,
+            output_dir: std::path::PathBuf::from("/tmp/test"),
+            run_id: "run-1".into(),
+        };
+        let mut orch = RunOrchestrator::new(request);
+
+        let img = DeliveredImageRecord {
+            delivered_image_id: "d-1".into(),
+            query_plan_id: "qp-1".into(),
+            candidate_id: "c-1".into(),
+            retrieval_job_id: "r-1".into(),
+            package_image_path: "images/img.jpg".into(),
+            local_artifact_path: "/tmp/img.jpg".into(),
+            source_artifact_path: "source".into(),
+            source_sidecar_path: "sidecar".into(),
+            content_summary_path: "summary".into(),
+            task_report_path: "report".into(),
+            visual_description_path: "visual".into(),
+            checksum_sha256: "abc123".into(),
+            content_type: "image/jpeg".into(),
+            file_size_bytes: 1024,
+            width: Some(800),
+            height: Some(600),
+            candidate_quality_decision_ref: "qd-1".into(),
+            image_acceptance_decision_ref: "ia-1".into(),
+            manifest_entry_ref: "m-1".into(),
+        };
+
+        let mut img2 = img.clone();
+        img2.delivered_image_id = "d-2".into();
+        orch.add_accepted_image(img);
+        orch.add_accepted_image(img2);
+        assert!(orch.target_met());
+
+        orch.state.update_status();
+        assert_eq!(orch.status(), PackageStatus::Passed);
+
+        let outcome = orch.build_outcome();
+        assert_eq!(outcome.status, PackageStatus::Passed);
+        assert_eq!(outcome.accepted_image_count, 2);
+        assert_eq!(outcome.gap_count, 0);
+    }
+
+    #[test]
+    fn run_orchestrator_partial_after_exhaustion() {
+        let request = RunRequest {
+            query_plan_id: "qp-1".into(),
+            description: "test".into(),
+            required_image_count: 5,
+            retry_limit: 0, // no retries
+            candidate_target: 100,
+            retrieval_batch_target: 10,
+            execution_mode: ExecutionMode::Fixture,
+            output_dir: std::path::PathBuf::from("/tmp/test"),
+            run_id: "run-1".into(),
+        };
+        let mut orch = RunOrchestrator::new(request);
+
+        let img = DeliveredImageRecord {
+            delivered_image_id: "d-1".into(),
+            query_plan_id: "qp-1".into(),
+            candidate_id: "c-1".into(),
+            retrieval_job_id: "r-1".into(),
+            package_image_path: "images/img.jpg".into(),
+            local_artifact_path: "/tmp/img.jpg".into(),
+            source_artifact_path: "source".into(),
+            source_sidecar_path: "sidecar".into(),
+            content_summary_path: "summary".into(),
+            task_report_path: "report".into(),
+            visual_description_path: "visual".into(),
+            checksum_sha256: "abc123".into(),
+            content_type: "image/jpeg".into(),
+            file_size_bytes: 1024,
+            width: Some(800),
+            height: Some(600),
+            candidate_quality_decision_ref: "qd-1".into(),
+            image_acceptance_decision_ref: "ia-1".into(),
+            manifest_entry_ref: "m-1".into(),
+        };
+        orch.add_accepted_image(img);
+
+        assert!(orch.is_exhausted_without_target());
+        orch.state.update_status();
+        assert_eq!(orch.status(), PackageStatus::Partial);
+    }
+
+    #[test]
+    fn run_orchestrator_blocked_zero_images() {
+        let request = RunRequest {
+            query_plan_id: "qp-1".into(),
+            description: "test".into(),
+            required_image_count: 3,
+            retry_limit: 0,
+            candidate_target: 60,
+            retrieval_batch_target: 6,
+            execution_mode: ExecutionMode::Fixture,
+            output_dir: std::path::PathBuf::from("/tmp/test"),
+            run_id: "run-1".into(),
+        };
+        let orch = RunOrchestrator::new(request);
+        assert!(orch.is_exhausted_without_target());
+        assert_eq!(orch.status(), PackageStatus::Blocked);
+    }
+
+    #[test]
+    fn run_orchestrator_advance_retry() {
+        let request = RunRequest {
+            query_plan_id: "qp-1".into(),
+            description: "test".into(),
+            required_image_count: 10,
+            retry_limit: 2,
+            candidate_target: 200,
+            retrieval_batch_target: 20,
+            execution_mode: ExecutionMode::Fixture,
+            output_dir: std::path::PathBuf::from("/tmp/test"),
+            run_id: "run-1".into(),
+        };
+        let mut orch = RunOrchestrator::new(request);
+
+        assert!(orch.advance_to_retry());
+        assert_eq!(orch.state.full_attempt_count, 2);
+        assert_eq!(orch.state.retry_count, 1);
+
+        assert!(orch.advance_to_retry());
+        assert_eq!(orch.state.full_attempt_count, 3);
+        assert_eq!(orch.state.retry_count, 2);
+
+        assert!(!orch.advance_to_retry());
+        assert!(orch.state.is_exhausted());
+    }
+
+    #[test]
+    fn run_orchestrator_gap_recording() {
+        let request = RunRequest {
+            query_plan_id: "qp-1".into(),
+            description: "test".into(),
+            required_image_count: 5,
+            retry_limit: 3,
+            candidate_target: 100,
+            retrieval_batch_target: 10,
+            execution_mode: ExecutionMode::Fixture,
+            output_dir: std::path::PathBuf::from("/tmp/test"),
+            run_id: "run-1".into(),
+        };
+        let mut orch = RunOrchestrator::new(request);
+
+        orch.record_gap(
+            CoverageGapType::SearchRecallShortage,
+            2,
+            WorkflowFailureCode::SearchShortage,
+            PipelineStage::Search,
+            "only 18 of 20 candidates found",
+            true,
+        );
+        assert_eq!(orch.gaps.len(), 1);
+        assert_eq!(orch.gaps[0].gap_type, CoverageGapType::SearchRecallShortage);
+
+        orch.record_diagnostic(WorkflowDiagnostic::warning(
+            WorkflowFailureCode::SearchShortage,
+            PipelineStage::Search,
+            "search target not met",
+        ));
+        assert_eq!(orch.diagnostics.len(), 1);
+    }
+
+    #[test]
+    fn run_orchestrator_build_outcome() {
+        let request = RunRequest {
+            query_plan_id: "qp-1".into(),
+            description: "test".into(),
+            required_image_count: 2,
+            retry_limit: 3,
+            candidate_target: 40,
+            retrieval_batch_target: 4,
+            execution_mode: ExecutionMode::Fixture,
+            output_dir: std::path::PathBuf::from("/tmp/out"),
+            run_id: "run-1".into(),
+        };
+        let mut orch = RunOrchestrator::new(request);
+
+        let img = DeliveredImageRecord {
+            delivered_image_id: "d-1".into(),
+            query_plan_id: "qp-1".into(),
+            candidate_id: "c-1".into(),
+            retrieval_job_id: "r-1".into(),
+            package_image_path: "images/img.jpg".into(),
+            local_artifact_path: "/tmp/img.jpg".into(),
+            source_artifact_path: "source".into(),
+            source_sidecar_path: "sidecar".into(),
+            content_summary_path: "summary".into(),
+            task_report_path: "report".into(),
+            visual_description_path: "visual".into(),
+            checksum_sha256: "abc123".into(),
+            content_type: "image/jpeg".into(),
+            file_size_bytes: 1024,
+            width: Some(800),
+            height: Some(600),
+            candidate_quality_decision_ref: "qd-1".into(),
+            image_acceptance_decision_ref: "ia-1".into(),
+            manifest_entry_ref: "m-1".into(),
+        };
+        let mut img2 = img.clone();
+        img2.delivered_image_id = "d-2".into();
+        orch.add_accepted_image(img);
+        orch.add_accepted_image(img2);
+        orch.state.update_status();
+
+        let outcome = orch.build_outcome();
+        assert_eq!(outcome.status, PackageStatus::Passed);
+        assert_eq!(outcome.full_attempt_count, 1);
+        assert_eq!(outcome.retry_count, 0);
+        assert_eq!(outcome.accepted_image_count, 2);
+        assert_eq!(outcome.gap_count, 0);
+        assert!(outcome.package_dir.is_some());
+        assert!(outcome.primary_reason.is_some());
     }
 }

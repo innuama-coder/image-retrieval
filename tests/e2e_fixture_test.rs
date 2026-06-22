@@ -1,3 +1,4 @@
+#![allow(deprecated)]
 //! End-to-end fixture integration tests for TASK-009.
 //!
 //! These tests validate the complete image-retrieval pipeline using ONLY

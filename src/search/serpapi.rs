@@ -1,3 +1,8 @@
+#![allow(
+    clippy::unnecessary_cast,
+    clippy::redundant_closure,
+    clippy::useless_format
+)]
 //! SerpApi Google Images search provider adapter.
 //!
 //! Implements [`BaseSearchProvider`] using the SerpApi Google Images

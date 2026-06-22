@@ -5,14 +5,18 @@
 //! - [`BaseSearchProvider`] — canonical v1.1 search provider port.
 //! - [`BaseProvider`] — legacy search provider port (deprecated).
 //! - [`BaseRetrievalChannel`] — retrieval channel port.
-//! - [`OpenClawEvaluationPort`] — OpenClaw subjective evaluation port.
+//! - [`VlmEvaluationPort`] — VLM subjective evaluation port (v1.1).
+//! - [`OpenClawEvaluationPort`] — legacy OpenClaw evaluation port (deprecated).
 //!
 //! References: PRD FR-004/FR-005, HLD §Core Interfaces,
-//! `docs/design/v1.1-TASK-002-search-provider-candidate-design.md`
+//! `docs/design/v1.1-TASK-002-search-provider-candidate-design.md`,
+//! `docs/design/v1.1-TASK-003-quality-vlm-design.md`
 
-use crate::domain::candidate::{CandidateRecord, ProviderId};
-use crate::domain::config::SearchProviderConfig;
-use crate::domain::image::{ImageAcceptanceDecision, ImageRecord};
+use crate::domain::candidate::{
+    CandidateRecord, ProviderId, VlmCandidateEvaluationRequest, VlmEvaluationResponse,
+};
+use crate::domain::config::{SearchProviderConfig, VlmEvaluationConfig};
+use crate::domain::image::{ImageAcceptanceDecision, ImageRecord, VlmImageEvaluationRequest};
 use crate::domain::retrieval::{
     FallbackEligibilityFact, RetrievalBatch, RetrievalChannelTier, RetrievalResult,
 };
@@ -129,14 +133,18 @@ pub trait BaseRetrievalChannel {
 }
 
 // ---------------------------------------------------------------------------
-// OpenClawEvaluationPort — subjective evaluation port
+// OpenClawEvaluationPort — legacy subjective evaluation port (deprecated)
 // ---------------------------------------------------------------------------
 
 /// OpenClaw subjective evaluation contract.
 ///
+/// **Deprecated for v1.1**: prefer [`VlmEvaluationPort`]. This trait is
+/// retained for backward compatibility with existing code and tests.
+///
 /// Covers two distinct evaluation boundaries per HLD/ADR-009:
 /// 1. Structured candidate evaluation (before retrieval).
 /// 2. Actual image evaluation (after retrieval).
+#[deprecated(note = "use `VlmEvaluationPort` instead")]
 pub trait OpenClawEvaluationPort {
     /// Check whether OpenClaw is available for production evaluation.
     ///
@@ -166,6 +174,455 @@ pub trait OpenClawEvaluationPort {
     ) -> Result<Vec<ImageAcceptanceDecision>>;
 }
 
+// ---------------------------------------------------------------------------
+// VLM evaluation readiness report
+// ---------------------------------------------------------------------------
+
+/// Status of a VLM evaluator's credential.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum CredentialStatus {
+    /// Credential env var is present and appears valid.
+    Present,
+    /// Credential env var is not set.
+    Missing { env_var: String },
+    /// Credential was not checked (e.g. fixture evaluator).
+    NotRequired,
+}
+
+impl std::fmt::Display for CredentialStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Present => write!(f, "present"),
+            Self::Missing { env_var } => write!(f, "missing ({})", env_var),
+            Self::NotRequired => write!(f, "not_required"),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// VLM evaluation failure codes
+// ---------------------------------------------------------------------------
+
+/// Machine-readable failure codes for VLM evaluation readiness and execution.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum VlmEvaluationFailureCode {
+    /// VLM is disabled in config.
+    #[serde(rename = "VLM_EVALUATION_DISABLED")]
+    VlmEvaluationDisabled,
+    /// Production endpoint or base URL is absent.
+    #[serde(rename = "VLM_EVALUATION_ENDPOINT_MISSING")]
+    VlmEvaluationEndpointMissing,
+    /// Required credential env var is absent.
+    #[serde(rename = "VLM_EVALUATION_CREDENTIAL_MISSING")]
+    VlmEvaluationCredentialMissing,
+    /// Candidate evaluation prompt/template is absent.
+    #[serde(rename = "VLM_EVALUATION_CANDIDATE_PROMPT_MISSING")]
+    VlmEvaluationCandidatePromptMissing,
+    /// Image evaluation prompt/template is absent.
+    #[serde(rename = "VLM_EVALUATION_IMAGE_PROMPT_MISSING")]
+    VlmEvaluationImagePromptMissing,
+    /// Health/readiness probe failed.
+    #[serde(rename = "VLM_EVALUATION_HEALTH_FAILED")]
+    VlmEvaluationHealthFailed,
+    /// Evaluation request timed out.
+    #[serde(rename = "VLM_EVALUATION_TIMEOUT")]
+    VlmEvaluationTimeout,
+    /// Response could not be validated.
+    #[serde(rename = "VLM_EVALUATION_RESPONSE_INVALID")]
+    VlmEvaluationResponseInvalid,
+    /// Fixture evaluator attempted in production mode.
+    #[serde(rename = "VLM_EVALUATION_FIXTURE_NOT_PRODUCTION")]
+    VlmEvaluationFixtureNotProduction,
+    /// General production unavailability.
+    #[serde(rename = "VLM_EVALUATION_UNAVAILABLE")]
+    VlmEvaluationUnavailable,
+}
+
+impl std::fmt::Display for VlmEvaluationFailureCode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            Self::VlmEvaluationDisabled => "VLM_EVALUATION_DISABLED",
+            Self::VlmEvaluationEndpointMissing => "VLM_EVALUATION_ENDPOINT_MISSING",
+            Self::VlmEvaluationCredentialMissing => "VLM_EVALUATION_CREDENTIAL_MISSING",
+            Self::VlmEvaluationCandidatePromptMissing => "VLM_EVALUATION_CANDIDATE_PROMPT_MISSING",
+            Self::VlmEvaluationImagePromptMissing => "VLM_EVALUATION_IMAGE_PROMPT_MISSING",
+            Self::VlmEvaluationHealthFailed => "VLM_EVALUATION_HEALTH_FAILED",
+            Self::VlmEvaluationTimeout => "VLM_EVALUATION_TIMEOUT",
+            Self::VlmEvaluationResponseInvalid => "VLM_EVALUATION_RESPONSE_INVALID",
+            Self::VlmEvaluationFixtureNotProduction => "VLM_EVALUATION_FIXTURE_NOT_PRODUCTION",
+            Self::VlmEvaluationUnavailable => "VLM_EVALUATION_UNAVAILABLE",
+        };
+        write!(f, "{}", s)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// VLM evaluation readiness report
+// ---------------------------------------------------------------------------
+
+/// Full readiness report for the VLM evaluation provider.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VlmEvaluationReadinessReport {
+    /// Whether VLM evaluation is enabled.
+    pub enabled: bool,
+    /// Whether VLM is available for production evaluation.
+    pub available: bool,
+    /// Whether fixture mode is active.
+    pub fixture_mode: bool,
+    /// Whether the endpoint/base URL is configured.
+    pub endpoint_configured: bool,
+    /// Whether a candidate prompt template is configured.
+    pub candidate_prompt_configured: bool,
+    /// Whether an image prompt template is configured.
+    pub image_prompt_configured: bool,
+    /// Credential status.
+    pub credential_status: CredentialStatus,
+    /// Failure code if not available.
+    pub failure_code: Option<VlmEvaluationFailureCode>,
+    /// When readiness was checked (ISO 8601).
+    pub checked_at: String,
+    /// Supporting evidence.
+    pub evidence: Vec<String>,
+    /// Whether redaction was applied to any evidence.
+    pub redaction_applied: bool,
+}
+
+impl VlmEvaluationReadinessReport {
+    /// Build a readiness report for a disabled or unavailable VLM.
+    pub fn not_available(
+        failure_code: VlmEvaluationFailureCode,
+        fixture_mode: bool,
+        evidence: Vec<String>,
+    ) -> Self {
+        Self {
+            enabled: false,
+            available: false,
+            fixture_mode,
+            endpoint_configured: false,
+            candidate_prompt_configured: false,
+            image_prompt_configured: false,
+            credential_status: CredentialStatus::Missing {
+                env_var: "QWEN_API_TOKEN".into(),
+            },
+            failure_code: Some(failure_code),
+            checked_at: String::new(),
+            evidence,
+            redaction_applied: false,
+        }
+    }
+
+    /// Build a readiness report for an available VLM.
+    pub fn available(fixture_mode: bool) -> Self {
+        Self {
+            enabled: true,
+            available: true,
+            fixture_mode,
+            endpoint_configured: true,
+            candidate_prompt_configured: true,
+            image_prompt_configured: true,
+            credential_status: CredentialStatus::Present,
+            failure_code: None,
+            checked_at: String::new(),
+            evidence: Vec::new(),
+            redaction_applied: false,
+        }
+    }
+
+    /// Build a readiness report for a fixture evaluator that is blocked in production.
+    pub fn fixture_blocked_in_production() -> Self {
+        Self {
+            enabled: true,
+            available: false,
+            fixture_mode: true,
+            endpoint_configured: true,
+            candidate_prompt_configured: false,
+            image_prompt_configured: false,
+            credential_status: CredentialStatus::NotRequired,
+            failure_code: Some(VlmEvaluationFailureCode::VlmEvaluationFixtureNotProduction),
+            checked_at: String::new(),
+            evidence: vec!["Fixture evaluator cannot satisfy production delivery evidence.".into()],
+            redaction_applied: false,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// VLM evaluation error
+// ---------------------------------------------------------------------------
+
+/// Errors that can occur during VLM evaluation.
+#[derive(Debug, Clone)]
+pub enum VlmEvaluationError {
+    /// VLM is disabled in config.
+    Disabled,
+    /// Required credential is missing.
+    CredentialMissing { env_var: String },
+    /// Endpoint is not configured.
+    EndpointMissing,
+    /// Prompt template is missing.
+    PromptTemplateMissing { phase: String },
+    /// Health check failed.
+    HealthFailed { reason: String },
+    /// Request timed out.
+    Timeout { message: String },
+    /// Response was invalid (cardinality, schema, subject IDs).
+    InvalidResponse { message: String },
+    /// Fixture evaluator attempted in production.
+    FixtureNotProduction,
+    /// General unavailability.
+    Unavailable { reason: String },
+}
+
+impl std::fmt::Display for VlmEvaluationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Disabled => write!(f, "VLM evaluation is disabled"),
+            Self::CredentialMissing { env_var } => {
+                write!(f, "VLM credential env var '{}' is not set", env_var)
+            }
+            Self::EndpointMissing => write!(f, "VLM endpoint is not configured"),
+            Self::PromptTemplateMissing { phase } => {
+                write!(f, "VLM {} prompt template is missing", phase)
+            }
+            Self::HealthFailed { reason } => write!(f, "VLM health check failed: {}", reason),
+            Self::Timeout { message } => write!(f, "VLM request timed out: {}", message),
+            Self::InvalidResponse { message } => {
+                write!(f, "VLM response invalid: {}", message)
+            }
+            Self::FixtureNotProduction => {
+                write!(f, "Fixture evaluator cannot be used in production")
+            }
+            Self::Unavailable { reason } => write!(f, "VLM unavailable: {}", reason),
+        }
+    }
+}
+
+impl std::error::Error for VlmEvaluationError {}
+
+impl VlmEvaluationError {
+    /// Convert to a failure code.
+    pub fn to_failure_code(&self) -> VlmEvaluationFailureCode {
+        match self {
+            Self::Disabled => VlmEvaluationFailureCode::VlmEvaluationDisabled,
+            Self::CredentialMissing { .. } => {
+                VlmEvaluationFailureCode::VlmEvaluationCredentialMissing
+            }
+            Self::EndpointMissing => VlmEvaluationFailureCode::VlmEvaluationEndpointMissing,
+            Self::PromptTemplateMissing { .. } => {
+                VlmEvaluationFailureCode::VlmEvaluationCandidatePromptMissing
+            }
+            Self::HealthFailed { .. } => VlmEvaluationFailureCode::VlmEvaluationHealthFailed,
+            Self::Timeout { .. } => VlmEvaluationFailureCode::VlmEvaluationTimeout,
+            Self::InvalidResponse { .. } => VlmEvaluationFailureCode::VlmEvaluationResponseInvalid,
+            Self::FixtureNotProduction => {
+                VlmEvaluationFailureCode::VlmEvaluationFixtureNotProduction
+            }
+            Self::Unavailable { .. } => VlmEvaluationFailureCode::VlmEvaluationUnavailable,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// VlmEvaluationPort — v1.1 VLM subjective evaluation port
+// ---------------------------------------------------------------------------
+
+/// VLM subjective evaluation contract (v1.1).
+///
+/// Covers two distinct evaluation boundaries:
+/// 1. Candidate evaluation (before retrieval) via [`evaluate_candidates`].
+/// 2. Image evaluation (after retrieval) via [`evaluate_images`].
+///
+/// # Security
+///
+/// - Request DTOs must not contain provider credentials, cookies, authorization
+///   headers, raw VLM credentials, or full authenticated URLs.
+/// - URLs are allowed only after redaction strips secret query parameters.
+/// - `fixture_mode = true` is allowed only under test or explicit fixture runs.
+/// - The resolved API token must never appear in requests, responses, diagnostics,
+///   logs, or reports.
+///
+/// # Production behavior
+///
+/// - If readiness is not available and any mechanically passed subject requires
+///   subjective evaluation, the quality phase returns `ExecutionBlocked`.
+/// - Fixture subjective evaluation is allowed only under test/fixture execution
+///   and must be marked `fixture_mode = true` in diagnostics and audit events.
+pub trait VlmEvaluationPort: Send + Sync {
+    /// Evaluate readiness for the VLM evaluation provider.
+    ///
+    /// Checks config, credential presence, endpoint availability, and
+    /// fixture-mode legality. Returns a structured report without performing
+    /// actual evaluation.
+    fn readiness(&self, config: &VlmEvaluationConfig) -> VlmEvaluationReadinessReport;
+
+    /// Evaluate a batch of candidates and return structured per-subject decisions.
+    ///
+    /// Only mechanically-passed candidates are submitted. The response must
+    /// contain exactly one decision per submitted subject.
+    fn evaluate_candidates(
+        &self,
+        request: &VlmCandidateEvaluationRequest,
+    ) -> std::result::Result<VlmEvaluationResponse, VlmEvaluationError>;
+
+    /// Evaluate a batch of retrieved images and return structured per-subject
+    /// decisions.
+    ///
+    /// Only mechanically-passed images are submitted. The response must
+    /// contain exactly one decision per submitted subject.
+    fn evaluate_images(
+        &self,
+        request: &VlmImageEvaluationRequest,
+    ) -> std::result::Result<VlmEvaluationResponse, VlmEvaluationError>;
+}
+
+// ---------------------------------------------------------------------------
+// Fixture VLM evaluator — test-only
+// ---------------------------------------------------------------------------
+
+/// A fixture VLM evaluator that returns pre-determined decisions.
+///
+/// This evaluator is **test-only** and must never satisfy production
+/// delivery evidence. Production code must detect `fixture_mode = true`
+/// and return `ExecutionBlocked`.
+pub struct FixtureVlmEvaluator {
+    /// Pre-determined candidate decisions to return.
+    pub candidate_decisions: Vec<VlmSubjectDecision>,
+    /// Pre-determined image decisions to return.
+    pub image_decisions: Vec<VlmSubjectDecision>,
+    /// Whether the fixture should simulate VLM unavailability.
+    pub simulate_unavailable: bool,
+}
+
+use crate::domain::candidate::VlmSubjectDecision;
+use serde::{Deserialize, Serialize};
+
+impl FixtureVlmEvaluator {
+    /// Create a fixture evaluator that always approves.
+    pub fn always_approve() -> Self {
+        Self {
+            candidate_decisions: Vec::new(),
+            image_decisions: Vec::new(),
+            simulate_unavailable: false,
+        }
+    }
+
+    /// Create a fixture evaluator with specific candidate decisions.
+    pub fn with_candidate_decisions(decisions: Vec<VlmSubjectDecision>) -> Self {
+        Self {
+            candidate_decisions: decisions,
+            image_decisions: Vec::new(),
+            simulate_unavailable: false,
+        }
+    }
+
+    /// Create a fixture evaluator that simulates unavailability.
+    pub fn unavailable() -> Self {
+        Self {
+            candidate_decisions: Vec::new(),
+            image_decisions: Vec::new(),
+            simulate_unavailable: true,
+        }
+    }
+}
+
+impl VlmEvaluationPort for FixtureVlmEvaluator {
+    fn readiness(&self, config: &VlmEvaluationConfig) -> VlmEvaluationReadinessReport {
+        if config.fixture_mode {
+            VlmEvaluationReadinessReport::available(true)
+        } else {
+            // Fixture evaluator in production context → blocked
+            VlmEvaluationReadinessReport::fixture_blocked_in_production()
+        }
+    }
+
+    fn evaluate_candidates(
+        &self,
+        request: &VlmCandidateEvaluationRequest,
+    ) -> std::result::Result<VlmEvaluationResponse, VlmEvaluationError> {
+        if !request.fixture_mode {
+            return Err(VlmEvaluationError::FixtureNotProduction);
+        }
+
+        if self.simulate_unavailable {
+            return Err(VlmEvaluationError::Unavailable {
+                reason: "fixture simulated unavailability".into(),
+            });
+        }
+
+        // Use pre-set decisions if available, otherwise auto-approve
+        let decisions: Vec<VlmSubjectDecision> = if self.candidate_decisions.is_empty() {
+            request
+                .candidates
+                .iter()
+                .map(|s| VlmSubjectDecision {
+                    subject_id: s.candidate.candidate_id.to_string(),
+                    decision: crate::domain::candidate::VlmSubjectDecisionKind::Approve,
+                    confidence: Some(0.95),
+                    reason_codes: vec!["fixture_approve".into()],
+                    rationale_summary: "Fixture auto-approve.".into(),
+                    evidence_refs: vec![],
+                })
+                .collect()
+        } else {
+            self.candidate_decisions.clone()
+        };
+
+        Ok(VlmEvaluationResponse {
+            request_id: request.request_id.clone(),
+            evaluator_id: "fixture_vlm".into(),
+            evaluator_kind: crate::domain::candidate::VlmEvaluatorKind::Fixture,
+            status: crate::domain::candidate::VlmResponseStatus::Complete,
+            decisions,
+            diagnostics: Vec::new(),
+            audit_ref: None,
+            redaction_applied: false,
+        })
+    }
+
+    fn evaluate_images(
+        &self,
+        request: &VlmImageEvaluationRequest,
+    ) -> std::result::Result<VlmEvaluationResponse, VlmEvaluationError> {
+        if !request.fixture_mode {
+            return Err(VlmEvaluationError::FixtureNotProduction);
+        }
+
+        if self.simulate_unavailable {
+            return Err(VlmEvaluationError::Unavailable {
+                reason: "fixture simulated unavailability".into(),
+            });
+        }
+
+        let decisions: Vec<VlmSubjectDecision> = if self.image_decisions.is_empty() {
+            request
+                .images
+                .iter()
+                .map(|s| VlmSubjectDecision {
+                    subject_id: s.candidate_id.to_string(),
+                    decision: crate::domain::candidate::VlmSubjectDecisionKind::Approve,
+                    confidence: Some(0.95),
+                    reason_codes: vec!["fixture_approve".into()],
+                    rationale_summary: "Fixture auto-approve.".into(),
+                    evidence_refs: vec![],
+                })
+                .collect()
+        } else {
+            self.image_decisions.clone()
+        };
+
+        Ok(VlmEvaluationResponse {
+            request_id: request.request_id.clone(),
+            evaluator_id: "fixture_vlm".into(),
+            evaluator_kind: crate::domain::candidate::VlmEvaluatorKind::Fixture,
+            status: crate::domain::candidate::VlmResponseStatus::Complete,
+            decisions,
+            diagnostics: Vec::new(),
+            audit_ref: None,
+            redaction_applied: false,
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     //! Compile-time verification that the port traits are object-safe
@@ -190,6 +647,242 @@ mod tests {
 
     #[test]
     fn openclaw_evaluation_port_is_object_safe() {
+        #[allow(deprecated)]
         fn _assert(_p: &dyn OpenClawEvaluationPort) {}
+    }
+
+    #[test]
+    fn vlm_evaluation_port_is_object_safe() {
+        fn _assert(_p: &dyn VlmEvaluationPort) {}
+    }
+
+    // -----------------------------------------------------------------------
+    // VlmEvaluationReadinessReport tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn readiness_report_available() {
+        let report = VlmEvaluationReadinessReport::available(false);
+        assert!(report.enabled);
+        assert!(report.available);
+        assert!(!report.fixture_mode);
+        assert!(report.failure_code.is_none());
+    }
+
+    #[test]
+    fn readiness_report_not_available() {
+        let report = VlmEvaluationReadinessReport::not_available(
+            VlmEvaluationFailureCode::VlmEvaluationCredentialMissing,
+            false,
+            vec!["QWEN_API_TOKEN not set".into()],
+        );
+        assert!(!report.enabled);
+        assert!(!report.available);
+        assert_eq!(
+            report.failure_code,
+            Some(VlmEvaluationFailureCode::VlmEvaluationCredentialMissing)
+        );
+    }
+
+    #[test]
+    fn readiness_report_fixture_blocked() {
+        let report = VlmEvaluationReadinessReport::fixture_blocked_in_production();
+        assert!(!report.available);
+        assert_eq!(
+            report.failure_code,
+            Some(VlmEvaluationFailureCode::VlmEvaluationFixtureNotProduction)
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // VlmEvaluationError tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn vlm_evaluation_error_to_failure_code() {
+        assert_eq!(
+            VlmEvaluationError::Disabled.to_failure_code(),
+            VlmEvaluationFailureCode::VlmEvaluationDisabled
+        );
+        assert_eq!(
+            VlmEvaluationError::CredentialMissing {
+                env_var: "QWEN_API_TOKEN".into()
+            }
+            .to_failure_code(),
+            VlmEvaluationFailureCode::VlmEvaluationCredentialMissing
+        );
+        assert_eq!(
+            VlmEvaluationError::FixtureNotProduction.to_failure_code(),
+            VlmEvaluationFailureCode::VlmEvaluationFixtureNotProduction
+        );
+        assert_eq!(
+            VlmEvaluationError::Unavailable {
+                reason: "down".into()
+            }
+            .to_failure_code(),
+            VlmEvaluationFailureCode::VlmEvaluationUnavailable
+        );
+    }
+
+    #[test]
+    fn vlm_evaluation_error_display() {
+        let err = VlmEvaluationError::CredentialMissing {
+            env_var: "QWEN_API_TOKEN".into(),
+        };
+        assert!(err.to_string().contains("QWEN_API_TOKEN"));
+
+        let err = VlmEvaluationError::FixtureNotProduction;
+        assert!(err.to_string().contains("Fixture"));
+    }
+
+    // -----------------------------------------------------------------------
+    // Failure code display
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn failure_code_display() {
+        assert_eq!(
+            VlmEvaluationFailureCode::VlmEvaluationDisabled.to_string(),
+            "VLM_EVALUATION_DISABLED"
+        );
+        assert_eq!(
+            VlmEvaluationFailureCode::VlmEvaluationCredentialMissing.to_string(),
+            "VLM_EVALUATION_CREDENTIAL_MISSING"
+        );
+        assert_eq!(
+            VlmEvaluationFailureCode::VlmEvaluationFixtureNotProduction.to_string(),
+            "VLM_EVALUATION_FIXTURE_NOT_PRODUCTION"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // FixtureVlmEvaluator tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn fixture_evaluator_readiness_in_fixture_mode() {
+        let evaluator = FixtureVlmEvaluator::always_approve();
+        let config = VlmEvaluationConfig {
+            fixture_mode: true,
+            ..Default::default()
+        };
+        let report = evaluator.readiness(&config);
+        assert!(report.available);
+        assert!(report.fixture_mode);
+    }
+
+    #[test]
+    fn fixture_evaluator_readiness_in_production() {
+        let evaluator = FixtureVlmEvaluator::always_approve();
+        let config = VlmEvaluationConfig {
+            fixture_mode: false,
+            ..Default::default()
+        };
+        let report = evaluator.readiness(&config);
+        assert!(!report.available);
+        assert_eq!(
+            report.failure_code,
+            Some(VlmEvaluationFailureCode::VlmEvaluationFixtureNotProduction)
+        );
+    }
+
+    #[test]
+    fn fixture_evaluator_candidates_in_fixture_mode() {
+        use crate::domain::candidate::{QualityPolicyContext, VlmCandidateEvaluationRequest};
+
+        let evaluator = FixtureVlmEvaluator::always_approve();
+        let request = VlmCandidateEvaluationRequest {
+            request_id: "req-1".into(),
+            query_plan_id: "qp-1".into(),
+            full_attempt_count: 1,
+            retry_count: 0,
+            semantic_description: "test".into(),
+            quality: crate::domain::query_plan::QualityTier::General,
+            quality_requirements: Default::default(),
+            visual_requirements: vec![],
+            negative_scope: vec![],
+            candidates: vec![],
+            policy_context: QualityPolicyContext {
+                fixture_mode: true,
+                ..Default::default()
+            },
+            model: "qwen-3.5".into(),
+            evaluator_provider_id: "fixture_vlm".into(),
+            fixture_mode: true,
+        };
+
+        let response = evaluator.evaluate_candidates(&request).unwrap();
+        assert_eq!(
+            response.evaluator_kind,
+            crate::domain::candidate::VlmEvaluatorKind::Fixture
+        );
+        assert_eq!(
+            response.status,
+            crate::domain::candidate::VlmResponseStatus::Complete
+        );
+    }
+
+    #[test]
+    fn fixture_evaluator_candidates_in_production_blocked() {
+        use crate::domain::candidate::{QualityPolicyContext, VlmCandidateEvaluationRequest};
+
+        let evaluator = FixtureVlmEvaluator::always_approve();
+        let request = VlmCandidateEvaluationRequest {
+            request_id: "req-1".into(),
+            query_plan_id: "qp-1".into(),
+            full_attempt_count: 1,
+            retry_count: 0,
+            semantic_description: "test".into(),
+            quality: crate::domain::query_plan::QualityTier::General,
+            quality_requirements: Default::default(),
+            visual_requirements: vec![],
+            negative_scope: vec![],
+            candidates: vec![],
+            policy_context: QualityPolicyContext {
+                fixture_mode: false,
+                ..Default::default()
+            },
+            model: "qwen-3.5".into(),
+            evaluator_provider_id: "fixture_vlm".into(),
+            fixture_mode: false,
+        };
+
+        let result = evaluator.evaluate_candidates(&request);
+        assert!(result.is_err());
+        match result {
+            Err(e) => {
+                assert!(matches!(e, VlmEvaluationError::FixtureNotProduction));
+            }
+            _ => panic!("expected FixtureNotProduction error"),
+        }
+    }
+
+    #[test]
+    fn fixture_evaluator_simulate_unavailable() {
+        use crate::domain::candidate::{QualityPolicyContext, VlmCandidateEvaluationRequest};
+
+        let evaluator = FixtureVlmEvaluator::unavailable();
+        let request = VlmCandidateEvaluationRequest {
+            request_id: "req-1".into(),
+            query_plan_id: "qp-1".into(),
+            full_attempt_count: 1,
+            retry_count: 0,
+            semantic_description: "test".into(),
+            quality: crate::domain::query_plan::QualityTier::General,
+            quality_requirements: Default::default(),
+            visual_requirements: vec![],
+            negative_scope: vec![],
+            candidates: vec![],
+            policy_context: QualityPolicyContext {
+                fixture_mode: true,
+                ..Default::default()
+            },
+            model: "qwen-3.5".into(),
+            evaluator_provider_id: "fixture_vlm".into(),
+            fixture_mode: true,
+        };
+
+        let result = evaluator.evaluate_candidates(&request);
+        assert!(result.is_err());
     }
 }

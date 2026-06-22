@@ -226,6 +226,282 @@ pub fn validate_image_mechanical(
 }
 
 // ---------------------------------------------------------------------------
+// v1.1 image mechanical validation — artifact-aware
+// ---------------------------------------------------------------------------
+
+/// Run v1.1 mechanical validation on a retrieved image artifact.
+///
+/// Checks for all required artifact evidence fields per the detailed design:
+/// retrieval status, local artifact, source artifact, sidecar, summary,
+/// task report, visual description, checksum, content type, media type match,
+/// file size, dimensions, ownership, and fixture mode.
+pub fn validate_image_mechanical_v11(
+    result: &crate::domain::image::RetrievalArtifactResult,
+    expected_query_plan_id: &str,
+    expected_candidate_id: &str,
+    fixture_mode: bool,
+) -> crate::domain::image::ImageMechanicalAssessment {
+    use crate::domain::candidate::CandidateId;
+    use crate::domain::image::ImageMechanicalAssessment;
+    use crate::domain::metrics::{MetricFact, QualityMetricCode};
+
+    let candidate_id = CandidateId::new(expected_candidate_id);
+    let retrieval_job_id = result.retrieval_job_id.clone();
+    let query_plan_id = expected_query_plan_id.to_string();
+    let mut blocking = Vec::new();
+    let mut reference = Vec::new();
+
+    // 1. Retrieval not complete
+    if !result.is_complete() {
+        blocking.push(MetricFact::image_blocking(
+            QualityMetricCode::ImageRetrievalNotComplete,
+            &retrieval_job_id,
+            &query_plan_id,
+            "retrieval status is not complete",
+        ));
+    }
+
+    // 2. Local artifact missing
+    if result.local_artifact_path.is_none() {
+        blocking.push(MetricFact::image_blocking(
+            QualityMetricCode::ImageLocalArtifactMissing,
+            &retrieval_job_id,
+            &query_plan_id,
+            "local artifact path is missing",
+        ));
+    }
+
+    // 3. Source artifact missing
+    if result.source_artifact_path.is_none() {
+        blocking.push(MetricFact::image_blocking(
+            QualityMetricCode::ImageSourceArtifactMissing,
+            &retrieval_job_id,
+            &query_plan_id,
+            "source artifact path is missing",
+        ));
+    }
+
+    // 4. Sidecar missing
+    if result.source_sidecar_path.is_none() {
+        blocking.push(MetricFact::image_blocking(
+            QualityMetricCode::ImageSidecarMissing,
+            &retrieval_job_id,
+            &query_plan_id,
+            "source sidecar path is missing",
+        ));
+    }
+
+    // 5. Content summary missing
+    if result.content_summary_path.is_none() {
+        blocking.push(MetricFact::image_blocking(
+            QualityMetricCode::ImageSummaryMissing,
+            &retrieval_job_id,
+            &query_plan_id,
+            "content summary path is missing",
+        ));
+    }
+
+    // 6. Task report missing
+    if result.task_report_path.is_none() {
+        blocking.push(MetricFact::image_blocking(
+            QualityMetricCode::ImageTaskReportMissing,
+            &retrieval_job_id,
+            &query_plan_id,
+            "task report path is missing",
+        ));
+    }
+
+    // 7. Visual description missing
+    if result.visual_description_path.is_none() {
+        blocking.push(MetricFact::image_blocking(
+            QualityMetricCode::ImageVisualDescriptionMissing,
+            &retrieval_job_id,
+            &query_plan_id,
+            "visual description path is missing",
+        ));
+    }
+
+    // 8. Checksum missing
+    if result.checksum_sha256.is_none() {
+        blocking.push(MetricFact::image_blocking(
+            QualityMetricCode::ImageChecksumMissing,
+            &retrieval_job_id,
+            &query_plan_id,
+            "checksum is missing",
+        ));
+    }
+
+    // 9. Content type invalid
+    match &result.content_type {
+        None => {
+            blocking.push(MetricFact::image_blocking(
+                QualityMetricCode::ImageContentTypeInvalid,
+                &retrieval_job_id,
+                &query_plan_id,
+                "content type is missing",
+            ));
+        }
+        Some(ct) if !ct.starts_with("image/") => {
+            blocking.push(MetricFact::image_blocking(
+                QualityMetricCode::ImageContentTypeInvalid,
+                &retrieval_job_id,
+                &query_plan_id,
+                format!("content type '{}' is not image-compatible", ct),
+            ));
+        }
+        _ => {}
+    }
+
+    // 10. Media type mismatch
+    if !result.media_type_match {
+        blocking.push(MetricFact::image_blocking(
+            QualityMetricCode::ImageMediaTypeMismatch,
+            &retrieval_job_id,
+            &query_plan_id,
+            "media type does not match expected type",
+        ));
+    }
+
+    // 11. File size too small
+    if let Some(size) = result.file_size_bytes {
+        if size == 0 {
+            blocking.push(
+                MetricFact::image_blocking(
+                    QualityMetricCode::ImageFileEmptyOrTooSmall,
+                    &retrieval_job_id,
+                    &query_plan_id,
+                    "file is empty (0 bytes)",
+                )
+                .with_value("0"),
+            );
+        }
+    }
+
+    // 12. Dimensions too small
+    if let Some(dims) = &result.image_dimensions {
+        const MIN_WIDTH: u32 = 2;
+        const MIN_HEIGHT: u32 = 2;
+        if dims.width < MIN_WIDTH || dims.height < MIN_HEIGHT {
+            blocking.push(
+                MetricFact::image_blocking(
+                    QualityMetricCode::ImageDimensionsTooSmall,
+                    &retrieval_job_id,
+                    &query_plan_id,
+                    format!(
+                        "dimensions {}x{} below minimum {}x{}",
+                        dims.width, dims.height, MIN_WIDTH, MIN_HEIGHT
+                    ),
+                )
+                .with_value(format!("{}x{}", dims.width, dims.height))
+                .with_threshold(format!("{}x{}", MIN_WIDTH, MIN_HEIGHT)),
+            );
+        }
+    }
+
+    // 13. Ownership mismatch
+    if result.query_plan_id != expected_query_plan_id {
+        blocking.push(MetricFact::image_blocking(
+            QualityMetricCode::ImageJobOwnershipMismatch,
+            &retrieval_job_id,
+            &query_plan_id,
+            format!(
+                "retrieval job query_plan_id '{}' != expected '{}'",
+                result.query_plan_id, expected_query_plan_id
+            ),
+        ));
+    }
+    if result.candidate_id != expected_candidate_id {
+        blocking.push(MetricFact::image_blocking(
+            QualityMetricCode::ImageJobOwnershipMismatch,
+            &retrieval_job_id,
+            &query_plan_id,
+            format!(
+                "retrieval job candidate_id '{}' != expected '{}'",
+                result.candidate_id, expected_candidate_id
+            ),
+        ));
+    }
+
+    // 14. Metadata-only result
+    if result.is_metadata_only() {
+        blocking.push(MetricFact::image_blocking(
+            QualityMetricCode::ImageMetadataOnlyResult,
+            &retrieval_job_id,
+            &query_plan_id,
+            "result is metadata-only — no actual image artifact",
+        ));
+    }
+
+    // 15. Fixture check
+    if !fixture_mode && result.channel_id == "fixture" {
+        blocking.push(MetricFact::image_blocking(
+            QualityMetricCode::ImageFixtureNotProduction,
+            &retrieval_job_id,
+            &query_plan_id,
+            "fixture retrieval result cannot be used in production mode",
+        ));
+    }
+
+    // --- Reference metrics ---
+
+    // Dimensions
+    if let Some(dims) = &result.image_dimensions {
+        reference.push(MetricFact::image_reference(
+            QualityMetricCode::ImageDimensionsRef,
+            &retrieval_job_id,
+            &query_plan_id,
+            format!("dimensions: {}x{}", dims.width, dims.height),
+        ));
+    }
+
+    // File size
+    if let Some(size) = result.file_size_bytes {
+        let note: String = if size > 50 * 1024 * 1024 {
+            "large file (>50MB)".into()
+        } else {
+            "normal size".into()
+        };
+        reference.push(
+            MetricFact::image_reference(
+                QualityMetricCode::ImageFileSizeRef,
+                &retrieval_job_id,
+                &query_plan_id,
+                note,
+            )
+            .with_value(size.to_string()),
+        );
+    }
+
+    // Content type
+    if let Some(ref ct) = result.content_type {
+        reference.push(MetricFact::image_reference(
+            QualityMetricCode::ImageContentTypeRef,
+            &retrieval_job_id,
+            &query_plan_id,
+            format!("content type: {}", ct),
+        ));
+    }
+
+    // Fetch trace quality
+    reference.push(MetricFact::image_reference(
+        QualityMetricCode::ImageFetchTraceQuality,
+        &retrieval_job_id,
+        &query_plan_id,
+        format!("fetch attempts: {}", result.fetch_trace.len()),
+    ));
+
+    ImageMechanicalAssessment {
+        candidate_id,
+        retrieval_job_id,
+        query_plan_id,
+        passed: blocking.is_empty(),
+        blocking_metrics: blocking,
+        reference_metrics: reference,
+        evaluated_at: String::new(),
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 

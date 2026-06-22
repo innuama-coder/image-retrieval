@@ -1,3 +1,4 @@
+#![allow(clippy::too_many_arguments)]
 //! Search domain types.
 //!
 //! v1.1 canonical types per LLD and

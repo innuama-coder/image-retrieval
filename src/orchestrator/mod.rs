@@ -1,3 +1,4 @@
+#![allow(deprecated)]
 //! Task orchestrator — drives the image retrieval lifecycle.
 //!
 //! Implements the state machine defined in

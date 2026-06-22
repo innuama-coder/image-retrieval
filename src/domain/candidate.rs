@@ -543,6 +543,463 @@ impl RetrievableCandidateSequence {
 }
 
 // ---------------------------------------------------------------------------
+// v1.1 Candidate quality types per
+// `docs/design/v1.1-TASK-003-quality-vlm-design.md`
+// ---------------------------------------------------------------------------
+
+/// Mechanical assessment for a single candidate (v1.1).
+///
+/// Uses typed [`MetricFact`] instead of string-based evidence.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CandidateMechanicalAssessment {
+    /// Candidate being assessed.
+    pub candidate_id: CandidateId,
+    /// Query plan that originated this evaluation.
+    pub query_plan_id: String,
+    /// Whether mechanical checks passed.
+    pub passed: bool,
+    /// Blocking metric facts — any non-empty means mechanical failure.
+    pub blocking_metrics: Vec<crate::domain::metrics::MetricFact>,
+    /// Reference metric facts — supplementary evidence only.
+    pub reference_metrics: Vec<crate::domain::metrics::MetricFact>,
+    /// When assessment was performed (ISO 8601).
+    pub evaluated_at: String,
+}
+
+impl CandidateMechanicalAssessment {
+    /// Create a passing mechanical assessment.
+    pub fn pass(candidate_id: CandidateId, query_plan_id: impl Into<String>) -> Self {
+        Self {
+            candidate_id,
+            query_plan_id: query_plan_id.into(),
+            passed: true,
+            blocking_metrics: Vec::new(),
+            reference_metrics: Vec::new(),
+            evaluated_at: String::new(),
+        }
+    }
+
+    /// Create a blocked mechanical assessment from blocking facts.
+    pub fn blocked(
+        candidate_id: CandidateId,
+        query_plan_id: impl Into<String>,
+        blocking: Vec<crate::domain::metrics::MetricFact>,
+    ) -> Self {
+        Self {
+            candidate_id,
+            query_plan_id: query_plan_id.into(),
+            passed: false,
+            blocking_metrics: blocking,
+            reference_metrics: Vec::new(),
+            evaluated_at: String::new(),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// VLM evaluation request (candidate phase)
+// ---------------------------------------------------------------------------
+
+/// Policy context carried into VLM evaluation requests.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct QualityPolicyContext {
+    /// Whether paid retrieval is allowed.
+    pub allow_paid: bool,
+    /// Whether robots.txt is respected.
+    pub respect_robots: bool,
+    /// Whether login-required sources are allowed.
+    pub allow_login: bool,
+    /// Whether paywalled sources are allowed.
+    pub allow_paywalled: bool,
+    /// Prohibited source domains.
+    pub prohibited_domains: Vec<String>,
+    /// Whether redaction should be applied.
+    pub redact_output: bool,
+    /// Whether fixture mode is active (test only).
+    pub fixture_mode: bool,
+}
+
+/// A single subject within a VLM candidate evaluation request.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CandidateEvaluationSubject {
+    /// The candidate being evaluated.
+    pub candidate: CandidateRecord,
+    /// Mechanical assessment (must be `passed = true` to reach VLM).
+    pub mechanical_assessment: CandidateMechanicalAssessment,
+    /// Reference metrics for VLM context.
+    pub reference_metrics: Vec<crate::domain::metrics::MetricFact>,
+}
+
+/// Request to evaluate a batch of candidates via VLM.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VlmCandidateEvaluationRequest {
+    /// Unique request identifier.
+    pub request_id: String,
+    /// Query plan that originated this evaluation.
+    pub query_plan_id: String,
+    /// Full attempt count from the orchestrator.
+    pub full_attempt_count: u8,
+    /// Retry count (= full_attempt_count - 1).
+    pub retry_count: u8,
+    /// Semantic description of what is sought.
+    pub semantic_description: String,
+    /// Quality tier.
+    pub quality: crate::domain::query_plan::QualityTier,
+    /// Structured quality requirements.
+    pub quality_requirements: crate::domain::query_plan::QualityRequirements,
+    /// Visual requirements from the QueryPlan.
+    pub visual_requirements: Vec<String>,
+    /// Negative scope from the QueryPlan.
+    pub negative_scope: Vec<String>,
+    /// Candidates to evaluate (must all have passed mechanical).
+    pub candidates: Vec<CandidateEvaluationSubject>,
+    /// Policy context for the evaluator.
+    pub policy_context: QualityPolicyContext,
+    /// Model identifier (e.g. "qwen-3.5").
+    pub model: String,
+    /// Evaluator provider identifier (e.g. "qwen_3_5_vlm").
+    pub evaluator_provider_id: String,
+    /// Whether fixture mode is active.
+    pub fixture_mode: bool,
+}
+
+// ---------------------------------------------------------------------------
+// VLM evaluation response (shared across phases)
+// ---------------------------------------------------------------------------
+
+/// Kind of VLM evaluator that produced the response.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum VlmEvaluatorKind {
+    /// Production Qwen 3.5 VLM.
+    #[serde(rename = "qwen_3_5_vlm")]
+    Qwen35Vlm,
+    /// Fixture evaluator — test only.
+    #[serde(rename = "fixture")]
+    Fixture,
+}
+
+/// Overall status of a VLM evaluation response.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum VlmResponseStatus {
+    /// All submitted subjects received a decision.
+    Complete,
+    /// Some decisions are missing (cardinality mismatch).
+    Incomplete,
+    /// The evaluator returned an unexpected error.
+    Error,
+}
+
+/// Kind of decision a VLM can make about a subject.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum VlmSubjectDecisionKind {
+    /// VLM explicitly approves the subject.
+    #[serde(rename = "approve")]
+    Approve,
+    /// VLM explicitly rejects the subject.
+    #[serde(rename = "reject")]
+    Reject,
+    /// VLM cannot decide — insufficient information.
+    #[serde(rename = "uncertain")]
+    Uncertain,
+    /// VLM could not evaluate — execution dependency failure.
+    #[serde(rename = "unexecutable")]
+    Unexecutable,
+}
+
+/// Decision for a single subject within a VLM evaluation response.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VlmSubjectDecision {
+    /// Subject identifier (matches the request subject id).
+    pub subject_id: String,
+    /// The VLM's decision.
+    pub decision: VlmSubjectDecisionKind,
+    /// Confidence score from the VLM, if provided (0.0 .. 1.0).
+    pub confidence: Option<f32>,
+    /// Machine-readable reason codes from the VLM.
+    pub reason_codes: Vec<String>,
+    /// Human-readable rationale summary (redacted).
+    pub rationale_summary: String,
+    /// References to evidence (redacted paths only).
+    pub evidence_refs: Vec<String>,
+}
+
+/// Response from a VLM evaluation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VlmEvaluationResponse {
+    /// Echoes the request id.
+    pub request_id: String,
+    /// Which evaluator produced this response.
+    pub evaluator_id: String,
+    /// The kind of evaluator.
+    pub evaluator_kind: VlmEvaluatorKind,
+    /// Overall response status.
+    pub status: VlmResponseStatus,
+    /// Per-subject decisions (must have exactly one per submitted subject).
+    pub decisions: Vec<VlmSubjectDecision>,
+    /// Diagnostics from the evaluation.
+    pub diagnostics: Vec<crate::domain::metrics::QualityDiagnostic>,
+    /// Optional audit reference (package-safe path only).
+    pub audit_ref: Option<String>,
+    /// Whether redaction was applied to any response text.
+    pub redaction_applied: bool,
+}
+
+impl VlmEvaluationResponse {
+    /// Validate that the response contains exactly one decision per expected subject.
+    pub fn validate_cardinality(&self, expected_subject_count: usize) -> Result<(), String> {
+        if self.decisions.len() != expected_subject_count {
+            return Err(format!(
+                "VLM response cardinality mismatch: expected {} decisions, got {}",
+                expected_subject_count,
+                self.decisions.len()
+            ));
+        }
+        Ok(())
+    }
+
+    /// Check if any decision is missing (incomplete status).
+    pub fn has_missing_decisions(&self) -> bool {
+        self.status == VlmResponseStatus::Incomplete
+    }
+
+    /// Check if the evaluation is from a fixture evaluator.
+    pub fn is_fixture(&self) -> bool {
+        self.evaluator_kind == VlmEvaluatorKind::Fixture
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Candidate quality decision and outcomes
+// ---------------------------------------------------------------------------
+
+/// Final status for a candidate after mechanical + VLM evaluation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CandidateQualityStatus {
+    /// Candidate passed both mechanical and VLM gates — eligible for retrieval.
+    #[serde(rename = "retrievable")]
+    Retrievable,
+    /// Candidate was mechanically blocked before VLM.
+    #[serde(rename = "mechanically_rejected")]
+    MechanicallyRejected,
+    /// Candidate was rejected by VLM subjective evaluation.
+    #[serde(rename = "subjectively_rejected")]
+    SubjectivelyRejected,
+    /// VLM was uncertain about the candidate.
+    #[serde(rename = "subjectively_uncertain")]
+    SubjectivelyUncertain,
+    /// VLM was unavailable — execution blocked for this subject.
+    #[serde(rename = "execution_blocked")]
+    ExecutionBlocked,
+}
+
+/// Decision for a single candidate after full quality evaluation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CandidateQualityDecision {
+    /// Candidate identifier.
+    pub candidate_id: CandidateId,
+    /// Query plan that originated this evaluation.
+    pub query_plan_id: String,
+    /// Whether mechanical checks passed.
+    pub mechanical_passed: bool,
+    /// Whether VLM approved.
+    pub vlm_passed: bool,
+    /// Final status.
+    pub final_status: CandidateQualityStatus,
+    /// Priority for retrieval ordering (higher = sooner).
+    pub priority: u32,
+    /// Blocking metric facts from mechanical evaluation.
+    pub blocking_metrics: Vec<crate::domain::metrics::MetricFact>,
+    /// Reference metric facts from mechanical evaluation.
+    pub reference_metrics: Vec<crate::domain::metrics::MetricFact>,
+    /// VLM decision, if VLM was reached.
+    pub vlm_decision: Option<VlmSubjectDecision>,
+    /// Diagnostics from the evaluation.
+    pub diagnostics: Vec<crate::domain::metrics::QualityDiagnostic>,
+}
+
+impl CandidateQualityDecision {
+    /// Returns `true` iff this candidate is eligible for retrieval.
+    pub fn is_retrievable(&self) -> bool {
+        self.final_status == CandidateQualityStatus::Retrievable
+    }
+
+    /// Build a decision for a mechanically rejected candidate.
+    pub fn mechanically_rejected(
+        candidate_id: CandidateId,
+        query_plan_id: impl Into<String>,
+        blocking: Vec<crate::domain::metrics::MetricFact>,
+    ) -> Self {
+        Self {
+            candidate_id,
+            query_plan_id: query_plan_id.into(),
+            mechanical_passed: false,
+            vlm_passed: false,
+            final_status: CandidateQualityStatus::MechanicallyRejected,
+            priority: 0,
+            blocking_metrics: blocking,
+            reference_metrics: Vec::new(),
+            vlm_decision: None,
+            diagnostics: Vec::new(),
+        }
+    }
+
+    /// Build a decision from merged mechanical + VLM results.
+    pub fn merged(
+        candidate_id: CandidateId,
+        query_plan_id: impl Into<String>,
+        mechanical: &CandidateMechanicalAssessment,
+        vlm: Option<&VlmSubjectDecision>,
+    ) -> Self {
+        let vlm_passed = vlm
+            .map(|d| d.decision == VlmSubjectDecisionKind::Approve)
+            .unwrap_or(false);
+        let final_status = match vlm {
+            None => CandidateQualityStatus::ExecutionBlocked,
+            Some(d) => match d.decision {
+                VlmSubjectDecisionKind::Approve => CandidateQualityStatus::Retrievable,
+                VlmSubjectDecisionKind::Reject => CandidateQualityStatus::SubjectivelyRejected,
+                VlmSubjectDecisionKind::Uncertain => CandidateQualityStatus::SubjectivelyUncertain,
+                VlmSubjectDecisionKind::Unexecutable => CandidateQualityStatus::ExecutionBlocked,
+            },
+        };
+        Self {
+            candidate_id,
+            query_plan_id: query_plan_id.into(),
+            mechanical_passed: mechanical.passed,
+            vlm_passed,
+            final_status,
+            priority: if vlm_passed { 5 } else { 0 },
+            blocking_metrics: mechanical.blocking_metrics.clone(),
+            reference_metrics: mechanical.reference_metrics.clone(),
+            vlm_decision: vlm.cloned(),
+            diagnostics: Vec::new(),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Retrievable candidate — handoff to TASK-004
+// ---------------------------------------------------------------------------
+
+/// A single candidate approved for retrieval.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RetrievableCandidate {
+    /// The candidate record.
+    pub candidate: CandidateRecord,
+    /// Full quality decision.
+    pub candidate_quality_decision: CandidateQualityDecision,
+    /// Retrieval priority (higher = sooner).
+    pub retrieval_priority: u32,
+    /// Primary image URL for retrieval.
+    pub primary_image_url: String,
+    /// Source page URL, if available.
+    pub source_page_url: Option<String>,
+    /// Thumbnail URL, if available.
+    pub thumbnail_url: Option<String>,
+    /// Expected MIME type, if known.
+    pub expected_mime_type: Option<String>,
+    /// License or authorization hint, if available.
+    pub license_hint: Option<String>,
+    /// Provenance references for traceability.
+    pub provenance_refs: Vec<String>,
+}
+
+/// Batch of retrievable candidates for TASK-004.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RetrievableCandidateBatch {
+    /// Query plan that originated the batch.
+    pub query_plan_id: String,
+    /// Full attempt count from the orchestrator.
+    pub full_attempt_count: u8,
+    /// Retry count.
+    pub retry_count: u8,
+    /// Target batch size for retrieval.
+    pub retrieval_batch_target: u32,
+    /// Candidates approved for retrieval, sorted by priority.
+    pub candidates: Vec<RetrievableCandidate>,
+    /// Rejected decisions for coverage and manifest.
+    pub rejected_decisions: Vec<CandidateQualityDecision>,
+    /// Execution blocking facts if any.
+    pub execution_blocking_facts: Vec<crate::domain::metrics::QualityExecutionBlock>,
+}
+
+impl RetrievableCandidateBatch {
+    /// Create an empty batch.
+    pub fn empty(
+        query_plan_id: impl Into<String>,
+        full_attempt_count: u8,
+        retry_count: u8,
+        retrieval_batch_target: u32,
+    ) -> Self {
+        Self {
+            query_plan_id: query_plan_id.into(),
+            full_attempt_count,
+            retry_count,
+            retrieval_batch_target,
+            candidates: Vec::new(),
+            rejected_decisions: Vec::new(),
+            execution_blocking_facts: Vec::new(),
+        }
+    }
+
+    /// Number of retrievable candidates in the batch.
+    pub fn len(&self) -> usize {
+        self.candidates.len()
+    }
+
+    /// Whether the batch is empty.
+    pub fn is_empty(&self) -> bool {
+        self.candidates.is_empty()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Candidate quality outcome — handoff to TASK-005
+// ---------------------------------------------------------------------------
+
+/// Full outcome of the candidate quality phase.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CandidateQualityOutcome {
+    /// Query plan that was evaluated.
+    pub query_plan_id: String,
+    /// Full attempt count from the orchestrator.
+    pub full_attempt_count: u8,
+    /// Retry count.
+    pub retry_count: u8,
+    /// Per-candidate quality decisions.
+    pub decisions: Vec<CandidateQualityDecision>,
+    /// Batch of retrievable candidates for TASK-004.
+    pub retrievable_batch: RetrievableCandidateBatch,
+    /// Diagnostics from the evaluation.
+    pub diagnostics: Vec<crate::domain::metrics::QualityDiagnostic>,
+    /// Aggregate summary.
+    pub summary: crate::domain::metrics::QualitySummary,
+}
+
+impl CandidateQualityOutcome {
+    /// Build an outcome from decisions and a retrievable batch.
+    pub fn new(
+        query_plan_id: impl Into<String>,
+        full_attempt_count: u8,
+        retry_count: u8,
+        decisions: Vec<CandidateQualityDecision>,
+        retrievable_batch: RetrievableCandidateBatch,
+        diagnostics: Vec<crate::domain::metrics::QualityDiagnostic>,
+        summary: crate::domain::metrics::QualitySummary,
+    ) -> Self {
+        Self {
+            query_plan_id: query_plan_id.into(),
+            full_attempt_count,
+            retry_count,
+            decisions,
+            retrievable_batch,
+            diagnostics,
+            summary,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 

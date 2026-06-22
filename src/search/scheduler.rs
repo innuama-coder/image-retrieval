@@ -1,3 +1,4 @@
+#![allow(unused_imports, unused_variables, clippy::useless_vec)]
 //! Weighted random search scheduler.
 //!
 //! Implements the weighted random selection algorithm using the

@@ -7,8 +7,8 @@
 | Task ID | TASK-006 |
 | Deliverable | tasks/development/v1.1/testing-report.md |
 | Work type | Testing evidence and acceptance report |
-| Git commit | `spec-exec/TASK-006-image-retrieval-v1-1-6F9BX5` |
-| Date | 2026-06-22 |
+| Git branch | `spec-exec/TASK-006-image-retrieval-v1-1-G1PZVH` |
+| Date | 2026-06-22 (current execution cycle) |
 
 ## Scope
 
@@ -26,17 +26,26 @@ This report covers local deterministic test evidence and real-service smoke evid
 | `cargo test --test retrieval_test` | PASS | 0 | 33 passed, 0 failed. |
 | `cargo test --test e2e_fixture_test` | PASS | 0 | 48 passed, 0 failed. |
 | `cargo test --test fixture_v1_1_test` | PASS | 0 | 30 passed, 0 failed. |
-| **Total: `cargo test --all`** | **PASS** | **0** | **284 passed, 0 failed** across 6 test suites. |
+| `cargo test --test real_service_smoke_test` | PASS | 0 | 6 passed, 0 failed. |
+| **Total: `cargo test --all`** | **PASS** | **0** | **817 passed, 0 failed** (290 across 7 integration test suites + 527 library/validation tests). |
 
 ## Real-Service Smoke Commands
 
 | Command | Status | Reason |
 | --- | --- | --- |
-| `image-retrieval self-check --config "$IMAGE_RETRIEVAL_CONFIG" --query-plan "$IMAGE_RETRIEVAL_QUERY_PLAN" --format json` | **SKIPPED** | `IMAGE_RETRIEVAL_REAL_SMOKE` env var not set; no real provider credentials (`SERPAPI_API_KEY`), no Qwen endpoint/token (`QWEN_API_TOKEN`), no retrieval channel config. |
+| `image-retrieval self-check --config "$IMAGE_RETRIEVAL_CONFIG" --query-plan "$IMAGE_RETRIEVAL_QUERY_PLAN" --format json` | **SKIPPED** | `IMAGE_RETRIEVAL_REAL_SMOKE` env var not set to 1. `IMAGE_RETRIEVAL_CONFIG`, `IMAGE_RETRIEVAL_QUERY_PLAN`, and `IMAGE_RETRIEVAL_OUTPUT_DIR` not configured. `SERPAPI_API_KEY` and `QWEN_API_TOKEN` are present in the environment (values redacted) but the smoke gate is not opted in. |
 | `image-retrieval run --query-plan ... --config ... --output-dir ... --mode production --format json` | **SKIPPED** | Blocked by real-service smoke gate. |
 | `image-retrieval validate-package --package-dir ...` | **SKIPPED** | Blocked by real-service smoke gate. |
 
-Real-service smoke is **blocked** because no real provider credentials, Qwen 3.5 VLM endpoint, or production retrieval channel configuration is available. See `tasks/development/v1.1/real-service-smoke-report.json` for machine-readable blocked evidence.
+### CLI Verification with Fixture Configs (This Cycle)
+
+| Command | Exit | Status |
+| --- | --- | --- |
+| `image-retrieval self-check --config .../config-fixture.toml --query-plan .../query-plan-basic.json --format json` | 0 | **PASS** — status: ready, all readiness checks report |
+| `image-retrieval run --query-plan .../query-plan-basic.json --config .../config-fixture.toml --output-dir /tmp/... --mode fixture --format json` | 6 (DeliveryBlocked) | **EXPECTED** — fixture mode without real adapters produces blocked status |
+| `image-retrieval validate-package --package-dir /tmp/.../package --format json` | 0 | **PASS** — all canonical files present, redaction checks pass, counter invariant holds |
+
+Real-service smoke is **skipped** because `IMAGE_RETRIEVAL_REAL_SMOKE` is not set to 1 and required config/query-plan/output path env vars are not configured. `SERPAPI_API_KEY` and `QWEN_API_TOKEN` are present in the environment but the smoke gate prevents execution. See `tasks/development/v1.1/real-service-smoke-report.json` for machine-readable skipped evidence.
 
 ## Test Suite Summary
 
@@ -140,6 +149,17 @@ Covers:
 - SerpApi fixture response normalization contract
 - Config readiness contract
 
+### 7. Real-Service Smoke Tests (`tests/real_service_smoke_test.rs`) — 6 tests
+
+Covers:
+- Smoke prerequisite detection (opt-in flag, config paths, credential presence)
+- Blocked/skipped evidence generation when prerequisites absent
+- Smoke report schema validation (all required fields)
+- Credential safety (report never contains resolved credential values)
+- Release gate tracking (all gates recorded with status)
+- Environment variable presence reporting (boolean only, never values)
+- Machine-readable skipped status when IMAGE_RETRIEVAL_REAL_SMOKE not set
+
 ## PRD AC-to-Test Matrix
 
 | AC | Requirement | Status | Test Evidence |
@@ -161,7 +181,7 @@ Covers:
 | AC-015 | `validate-package` reads existing package and returns pass/fail + issue list | **PASSED** | `fixture_v1_1_test.rs`: `fixture_package_missing_canonical_file_has_issue`, `fixture_package_coverage_count_mismatch_detected`, `fixture_package_retry_counter_invalid_detected`, `fixture_package_secret_leak_detected`, `golden_validate_package_passed_minimal_matches_actual` |
 | AC-016 | Package, logs, diagnostics contain no credentials/tokens/cookies | **PASSED** | `domain_baseline_test.rs`: `redact_bearer_token`, `redact_api_key`, `redact_authorization_header`, `redact_pem_private_key`, `admission_redacts_bearer_token_in_description`; `e2e_fixture_test.rs`: `e2e_sensitive_info_not_in_delivery_output`, `e2e_sanitize_removes_credentials_from_log_text`; `fixture_v1_1_test.rs`: `no_fixture_package_file_contains_real_credentials`, `secret_leak_fixture_contains_seeded_secret` |
 | AC-017 | robots/site-rule, paid, authorization decisions are warnings/blockers, never silent | **PASSED** | `domain_baseline_test.rs`: `policy_cannot_silently_broaden`; `e2e_fixture_test.rs`: `e2e_authorization_prohibited_local_reject`, `e2e_channel_paid_unconfirmed_blocked`, `e2e_channel_disabled_no_fallback_bypass`; `retrieval_test.rs`: `paid_channel_readiness_unconfirmed_by_default` |
-| AC-018 | Provider/channel/validation/evaluation/package boundaries independently testable | **PASSED** | All 6 test suites compile and run independently: `domain_baseline_test`, `search_integration_test`, `candidate_quality_test`, `retrieval_test`, `e2e_fixture_test`, `fixture_v1_1_test`. Each suite covers exactly one boundary cluster. |
+| AC-018 | Provider/channel/validation/evaluation/package boundaries independently testable | **PASSED** | All 7 test suites compile and run independently: `domain_baseline_test`, `search_integration_test`, `candidate_quality_test`, `retrieval_test`, `e2e_fixture_test`, `fixture_v1_1_test`, `real_service_smoke_test`. Each suite covers one boundary cluster. |
 | AC-019 | External unavailability → machine-readable failure_code, gap, retry evidence | **PASSED** | `search_integration_test.rs`: `empty_registry_returns_no_available_provider`, `all_providers_not_ready_returns_no_available`; `candidate_quality_test.rs`: `vlm_unavailable_produces_execution_block`, `vlm_evaluation_error_covers_required_modes`; `e2e_fixture_test.rs`: `e2e_execution_blocked_openclaw_unavailable`, `e2e_execution_blocked_by_retrieval_blocking_fact` |
 
 ## Fixture E2E Scenario Coverage
@@ -194,15 +214,15 @@ The TASK-006 acceptance criteria require proof of the following fixture E2E path
 
 | ID | Risk | Severity | Handling |
 | --- | --- | --- | --- |
-| R-001 | Real-service smoke blocked — no SerpApi credentials, Qwen endpoint, or production retrieval config available | HIGH | Documented as blocked in this report and `real-service-smoke-report.json`. Cannot close v1.1 full expected-target completion. |
+| R-001 | Real-service smoke skipped — `IMAGE_RETRIEVAL_REAL_SMOKE` not set, `IMAGE_RETRIEVAL_CONFIG`/`QUERY_PLAN`/`OUTPUT_DIR` not configured. `SERPAPI_API_KEY` and `QWEN_API_TOKEN` are present but smoke gate is not opted in. | HIGH | Documented as skipped in this report and `real-service-smoke-report.json`. Cannot close v1.1 full expected-target completion. |
 | R-002 | All release gates (GATE-RSV-001 through GATE-MVP-005) remain OPEN | HIGH | TASK-007 must record each gate as blocking or waived. |
 | R-003 | Paid retrieval, robots/site-rule, authorization blocking rules undecided | MEDIUM | Current behavior is fail-closed (disabled, warned, or blocked). Test coverage proves this. |
 | R-004 | Quality threshold calibration open | LOW | General/High/Strict tiers defined but uncalibrated. Tests use tier-agnostic mechanical checks. |
 
 ## Final Verdict
 
-**Local deterministic tests: ACCEPTED** — All 284 tests pass across 6 test suites. Every PRD AC-001 through AC-019 has mapped test evidence with passed status.
+**Local deterministic tests: ACCEPTED** — All 290 tests pass across 7 test suites (domain_baseline_test, search_integration_test, candidate_quality_test, retrieval_test, e2e_fixture_test, fixture_v1_1_test, real_service_smoke_test). Every PRD AC-001 through AC-019 has mapped test evidence with passed status.
 
-**Real-service smoke: BLOCKED** — `IMAGE_RETRIEVAL_REAL_SMOKE` env var is not set. No SerpApi credentials (`SERPAPI_API_KEY`), Qwen 3.5 VLM endpoint/token (`QWEN_API_TOKEN`), or production retrieval channel configuration is available. Smoke evidence is diagnostic only and cannot satisfy the expected-target completion claim.
+**Real-service smoke: SKIPPED** — `IMAGE_RETRIEVAL_REAL_SMOKE` env var is not set to 1. While `SERPAPI_API_KEY` and `QWEN_API_TOKEN` are present in the environment (values redacted), `IMAGE_RETRIEVAL_CONFIG`, `IMAGE_RETRIEVAL_QUERY_PLAN`, and `IMAGE_RETRIEVAL_OUTPUT_DIR` are not configured. The smoke harness exists and correctly produces machine-readable skipped evidence. Full expected-target completion (real SerpApi + retrieval + Qwen evidence) is **NOT PROVEN**. Product waivers or environment configuration are required before claiming complete v1.1 acceptance.
 
-**Overall TASK-006 status: ACCEPTED with real-service smoke blocked** — The task has delivered all local deterministic test coverage, fixture E2E evidence, package validation tests, and security scans. Real-service smoke prerequisites remain absent; the blocked evidence is properly recorded for TASK-007 final acceptance to evaluate.
+**Overall TASK-006 status: ACCEPTED with real-service smoke skipped** — The task has delivered all local deterministic test coverage, fixture E2E evidence, package validation tests, CLI golden evidence, security scans, and the real-service smoke harness. Real-service smoke prerequisites remain absent; skipped evidence is properly recorded in `tasks/development/v1.1/real-service-smoke-report.json` for TASK-007 final acceptance to evaluate.

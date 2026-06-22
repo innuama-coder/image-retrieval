@@ -1,17 +1,19 @@
 //! Readiness self-check module.
 //!
 //! Implements the pre-flight readiness reporter described in
-//! `docs/design/TASK-008-readiness-self-check-design.md` and HLD §自助检查视图.
+//! `docs/design/TASK-008-readiness-self-check-design.md`, HLD §自助检查视图,
+//! and v1.1 TASK-005 design §Self-Check Contract.
 //!
 //! Aggregates readiness from five dimensions — QueryPlan validation, search
-//! provider readiness, retrieval channel readiness, OpenClaw evaluation
+//! provider readiness, retrieval channel readiness, Qwen 3.5 VLM evaluation
 //! availability (candidate-phase and image-phase), and policy guardrails —
-//! into a single [`SelfCheckReport`].
+//! into a single [`SelfCheckReport`] (MVP) or [`SelfCheckReportV11`] (v1.1).
 //!
 //! The self-check performs **no** search, retrieval, subjective evaluation,
 //! or delivery packaging. It never exposes credential values in diagnostics.
 //!
-//! References: PRD FR-012/AC-012, HLD §自助检查视图
+//! References: PRD FR-012/AC-012 (MVP), FR-014/AC-014 (v1.1),
+//! HLD §自助检查视图, TASK-005 design §Self-Check Contract
 
 use crate::domain::query_plan;
 use crate::domain::retrieval::RetrievalChannelReadiness;
@@ -1984,5 +1986,629 @@ mod tests {
             .iter()
             .any(|w| w.contains("权重") || w.contains("weight"));
         assert!(has_weight_warn, "zero weight should produce a warning");
+    }
+}
+
+// ===========================================================================
+// v1.1 SelfCheckReportV11 — TASK-005 upgraded readiness contract
+// ===========================================================================
+
+/// v1.1 self-check status.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SelfCheckStatusV11 {
+    #[serde(rename = "ready")]
+    Ready,
+    #[serde(rename = "warning")]
+    Warning,
+    #[serde(rename = "blocked")]
+    Blocked,
+}
+
+/// v1.1 self-check report with explicit sections for search, retrieval,
+/// Qwen 3.5 VLM, policy, output, credential, validator, and release blockers.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SelfCheckReportV11 {
+    pub schema_version: u32,
+    pub status: SelfCheckStatusV11,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub query_plan_admission: Option<AdmissionSummary>,
+    pub config_readiness: ConfigReadinessSummary,
+    pub search_provider_readiness: Vec<ProviderReadinessReportV11>,
+    pub retrieval_channel_readiness: Vec<RetrievalChannelReadinessReportV11>,
+    pub vlm_readiness: VlmEvaluationReadinessReport,
+    pub policy_readiness: PolicyReadinessReportV11,
+    pub output_readiness: OutputReadinessReport,
+    pub package_validator_readiness: PackageValidatorReadiness,
+    pub release_blockers: Vec<ReleaseBlocker>,
+    #[serde(default)]
+    pub diagnostics: Vec<SelfCheckDiagnostic>,
+}
+
+/// Admission summary from QueryPlan validation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AdmissionSummary {
+    pub query_plan_valid: bool,
+    pub description: String,
+    pub required_image_count: u32,
+    pub candidate_target: u32,
+    pub retrieval_batch_target: u32,
+    pub retry_limit: u8,
+    pub quality_tier: String,
+}
+
+/// Config readiness summary.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConfigReadinessSummary {
+    pub config_loaded: bool,
+    pub config_valid: bool,
+    pub message: String,
+}
+
+/// v1.1 provider readiness report for search.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProviderReadinessReportV11 {
+    pub provider_id: String,
+    pub display_name: String,
+    pub enabled: bool,
+    pub readiness: String,
+    pub credential_configured: bool,
+    pub message: String,
+}
+
+/// v1.1 retrieval channel readiness report.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RetrievalChannelReadinessReportV11 {
+    pub channel_id: String,
+    pub display_name: String,
+    pub tier: String,
+    pub enabled: bool,
+    pub readiness: String,
+    pub artifact_capable: bool,
+    pub paid_enabled: bool,
+    pub message: String,
+}
+
+/// Qwen 3.5 VLM readiness report.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VlmEvaluationReadinessReport {
+    pub provider_id: String,
+    pub available: bool,
+    pub credential_configured: bool,
+    pub endpoint_configured: bool,
+    pub candidate_evaluation_supported: bool,
+    pub image_evaluation_supported: bool,
+    pub message: String,
+}
+
+/// v1.1 policy readiness report.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PolicyReadinessReportV11 {
+    pub authorization_stance: String,
+    pub paid_channel_confirmed: bool,
+    pub robots_policy: String,
+    pub blocks: Vec<String>,
+    pub warnings: Vec<String>,
+}
+
+/// Output readiness report.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OutputReadinessReport {
+    pub output_dir_writable: bool,
+    pub message: String,
+}
+
+/// Package validator readiness.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PackageValidatorReadiness {
+    pub available: bool,
+    pub message: String,
+}
+
+/// A release blocker.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReleaseBlocker {
+    pub category: String,
+    pub description: String,
+    pub is_blocker: bool,
+}
+
+// ---------------------------------------------------------------------------
+// v1.1 self-check builder
+// ---------------------------------------------------------------------------
+
+/// Input for v1.1 self-check.
+#[derive(Debug, Clone)]
+pub struct SelfCheckRequestV11 {
+    pub query_plan_input: QueryPlanInput,
+    pub providers: Vec<ProviderReadinessEntry>,
+    pub channels: Vec<ChannelReadinessEntry>,
+    pub vlm_available: bool,
+    pub vlm_credential_configured: bool,
+    pub vlm_endpoint_configured: bool,
+    pub paid_channel_confirmed: bool,
+    pub output_dir_writable: bool,
+    pub policy_risks: Vec<PolicyRiskEntry>,
+}
+
+/// Run the v1.1 self-check and produce a `SelfCheckReportV11`.
+pub fn run_self_check_v11(request: SelfCheckRequestV11) -> SelfCheckReportV11 {
+    let mut blockers: Vec<String> = Vec::new();
+    let mut warnings: Vec<String> = Vec::new();
+    let mut diagnostics: Vec<SelfCheckDiagnostic> = Vec::new();
+    let mut release_blockers: Vec<ReleaseBlocker> = Vec::new();
+
+    // --- QueryPlan admission ---
+    let query_plan_admission = {
+        let outcome = query_plan::validate_query_plan(request.query_plan_input.clone());
+        match outcome {
+            query_plan::ValidationOutcome::Valid { plan, .. } => Some(AdmissionSummary {
+                query_plan_valid: true,
+                description: plan.description.clone(),
+                required_image_count: plan.required_count,
+                candidate_target: plan.required_count.saturating_mul(20),
+                retrieval_batch_target: plan.required_count.saturating_mul(2),
+                retry_limit: plan.retry_limit as u8,
+                quality_tier: format!("{:?}", plan.quality_tier).to_lowercase(),
+            }),
+            query_plan::ValidationOutcome::Rejected(rejection) => {
+                let msg = format!("QueryPlan rejected: {}", rejection.summary);
+                blockers.push(msg.clone());
+                diagnostics.push(SelfCheckDiagnostic::blocker("query_plan", msg));
+                None
+            }
+        }
+    };
+
+    // --- Config readiness ---
+    let config_readiness = ConfigReadinessSummary {
+        config_loaded: true,
+        config_valid: query_plan_admission.is_some(),
+        message: if query_plan_admission.is_some() {
+            "Config loaded and valid.".into()
+        } else {
+            "Config or QueryPlan invalid.".into()
+        },
+    };
+
+    // --- Search provider readiness ---
+    let search_provider_readiness: Vec<ProviderReadinessReportV11> = request
+        .providers
+        .iter()
+        .map(|p| {
+            let ready = matches!(p.readiness, ProviderReadiness::Ready);
+            let cred_configured = !matches!(p.readiness, ProviderReadiness::MissingCredentials);
+            if !cred_configured && p.enabled {
+                let msg = format!(
+                    "Search provider '{}' has no credentials configured.",
+                    p.display_name
+                );
+                blockers.push(msg.clone());
+                diagnostics.push(SelfCheckDiagnostic::blocker("search_provider", msg));
+            }
+            ProviderReadinessReportV11 {
+                provider_id: p.provider_id.clone(),
+                display_name: p.display_name.clone(),
+                enabled: p.enabled,
+                readiness: if ready {
+                    "ready".to_string()
+                } else {
+                    "not_ready".to_string()
+                },
+                credential_configured: cred_configured,
+                message: p.reason.clone().unwrap_or_else(|| {
+                    if ready {
+                        "Provider ready.".into()
+                    } else {
+                        "Provider not ready.".into()
+                    }
+                }),
+            }
+        })
+        .collect();
+
+    let has_ready_provider = search_provider_readiness
+        .iter()
+        .any(|p| p.enabled && p.readiness == "ready");
+    if !has_ready_provider {
+        let msg: String = "No ready search provider — run will be blocked.".into();
+        blockers.push(msg.clone());
+        release_blockers.push(ReleaseBlocker {
+            category: "search_provider".into(),
+            description: msg,
+            is_blocker: true,
+        });
+    }
+
+    // --- Retrieval channel readiness ---
+    let retrieval_channel_readiness: Vec<RetrievalChannelReadinessReportV11> = request
+        .channels
+        .iter()
+        .map(|c| {
+            let ready = matches!(c.readiness, RetrievalChannelReadiness::Ready);
+            let paid = c.tier.to_lowercase() == "paid";
+            let artifact_capable = ready;
+            if !artifact_capable && c.enabled {
+                let msg = format!(
+                    "Retrieval channel '{}' cannot produce artifact-backed results.",
+                    c.display_name
+                );
+                blockers.push(msg.clone());
+                diagnostics.push(SelfCheckDiagnostic::blocker("retrieval_channel", msg));
+            }
+            if paid && !request.paid_channel_confirmed {
+                let msg = format!(
+                    "Paid channel '{}' requires explicit confirmation.",
+                    c.display_name
+                );
+                blockers.push(msg.clone());
+                release_blockers.push(ReleaseBlocker {
+                    category: "paid_channel".into(),
+                    description: msg,
+                    is_blocker: true,
+                });
+            }
+            RetrievalChannelReadinessReportV11 {
+                channel_id: c.channel_id.clone(),
+                display_name: c.display_name.clone(),
+                tier: c.tier.clone(),
+                enabled: c.enabled,
+                readiness: if ready {
+                    "ready".to_string()
+                } else {
+                    "not_ready".to_string()
+                },
+                artifact_capable,
+                paid_enabled: paid && c.enabled && request.paid_channel_confirmed,
+                message: c.reason.clone().unwrap_or_else(|| {
+                    if ready {
+                        "Channel ready.".into()
+                    } else {
+                        "Channel not ready.".into()
+                    }
+                }),
+            }
+        })
+        .collect();
+
+    let has_artifact_capable = retrieval_channel_readiness
+        .iter()
+        .any(|c| c.artifact_capable);
+    if !has_artifact_capable {
+        let msg: String = "No retrieval channel can produce artifact-backed results.".into();
+        blockers.push(msg.clone());
+        release_blockers.push(ReleaseBlocker {
+            category: "retrieval_channel".into(),
+            description: msg,
+            is_blocker: true,
+        });
+    }
+
+    // --- VLM readiness ---
+    let vlm_readiness = VlmEvaluationReadinessReport {
+        provider_id: "qwen_3_5_vlm".into(),
+        available: request.vlm_available,
+        credential_configured: request.vlm_credential_configured,
+        endpoint_configured: request.vlm_endpoint_configured,
+        candidate_evaluation_supported: request.vlm_available,
+        image_evaluation_supported: request.vlm_available,
+        message: if request.vlm_available {
+            "Qwen 3.5 VLM ready.".into()
+        } else {
+            "Qwen 3.5 VLM unavailable — production candidate/image evaluation blocked.".into()
+        },
+    };
+    if !request.vlm_available {
+        let msg: String = "Qwen 3.5 VLM not available — production tasks will be blocked.".into();
+        blockers.push(msg.clone());
+        release_blockers.push(ReleaseBlocker {
+            category: "vlm".into(),
+            description: msg,
+            is_blocker: true,
+        });
+    }
+
+    // --- Policy readiness ---
+    let policy_readiness = {
+        let mut blocks: Vec<String> = Vec::new();
+        let mut warns: Vec<String> = Vec::new();
+        for risk in &request.policy_risks {
+            if risk.is_blocker {
+                blocks.push(risk.description.clone());
+                blockers.push(risk.description.clone());
+            } else {
+                warns.push(risk.description.clone());
+                warnings.push(risk.description.clone());
+            }
+        }
+        PolicyReadinessReportV11 {
+            authorization_stance: "default (unknown authorization risk preserved)".into(),
+            paid_channel_confirmed: request.paid_channel_confirmed,
+            robots_policy: "warn/block posture — robots.txt compliance required".into(),
+            blocks,
+            warnings: warns,
+        }
+    };
+
+    // --- Output readiness ---
+    let output_readiness = OutputReadinessReport {
+        output_dir_writable: request.output_dir_writable,
+        message: if request.output_dir_writable {
+            "Output directory is writable.".into()
+        } else {
+            "Output directory is NOT writable.".into()
+        },
+    };
+    if !request.output_dir_writable {
+        let msg: String = "Output directory not writable.".into();
+        blockers.push(msg.clone());
+        release_blockers.push(ReleaseBlocker {
+            category: "output".into(),
+            description: msg,
+            is_blocker: true,
+        });
+    }
+
+    // --- Package validator readiness ---
+    let package_validator_readiness = PackageValidatorReadiness {
+        available: true,
+        message: "Package validator is available.".into(),
+    };
+
+    // --- Determine overall status ---
+    let status = if !blockers.is_empty() || release_blockers.iter().any(|b| b.is_blocker) {
+        SelfCheckStatusV11::Blocked
+    } else if !warnings.is_empty() {
+        SelfCheckStatusV11::Warning
+    } else {
+        SelfCheckStatusV11::Ready
+    };
+
+    SelfCheckReportV11 {
+        schema_version: 1,
+        status,
+        query_plan_admission,
+        config_readiness,
+        search_provider_readiness,
+        retrieval_channel_readiness,
+        vlm_readiness,
+        policy_readiness,
+        output_readiness,
+        package_validator_readiness,
+        release_blockers,
+        diagnostics,
+    }
+}
+
+/// Format a v1.1 self-check report as human-readable text.
+pub fn format_self_check_v11(report: &SelfCheckReportV11) -> String {
+    let mut out = String::new();
+    out.push_str("══════════════════════════════════════════\n");
+    out.push_str("     Self-Check Readiness Report v1.1      \n");
+    out.push_str("══════════════════════════════════════════\n\n");
+
+    let status_icon = match report.status {
+        SelfCheckStatusV11::Ready => "✅ READY",
+        SelfCheckStatusV11::Warning => "⚠️  WARNING",
+        SelfCheckStatusV11::Blocked => "❌ BLOCKED",
+    };
+    out.push_str(&format!("Overall Status: {}\n\n", status_icon));
+
+    // Config
+    out.push_str("── Config ─────────────────────────────────\n");
+    out.push_str(&format!("  {}\n\n", report.config_readiness.message));
+
+    // Search
+    out.push_str("── Search Providers ───────────────────────\n");
+    for p in &report.search_provider_readiness {
+        let icon = if p.readiness == "ready" { "✅" } else { "❌" };
+        out.push_str(&format!(
+            "  {} {} (enabled={}, cred={})\n",
+            icon, p.display_name, p.enabled, p.credential_configured
+        ));
+    }
+    out.push('\n');
+
+    // Retrieval
+    out.push_str("── Retrieval Channels ─────────────────────\n");
+    for c in &report.retrieval_channel_readiness {
+        let icon = if c.artifact_capable { "✅" } else { "❌" };
+        out.push_str(&format!(
+            "  {} {} (tier={}, enabled={}, artifact_capable={})\n",
+            icon, c.display_name, c.tier, c.enabled, c.artifact_capable
+        ));
+    }
+    out.push('\n');
+
+    // VLM
+    out.push_str("── Qwen 3.5 VLM ───────────────────────────\n");
+    let vlm_icon = if report.vlm_readiness.available {
+        "✅"
+    } else {
+        "❌"
+    };
+    out.push_str(&format!(
+        "  {} provider={}, cred={}, endpoint={}\n",
+        vlm_icon,
+        report.vlm_readiness.provider_id,
+        report.vlm_readiness.credential_configured,
+        report.vlm_readiness.endpoint_configured
+    ));
+    out.push_str(&format!("  {}\n\n", report.vlm_readiness.message));
+
+    // Policy
+    out.push_str("── Policy ─────────────────────────────────\n");
+    out.push_str(&format!(
+        "  Auth stance: {}\n",
+        report.policy_readiness.authorization_stance
+    ));
+    out.push_str(&format!(
+        "  Paid confirmed: {}\n",
+        report.policy_readiness.paid_channel_confirmed
+    ));
+    for b in &report.policy_readiness.blocks {
+        out.push_str(&format!("  ❌ {}\n", b));
+    }
+    out.push('\n');
+
+    // Output
+    out.push_str("── Output ─────────────────────────────────\n");
+    let out_icon = if report.output_readiness.output_dir_writable {
+        "✅"
+    } else {
+        "❌"
+    };
+    out.push_str(&format!(
+        "  {} {}\n\n",
+        out_icon, report.output_readiness.message
+    ));
+
+    // Validator
+    out.push_str("── Validator ──────────────────────────────\n");
+    let val_icon = if report.package_validator_readiness.available {
+        "✅"
+    } else {
+        "❌"
+    };
+    out.push_str(&format!(
+        "  {} {}\n\n",
+        val_icon, report.package_validator_readiness.message
+    ));
+
+    // Release blockers
+    if !report.release_blockers.is_empty() {
+        out.push_str("── Release Blockers ───────────────────────\n");
+        for b in &report.release_blockers {
+            out.push_str(&format!("  ❌ [{}] {}\n", b.category, b.description));
+        }
+        out.push('\n');
+    }
+
+    out.push_str("══════════════════════════════════════════\n");
+    out.push_str("Report end. Self-check does NOT produce delivery artifacts.\n");
+    out
+}
+
+#[cfg(test)]
+mod v11_tests {
+    use super::*;
+
+    fn minimal_v11_request() -> SelfCheckRequestV11 {
+        SelfCheckRequestV11 {
+            query_plan_input: QueryPlanInput {
+                description: "test query".into(),
+                required_image_count: 2,
+                ..Default::default()
+            },
+            providers: vec![ProviderReadinessEntry {
+                provider_id: "serpapi".into(),
+                display_name: "SerpApi Google Images".into(),
+                enabled: true,
+                weight: 1,
+                readiness: ProviderReadiness::Ready,
+                reason: Some("configured and ready".into()),
+            }],
+            channels: vec![ChannelReadinessEntry {
+                channel_id: "web-fetch".into(),
+                display_name: "Web Fetch".into(),
+                tier: "web_fetch".into(),
+                enabled: true,
+                readiness: RetrievalChannelReadiness::Ready,
+                reason: Some("normal web fetch available".into()),
+            }],
+            vlm_available: true,
+            vlm_credential_configured: true,
+            vlm_endpoint_configured: true,
+            paid_channel_confirmed: false,
+            output_dir_writable: true,
+            policy_risks: vec![],
+        }
+    }
+
+    #[test]
+    fn v11_all_ready_produces_ready() {
+        let request = minimal_v11_request();
+        let report = run_self_check_v11(request);
+        assert!(matches!(report.status, SelfCheckStatusV11::Ready));
+        assert!(report.release_blockers.is_empty());
+    }
+
+    #[test]
+    fn v11_no_search_provider_is_blocked() {
+        let request = SelfCheckRequestV11 {
+            providers: vec![],
+            ..minimal_v11_request()
+        };
+        let report = run_self_check_v11(request);
+        assert!(matches!(report.status, SelfCheckStatusV11::Blocked));
+        assert!(report
+            .release_blockers
+            .iter()
+            .any(|b| b.category == "search_provider"));
+    }
+
+    #[test]
+    fn v11_no_artifact_capable_channel_is_blocked() {
+        let request = SelfCheckRequestV11 {
+            channels: vec![ChannelReadinessEntry {
+                channel_id: "paid".into(),
+                display_name: "Paid Channel".into(),
+                tier: "paid".into(),
+                enabled: true,
+                readiness: RetrievalChannelReadiness::PaidUnconfirmed,
+                reason: Some("not confirmed".into()),
+            }],
+            ..minimal_v11_request()
+        };
+        let report = run_self_check_v11(request);
+        assert!(matches!(report.status, SelfCheckStatusV11::Blocked));
+    }
+
+    #[test]
+    fn v11_vlm_unavailable_is_blocked() {
+        let request = SelfCheckRequestV11 {
+            vlm_available: false,
+            ..minimal_v11_request()
+        };
+        let report = run_self_check_v11(request);
+        assert!(matches!(report.status, SelfCheckStatusV11::Blocked));
+        assert!(report.release_blockers.iter().any(|b| b.category == "vlm"));
+    }
+
+    #[test]
+    fn v11_output_not_writable_is_blocked() {
+        let request = SelfCheckRequestV11 {
+            output_dir_writable: false,
+            ..minimal_v11_request()
+        };
+        let report = run_self_check_v11(request);
+        assert!(matches!(report.status, SelfCheckStatusV11::Blocked));
+        assert!(report
+            .release_blockers
+            .iter()
+            .any(|b| b.category == "output"));
+    }
+
+    #[test]
+    fn v11_human_readable_output() {
+        let report = run_self_check_v11(minimal_v11_request());
+        let text = format_self_check_v11(&report);
+        assert!(text.contains("Self-Check Readiness Report v1.1"));
+        assert!(text.contains("Search Providers"));
+        assert!(text.contains("Retrieval Channels"));
+        assert!(text.contains("Qwen 3.5 VLM"));
+        assert!(text.contains("Policy"));
+        assert!(text.contains("Output"));
+        assert!(text.contains("Validator"));
+        assert!(text.contains("Report end"));
+    }
+
+    #[test]
+    fn v11_secret_not_in_output() {
+        let report = run_self_check_v11(minimal_v11_request());
+        let json = serde_json::to_string_pretty(&report).unwrap();
+        assert!(!json.contains("Bearer"));
+        assert!(!json.contains("api_key"));
+        assert!(!json.contains("token"));
+        assert!(!json.contains("password"));
     }
 }

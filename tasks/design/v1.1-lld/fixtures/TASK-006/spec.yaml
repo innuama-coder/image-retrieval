@@ -1,0 +1,10 @@
+version: "2.0"
+name: "v1.1-lld-TASK-006-testing-real-service-acceptance"
+repo:
+  url: "https://github.com/innuama-coder/image-retrieval.git"
+  branch: "main"
+task_dir: "tasks/design/v1.1-lld/fixtures/TASK-006"
+executor: "codex"
+deliverables:
+  - path: "docs/design/v1.1-TASK-006-testing-real-service-acceptance-design.md"
+    verify: "py -3 tasks/design/v1.1-lld/validate_design_doc_quality.py --planning tasks/design/v1.1-lld/design-planning.json docs/design/v1.1-TASK-006-testing-real-service-acceptance-design.md || python3 tasks/design/v1.1-lld/validate_design_doc_quality.py --planning tasks/design/v1.1-lld/design-planning.json docs/design/v1.1-TASK-006-testing-real-service-acceptance-design.md || python tasks/design/v1.1-lld/validate_design_doc_quality.py --planning tasks/design/v1.1-lld/design-planning.json docs/design/v1.1-TASK-006-testing-real-service-acceptance-design.md"

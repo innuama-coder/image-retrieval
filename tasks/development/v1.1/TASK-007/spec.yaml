@@ -1,0 +1,16 @@
+version: "2.0"
+name: "TASK-007-image-retrieval-v1.1"
+repo:
+  url: "https://github.com/innuama-coder/image-retrieval.git"
+  branch: "main"
+task_dir: "tasks/development/v1.1/TASK-007"
+executor: "codex"
+deliverables:
+  - path: "tasks/development/v1.1/acceptance-report.md"
+    verify: 'powershell -NoProfile -Command "$p=''tasks/development/v1.1/acceptance-report.md''; if(!(Test-Path $p)){exit 1}; $t=Get-Content -Raw $p; foreach($s in ''verdict'',''evidence'',''SerpApi'',''retrieval'',''Qwen'',''package'',''real-service''){if($t -notmatch $s){exit 1}}"'
+execution:
+  poll_interval_sec: 5
+  idle_timeout_sec: 120
+  max_duration_min: 60
+  max_nudge_count: 10
+  max_consecutive_escalate: 3

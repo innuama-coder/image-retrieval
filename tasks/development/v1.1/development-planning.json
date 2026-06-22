@@ -1,0 +1,1785 @@
+{
+  "planning_status": "ready",
+  "planning_name": "development",
+  "task_version": "v1.1",
+  "output_root": "tasks/development/v1.1",
+  "work_class": "software_development",
+  "planning_target": {
+    "work_type": "software_implementation",
+    "planning_purpose": "Plan v1.1 implementation work so the Rust CLI can perform image search plus artifact-backed image retrieval and validated delivery packaging.",
+    "default_output_root": "tasks/development/v1.1",
+    "deliverable_root": "product_changes",
+    "acceptance_object": "TASK-007 final delivery acceptance task and planning output report",
+    "evidence_model": [
+      "requirements",
+      "architecture/design notes",
+      "source evidence",
+      "verification commands",
+      "fixture E2E packages",
+      "real-service smoke evidence"
+    ],
+    "planning_boundary": "planning only; do not implement product changes or run generated task packages during planning"
+  },
+  "source_inventory": [
+    {
+      "path": "AGENTS.md",
+      "kind": "constitution",
+      "used_for": "Product flow, Rust CLI boundary, provider/channel/VLM rules, and completion rules."
+    },
+    {
+      "path": "Cargo.toml",
+      "kind": "source_stack",
+      "used_for": "Rust 2021, clap, serde, thiserror, ureq, repository metadata, and verification commands."
+    },
+    {
+      "path": "docs/v1.1/PRD.md",
+      "kind": "prd",
+      "used_for": "v1.1 FR-001 through FR-015, AC-001 through AC-019, NFR and metrics."
+    },
+    {
+      "path": "docs/v1.1/HLD.md",
+      "kind": "hld",
+      "used_for": "Module boundaries, runtime sequence, ports, package architecture, and risks."
+    },
+    {
+      "path": "docs/v1.1/LLD-TASKS.md",
+      "kind": "lld_tasks",
+      "used_for": "Accepted LLD task decomposition and design handoff structure."
+    },
+    {
+      "path": "docs/v1.1/LLD.md",
+      "kind": "lld",
+      "used_for": "Aggregate Rust-facing types, interfaces, state, package, validation, CLI, and test matrix."
+    },
+    {
+      "path": "docs/design/v1.1-completion-target-design.md",
+      "kind": "design",
+      "used_for": "Definition of complete v1.1 image search and artifact-backed retrieval delivery."
+    },
+    {
+      "path": "docs/design/v1.1-TASK-001-queryplan-config-policy-design.md",
+      "kind": "detailed_design",
+      "used_for": "QueryPlan, config, policy, redaction, and retry counters."
+    },
+    {
+      "path": "docs/design/v1.1-TASK-002-search-provider-candidate-design.md",
+      "kind": "detailed_design",
+      "used_for": "BaseSearchProvider, SerpApi adapter, scheduling, candidate normalization, and provenance."
+    },
+    {
+      "path": "docs/design/v1.1-TASK-003-quality-vlm-design.md",
+      "kind": "detailed_design",
+      "used_for": "Candidate/image mechanical validation and Qwen 3.5 VLM subjective evaluation."
+    },
+    {
+      "path": "docs/design/v1.1-TASK-004-retrieval-artifact-channel-design.md",
+      "kind": "detailed_design",
+      "used_for": "Artifact-backed retrieval, normal web fetch, source-page resolve, fallback, and policies."
+    },
+    {
+      "path": "docs/design/v1.1-TASK-005-orchestrator-package-validation-cli-design.md",
+      "kind": "detailed_design",
+      "used_for": "Full run loop, package, validation, self-check, CLI, and exit codes."
+    },
+    {
+      "path": "docs/design/v1.1-TASK-006-testing-real-service-acceptance-design.md",
+      "kind": "detailed_design",
+      "used_for": "Test matrix, fixture E2E, real-service smoke, blocked evidence, and acceptance report."
+    },
+    {
+      "path": "docs/design/v1.1-TASK-007-detailed-design-acceptance-review.md",
+      "kind": "detailed_design",
+      "used_for": "Accepted LLD design set, DAG, blockers, and development handoff verdict."
+    },
+    {
+      "path": "RELEASE_GATES.md",
+      "kind": "release_gates",
+      "used_for": "Real provider, Qwen, paid, robots, authorization, and quality calibration gates."
+    },
+    {
+      "path": "src/",
+      "kind": "source",
+      "used_for": "Existing Rust module layout and migration anchors."
+    },
+    {
+      "path": "tests/",
+      "kind": "tests",
+      "used_for": "Existing fixture/unit/integration tests to migrate to v1.1."
+    }
+  ],
+  "source_interpretation": {
+    "current_phase": "v1.1 development planning after accepted LLD design",
+    "product_goal": "Implement a Rust CLI that accepts QueryPlan, searches image candidates through default SerpApi provider, evaluates candidates, retrieves image artifacts through pluggable channels, evaluates retrieved images, and builds a validated delivery package.",
+    "capability_musts": [
+      "SerpApi Google Images default search provider",
+      "Qwen 3.5 VLM direct subjective evaluation adapter",
+      "artifact-backed normal web retrieval with source-page fallback",
+      "canonical validated package",
+      "local deterministic tests and real-service smoke or blocked evidence"
+    ],
+    "implementation_gates": [
+      "serpapi_google_images adapter and readiness",
+      "qwen_3_5_vlm adapter and readiness",
+      "normal_web_fetch complete artifact production",
+      "full run CLI and package validator"
+    ]
+  },
+  "development_scope": {
+    "in_scope": [
+      "Rust CLI implementation",
+      "domain/config/policy DTOs",
+      "BaseSearchProvider and SerpApi adapter",
+      "Qwen 3.5 VLM adapter boundary",
+      "candidate/image mechanical validation",
+      "artifact-backed retrieval channels",
+      "orchestrator and package validation",
+      "tests and smoke evidence"
+    ],
+    "out_of_scope": [
+      "Web UI",
+      "SaaS deployment",
+      "image generation or editing",
+      "silent paid retrieval",
+      "hard-coded credentials",
+      "fixture-only production acceptance"
+    ]
+  },
+  "project_stack": {
+    "language": "Rust",
+    "edition": "2021",
+    "cli": "clap 4 derive",
+    "serialization": "serde and serde_json",
+    "errors": "thiserror",
+    "http": "ureq currently configured",
+    "package_manager": "Cargo",
+    "repo_url": "https://github.com/innuama-coder/image-retrieval.git",
+    "repo_branch": "main",
+    "verification_commands": [
+      "cargo fmt --all -- --check",
+      "cargo clippy --all-targets --all-features -- -D warnings",
+      "cargo test --all"
+    ]
+  },
+  "planning_harness_model": {
+    "target_type": "harness-workflow",
+    "quality_standard": "review-gated-branching-dag-planning",
+    "stages": [
+      "STAGE-001 overall planning",
+      "STAGE-002 independent task formation",
+      "STAGE-003 task logic and completeness review",
+      "STAGE-004 whole-plan integrity and dependency review"
+    ]
+  },
+  "phase_reports": [
+    {
+      "stage_id": "STAGE-001",
+      "stage_name": "Overall planning",
+      "purpose": "Extract v1.1 implementation obligations for image search plus artifact-backed retrieval from PRD/HLD/LLD and detailed designs.",
+      "inputs": [
+        "AGENTS.md",
+        "docs/v1.1/PRD.md",
+        "docs/v1.1/HLD.md",
+        "docs/v1.1/LLD.md",
+        "docs/design/v1.1-*",
+        "Cargo.toml",
+        "src/",
+        "tests/"
+      ],
+      "outputs": [
+        "Whole-plan outline for domain/config, SerpApi search, Qwen quality, artifact retrieval, full CLI/package flow, testing, acceptance"
+      ],
+      "review_checks": [
+        "scope",
+        "current phase",
+        "architecture",
+        "acceptance surface",
+        "release blockers"
+      ],
+      "status": "pass",
+      "blocking_findings": []
+    },
+    {
+      "stage_id": "STAGE-002",
+      "stage_name": "Independent task formation",
+      "purpose": "Decompose obligations into cohesive, independently acceptable development tasks.",
+      "inputs": [
+        "whole-plan outline",
+        "accepted LLD design DAG"
+      ],
+      "outputs": [
+        "TASK-001 through TASK-007 contracts"
+      ],
+      "review_checks": [
+        "cohesion",
+        "acceptance",
+        "dependencies",
+        "no hidden product facts"
+      ],
+      "status": "pass",
+      "blocking_findings": []
+    },
+    {
+      "stage_id": "STAGE-003",
+      "stage_name": "Task logic and completeness review",
+      "purpose": "Review every task for cohesion, completeness, acceptance, verification, stop conditions, and handoff value.",
+      "inputs": [
+        "TASK-001 through TASK-007 contracts"
+      ],
+      "outputs": [
+        "task_logic_review",
+        "cohesion_and_independent_acceptance_review"
+      ],
+      "review_checks": [
+        "source traceability",
+        "boundary clarity",
+        "verification sufficiency",
+        "handoff"
+      ],
+      "status": "pass",
+      "blocking_findings": []
+    },
+    {
+      "stage_id": "STAGE-004",
+      "stage_name": "Whole-plan integrity and dependency review",
+      "purpose": "Review DAG, reverse requirement coverage, execution order, parallel safety, and final delivery acceptance.",
+      "inputs": [
+        "task list",
+        "DAG edges",
+        "coverage matrices",
+        "delivery acceptance contract"
+      ],
+      "outputs": [
+        "plan_integrity_review",
+        "ready planning package"
+      ],
+      "review_checks": [
+        "FR/AC coverage",
+        "acyclic DAG",
+        "parallel safety",
+        "final acceptance"
+      ],
+      "status": "pass",
+      "blocking_findings": []
+    }
+  ],
+  "tasks": [
+    {
+      "task_id": "TASK-001",
+      "title": "QueryPlan config policy and shared domain foundation",
+      "task_type": "implementation",
+      "source_refs": [
+        "docs/v1.1/PRD.md",
+        "docs/v1.1/HLD.md",
+        "docs/v1.1/LLD.md",
+        "docs/design/v1.1-TASK-001-queryplan-config-policy-design.md"
+      ],
+      "inputs": [
+        "Current src/domain/query_plan.rs, src/domain/policy.rs, src/policy/mod.rs, src/error/mod.rs.",
+        "PRD FR-002/FR-003/FR-007/FR-011/FR-014 and AC-002/AC-003/AC-007/AC-011/AC-014/AC-016/AC-017."
+      ],
+      "expected_outputs": [
+        "src/domain/query_plan.rs",
+        "src/domain/config.rs",
+        "src/domain/policy.rs",
+        "src/domain/mod.rs",
+        "src/policy/mod.rs",
+        "src/error/mod.rs",
+        "tests/domain_baseline_test.rs"
+      ],
+      "impacted_areas": [
+        "src/domain/query_plan.rs",
+        "src/domain/config.rs",
+        "src/domain/policy.rs",
+        "src/domain/mod.rs",
+        "src/policy/mod.rs",
+        "src/error/mod.rs",
+        "tests/domain_baseline_test.rs"
+      ],
+      "allowed_scope": [
+        "Implement v1.1 QueryPlanInput and NormalizedQueryPlan with required_image_count canonical field and required_count alias.",
+        "Implement RuntimeConfig DTOs for providers, retrieval channels, Qwen 3.5 VLM, policy, output, quality defaults, and execution limits.",
+        "Implement defaults and invariants: count=1, quality=general, candidate_target=20N, retrieval_batch_target=2N, retry_limit=3, full_attempt_limit=4.",
+        "Implement policy narrowing, paid disabled by default, robots warn/block posture, redaction helpers, and machine-readable admission/config diagnostics."
+      ],
+      "forbidden_scope": [
+        "Do not call external search providers, retrieval channels, or Qwen 3.5 VLM.",
+        "Do not build delivery packages or implement CLI run orchestration.",
+        "Do not serialize resolved credentials, tokens, cookies, signed URLs, or private keys."
+      ],
+      "acceptance": [
+        "Valid QueryPlan/config input produces NormalizedQueryPlan and RuntimeConfig with package-safe diagnostics.",
+        "All target derivation and retry/full-attempt invariants are represented by typed data and tests.",
+        "Policy config cannot silently broaden QueryPlan policy and cannot enable paid retrieval without explicit config and QueryPlan allowance.",
+        "Redaction removes credential-like values from diagnostics and package-safe projections."
+      ],
+      "verification": [
+        "cargo fmt --all -- --check",
+        "cargo clippy --all-targets --all-features -- -D warnings",
+        "cargo test --test domain_baseline_test",
+        "cargo test --all"
+      ],
+      "stop_conditions": [
+        "Stop if a source-backed schema change would alter PRD/LLD public QueryPlan or RuntimeConfig semantics.",
+        "Stop if a requested implementation would require storing resolved secrets in public DTOs.",
+        "Stop if cargo is unavailable and record the blocked command and residual risk."
+      ],
+      "dependencies": [],
+      "handoff_requirements": [
+        "NormalizedQueryPlan, RuntimeConfig, policy/redaction helpers, failure codes, and tests are ready for search, quality, retrieval, and orchestrator tasks."
+      ],
+      "task_description_path": "tasks/development/v1.1/TASK-001/task.md",
+      "fixture_dir": "tasks/development/v1.1/TASK-001",
+      "prompt_path": "tasks/development/v1.1/TASK-001/PROMPT.md",
+      "agents_path": "tasks/development/v1.1/TASK-001/AGENTS.md",
+      "claude_path": "tasks/development/v1.1/TASK-001/CLAUDE.md",
+      "spec_path": "tasks/development/v1.1/TASK-001/spec.yaml"
+    },
+    {
+      "task_id": "TASK-002",
+      "title": "Search provider registry scheduler and SerpApi adapter",
+      "task_type": "implementation",
+      "source_refs": [
+        "docs/v1.1/PRD.md",
+        "docs/v1.1/HLD.md",
+        "docs/v1.1/LLD.md",
+        "docs/design/v1.1-TASK-002-search-provider-candidate-design.md"
+      ],
+      "inputs": [
+        "TASK-001 NormalizedQueryPlan, RuntimeConfig.providers, redaction helpers, and provider policy.",
+        "Current src/search, src/domain/search.rs, src/domain/candidate.rs, and src/ports/mod.rs."
+      ],
+      "expected_outputs": [
+        "src/ports/mod.rs",
+        "src/domain/search.rs",
+        "src/domain/candidate.rs",
+        "src/search",
+        "tests/search_integration_test.rs"
+      ],
+      "impacted_areas": [
+        "src/search",
+        "src/domain/search.rs",
+        "src/domain/candidate.rs",
+        "src/ports/mod.rs",
+        "tests/search_integration_test.rs"
+      ],
+      "allowed_scope": [
+        "Introduce or migrate to BaseSearchProvider with readiness, supported constraints, structured SearchRequest, and SearchResponse.",
+        "Implement provider registry from RuntimeConfig.providers with readiness reports and effective weighted scheduling.",
+        "Implement default serpapi_google_images adapter using endpoint https://serpapi.com/search, engine=google_images, and SERPAPI_API_KEY or configured credential env var.",
+        "Normalize SerpApi image_results[] into CandidateRecord with image URL, source page, thumbnail, rank, dimensions, MIME/license hints, provenance, dedupe key, and origin IDs.",
+        "Preserve deterministic RandomSource for scheduler tests and mark fixtures as fixture-only."
+      ],
+      "forbidden_scope": [
+        "Do not retrieve images or mark candidates as accepted for delivery.",
+        "Do not perform candidate mechanical or VLM subjective evaluation.",
+        "Do not hard-code credentials or serialize resolved SERPAPI_API_KEY values.",
+        "Do not let fixture providers satisfy production readiness or production package evidence."
+      ],
+      "acceptance": [
+        "At least one ready real provider can be scheduled when configured; missing SerpApi credentials produce PROVIDER_CREDENTIAL_MISSING readiness evidence.",
+        "SerpApi image_results[] fixtures normalize into package-safe CandidateRecord values with provenance and dedupe evidence.",
+        "Weighted scheduling preserves provider id, search round, rank, usage events, and shortage diagnostics.",
+        "Search output is ready for TASK-003 and image-recalls.json without leaking secrets."
+      ],
+      "verification": [
+        "cargo fmt --all -- --check",
+        "cargo clippy --all-targets --all-features -- -D warnings",
+        "cargo test --test search_integration_test",
+        "cargo test --all"
+      ],
+      "stop_conditions": [
+        "Stop if SerpApi response fields cannot be mapped without fabricating required candidate facts.",
+        "Stop if provider credential handling would leak resolved secrets into public DTOs, logs, or package evidence.",
+        "Stop if TASK-001 config/domain contracts are missing or incompatible."
+      ],
+      "dependencies": [
+        "TASK-001"
+      ],
+      "handoff_requirements": [
+        "SearchSessionOutcome, ProviderReadinessReport, normalized CandidateRecord, dedupe/usage diagnostics, and SerpApi adapter tests are ready for quality and orchestration."
+      ],
+      "task_description_path": "tasks/development/v1.1/TASK-002/task.md",
+      "fixture_dir": "tasks/development/v1.1/TASK-002",
+      "prompt_path": "tasks/development/v1.1/TASK-002/PROMPT.md",
+      "agents_path": "tasks/development/v1.1/TASK-002/AGENTS.md",
+      "claude_path": "tasks/development/v1.1/TASK-002/CLAUDE.md",
+      "spec_path": "tasks/development/v1.1/TASK-002/spec.yaml"
+    },
+    {
+      "task_id": "TASK-003",
+      "title": "Candidate and image quality with Qwen 3.5 VLM adapter",
+      "task_type": "implementation",
+      "source_refs": [
+        "docs/v1.1/PRD.md",
+        "docs/v1.1/HLD.md",
+        "docs/v1.1/LLD.md",
+        "docs/design/v1.1-TASK-003-quality-vlm-design.md"
+      ],
+      "inputs": [
+        "TASK-001 quality, policy, VlmEvaluationConfig, and redaction contracts.",
+        "TASK-002 SearchSessionOutcome and expanded CandidateRecord values.",
+        "Current src/quality, src/domain/image.rs, and VlmEvaluationPort."
+      ],
+      "expected_outputs": [
+        "src/quality",
+        "src/domain/image.rs",
+        "src/domain/metrics.rs",
+        "src/ports/mod.rs",
+        "tests/candidate_quality_test.rs"
+      ],
+      "impacted_areas": [
+        "src/quality",
+        "src/domain/image.rs",
+        "src/domain/metrics.rs",
+        "src/ports/mod.rs",
+        "tests/candidate_quality_test.rs"
+      ],
+      "allowed_scope": [
+        "Implement typed mechanical blocking/reference metric facts for candidates and retrieved images.",
+        "Upgrade VlmEvaluationPort with readiness, evaluate_candidates, and evaluate_images structured DTOs.",
+        "Implement direct qwen_3_5_vlm adapter boundary using QWEN_API_TOKEN by default, runtime endpoint/base URL, model, timeout, and prompt templates.",
+        "Implement candidate decisions so only mechanical pass plus Qwen approve enters RetrievableCandidateBatch.",
+        "Implement the post-retrieval image acceptance API and decision logic over a stable artifact-evidence input DTO; TASK-005 invokes it after TASK-004 produces RetrievalBatchResult.",
+        "Keep fixture evaluator explicitly test-only and blocked in production."
+      ],
+      "forbidden_scope": [
+        "Do not implement retrieval execution or artifact creation.",
+        "Do not treat mock/fixture VLM decisions as production acceptance.",
+        "Do not hard-code Qwen endpoint, model override, or token value.",
+        "Do not store raw Qwen credentials, raw unrestricted transcripts, or secret-bearing URLs."
+      ],
+      "acceptance": [
+        "Candidate quality rejects mechanically blocked candidates before VLM and sends only mechanically passed candidates to Qwen in production.",
+        "Qwen unavailable, disabled, invalid response, missing decision, timeout, or fixture-in-production produces execution-blocked evidence.",
+        "Image acceptance API tests reject missing local/source artifact, sidecar, summary, task report, visual description, checksum, media mismatch, metadata-only, and ownership mismatch before VLM using fixture artifact-evidence inputs.",
+        "Quality outputs preserve trace links and expose candidate gates plus image acceptance API contracts for retrieval planning, orchestrator invocation, package review, and validation."
+      ],
+      "verification": [
+        "cargo fmt --all -- --check",
+        "cargo clippy --all-targets --all-features -- -D warnings",
+        "cargo test --test candidate_quality_test",
+        "cargo test --all"
+      ],
+      "stop_conditions": [
+        "Stop if Qwen API contract cannot be represented by the VlmEvaluationPort without inventing unsupported fields.",
+        "Stop if TASK-002 candidate fields or TASK-001 VLM config are missing.",
+        "Stop if implementation would require serializing QWEN_API_TOKEN or other resolved secrets."
+      ],
+      "dependencies": [
+        "TASK-001",
+        "TASK-002"
+      ],
+      "handoff_requirements": [
+        "CandidateQualityOutcome, RetrievableCandidateBatch, image acceptance API/decision types, VLM readiness reports, and quality diagnostics are ready for retrieval and orchestrator integration."
+      ],
+      "task_description_path": "tasks/development/v1.1/TASK-003/task.md",
+      "fixture_dir": "tasks/development/v1.1/TASK-003",
+      "prompt_path": "tasks/development/v1.1/TASK-003/PROMPT.md",
+      "agents_path": "tasks/development/v1.1/TASK-003/AGENTS.md",
+      "claude_path": "tasks/development/v1.1/TASK-003/CLAUDE.md",
+      "spec_path": "tasks/development/v1.1/TASK-003/spec.yaml"
+    },
+    {
+      "task_id": "TASK-004",
+      "title": "Artifact backed retrieval channels and fallback execution",
+      "task_type": "implementation",
+      "source_refs": [
+        "docs/v1.1/PRD.md",
+        "docs/v1.1/HLD.md",
+        "docs/v1.1/LLD.md",
+        "docs/design/v1.1-TASK-004-retrieval-artifact-channel-design.md"
+      ],
+      "inputs": [
+        "TASK-001 retrieval policy, RuntimeConfig.retrieval_channels, redaction helpers, and retrieval_batch_target.",
+        "TASK-003 RetrievableCandidateBatch containing only candidates approved by mechanical and Qwen candidate gates.",
+        "Current src/retrieval, src/domain/retrieval.rs, and BaseRetrievalChannel."
+      ],
+      "expected_outputs": [
+        "src/retrieval",
+        "src/domain/retrieval.rs",
+        "src/ports/mod.rs",
+        "tests/retrieval_test.rs"
+      ],
+      "impacted_areas": [
+        "src/retrieval",
+        "src/domain/retrieval.rs",
+        "src/ports/mod.rs",
+        "tests/retrieval_test.rs"
+      ],
+      "allowed_scope": [
+        "Implement RetrievalJob, RetrievalBatch, RetrievalArtifactResult, RetrievalBatchResult, attempt traces, fallback decisions, diagnostics, and channel readiness reports.",
+        "Migrate BaseRetrievalChannel to structured readiness and retrieve_batch returning RetrievalBatchResult.",
+        "Plan retrieval only from TASK-003 retrievable candidates and use retrieval_batch_target = required_image_count * 2.",
+        "Implement normal_web_fetch.direct_image_fetch and normal_web_fetch.source_page_resolve as separate attempt modes.",
+        "Generate local artifact, source artifact, source sidecar, content summary, task report, visual description, checksum, content-type evidence, dimensions, diagnostics, and fetch trace for complete results.",
+        "Implement self-hosted and paid channel boundaries/readiness; paid stays disabled unless runtime config and QueryPlan allow it."
+      ],
+      "forbidden_scope": [
+        "Do not retrieve candidates that failed candidate mechanical or Qwen candidate gates.",
+        "Do not mark an image as delivered or semantically accepted.",
+        "Do not accept metadata-only, thumbnail-only, source-page-only, summary-only, sidecar-only, or task-report-only results as complete.",
+        "Do not bypass access restriction, robots blocker, prohibited source, login/paywall restriction, or paid-unconfirmed policy.",
+        "Do not let fixture retrieval satisfy production evidence."
+      ],
+      "acceptance": [
+        "Every RetrievalStatus::Complete result has all artifact paths, checksum, content type, dimensions or diagnostic, media match, ownership, and trace evidence.",
+        "Fallback order is direct image fetch, source-page resolve, self-hosted service, paid online service, with policy blockers recorded.",
+        "Metadata-only and remote-only service responses are rejected, not accepted as image retrieval success.",
+        "Retrieval output is ready for TASK-005 to invoke the TASK-003 image acceptance API and then build/package validated delivery results."
+      ],
+      "verification": [
+        "cargo fmt --all -- --check",
+        "cargo clippy --all-targets --all-features -- -D warnings",
+        "cargo test --test retrieval_test",
+        "cargo test --all"
+      ],
+      "stop_conditions": [
+        "Stop if TASK-003 retrievable candidate contract is missing or bypassed.",
+        "Stop if policy decisions are required to run paid, login, paywalled, robots-blocked, or authorization-sensitive retrieval.",
+        "Stop if normal web fetch cannot produce complete local artifact evidence without expanding product scope."
+      ],
+      "dependencies": [
+        "TASK-001",
+        "TASK-003"
+      ],
+      "handoff_requirements": [
+        "RetrievalBatchResult and artifact evidence are ready for image acceptance, canonical package building, validation, and real-service smoke."
+      ],
+      "task_description_path": "tasks/development/v1.1/TASK-004/task.md",
+      "fixture_dir": "tasks/development/v1.1/TASK-004",
+      "prompt_path": "tasks/development/v1.1/TASK-004/PROMPT.md",
+      "agents_path": "tasks/development/v1.1/TASK-004/AGENTS.md",
+      "claude_path": "tasks/development/v1.1/TASK-004/CLAUDE.md",
+      "spec_path": "tasks/development/v1.1/TASK-004/spec.yaml"
+    },
+    {
+      "task_id": "TASK-005",
+      "title": "Full run orchestrator canonical package validation and CLI",
+      "task_type": "implementation",
+      "source_refs": [
+        "docs/v1.1/PRD.md",
+        "docs/v1.1/HLD.md",
+        "docs/v1.1/LLD.md",
+        "docs/design/v1.1-TASK-005-orchestrator-package-validation-cli-design.md"
+      ],
+      "inputs": [
+        "TASK-001 NormalizedQueryPlan, RuntimeConfig, policy, retry counters.",
+        "TASK-002 SearchSessionOutcome and provider readiness.",
+        "TASK-003 CandidateQualityOutcome plus image acceptance API/decision types.",
+        "TASK-004 RetrievalBatchResult and artifact evidence."
+      ],
+      "expected_outputs": [
+        "src/main.rs",
+        "src/orchestrator",
+        "src/delivery",
+        "src/self_check",
+        "src/validation",
+        "src/domain/delivery.rs",
+        "tests/e2e_fixture_test.rs"
+      ],
+      "impacted_areas": [
+        "src/main.rs",
+        "src/orchestrator",
+        "src/delivery",
+        "src/self_check",
+        "src/validation",
+        "src/domain/delivery.rs",
+        "tests/e2e_fixture_test.rs"
+      ],
+      "allowed_scope": [
+        "Replace MVP run path with full workflow: admission, readiness, search, candidate quality, retrieval, image acceptance, package build, validation, review, and handoff.",
+        "Implement RunState, attempt records, retry invariants, accepted-image carry-forward, retry exhaustion, passed/partial/blocked status.",
+        "Build canonical package files and directories: image-recalls.json, retrieved-images.json, coverage-report.json, retrieval-manifest.json, package-summary.json, delivery-report.json, validation.json, review.json, handoff-report.json, images, evidence, diagnostics.",
+        "Implement PackageValidator and CLI validate-package; implement read-only inspect-package if practical for v1.1.",
+        "Upgrade self-check to report search, retrieval, Qwen 3.5 VLM, policy, output, credential, validator, and release blocker readiness.",
+        "Implement deterministic exit codes and JSON/human CLI output without secret leaks."
+      ],
+      "forbidden_scope": [
+        "Do not redesign provider, Qwen, or retrieval internals owned by upstream tasks.",
+        "Do not mark production packages passed with fixture provider/channel/VLM evidence.",
+        "Do not deliver metadata-only, thumbnail-only, source-page-only, sidecar-only, summary-only, or task-report-only items.",
+        "Do not silently enable paid retrieval or bypass robots/authorization policy."
+      ],
+      "acceptance": [
+        "image-retrieval run executes the full search + quality + retrieval + image acceptance + package + validation flow and no longer stops at planning output.",
+        "Package status is passed only when accepted images reach required count and validator passes; partial and blocked are evidence-backed.",
+        "validate-package reproduces deterministic validation failure codes for missing artifact, checksum, metadata-only delivery, retry mismatch, broken links, fixture production pass, and secret leaks.",
+        "self-check accurately reports readiness and blockers for SerpApi, artifact retrieval, Qwen 3.5 VLM, policy, output, and validator."
+      ],
+      "verification": [
+        "cargo fmt --all -- --check",
+        "cargo clippy --all-targets --all-features -- -D warnings",
+        "cargo test --test e2e_fixture_test",
+        "cargo test --all"
+      ],
+      "stop_conditions": [
+        "Stop if any upstream task contract is missing or incompatible.",
+        "Stop if package validation cannot prove delivered images are local artifact-backed images.",
+        "Stop if CLI behavior would need undocumented product decisions."
+      ],
+      "dependencies": [
+        "TASK-001",
+        "TASK-002",
+        "TASK-003",
+        "TASK-004"
+      ],
+      "handoff_requirements": [
+        "A fixture-capable full CLI workflow and canonical package validator are ready for testing and real-service smoke harness."
+      ],
+      "task_description_path": "tasks/development/v1.1/TASK-005/task.md",
+      "fixture_dir": "tasks/development/v1.1/TASK-005",
+      "prompt_path": "tasks/development/v1.1/TASK-005/PROMPT.md",
+      "agents_path": "tasks/development/v1.1/TASK-005/AGENTS.md",
+      "claude_path": "tasks/development/v1.1/TASK-005/CLAUDE.md",
+      "spec_path": "tasks/development/v1.1/TASK-005/spec.yaml"
+    },
+    {
+      "task_id": "TASK-006",
+      "title": "Local test suite and real service smoke evidence",
+      "task_type": "testing",
+      "source_refs": [
+        "docs/v1.1/PRD.md",
+        "docs/v1.1/LLD.md",
+        "docs/design/v1.1-TASK-006-testing-real-service-acceptance-design.md",
+        "RELEASE_GATES.md"
+      ],
+      "inputs": [
+        "TASK-001 through TASK-005 implementation outputs.",
+        "Existing tests and fixture strategy."
+      ],
+      "expected_outputs": [
+        "tests",
+        "tests/fixtures/v1_1",
+        "tasks/development/v1.1/testing-report.md",
+        "tasks/development/v1.1/real-service-smoke-report.json"
+      ],
+      "impacted_areas": [
+        "tests",
+        "tests/fixtures/v1_1",
+        "tasks/development/v1.1/testing-report.md",
+        "tasks/development/v1.1/real-service-smoke-report.json"
+      ],
+      "allowed_scope": [
+        "Migrate and extend deterministic unit, integration, fixture E2E, package validation, CLI golden, and security tests for AC-001 through AC-019.",
+        "Add fixture configs, QueryPlans, provider responses, retrieval artifacts, package fixtures, and golden outputs under tests/fixtures/v1_1.",
+        "Add real-service smoke harness gated by IMAGE_RETRIEVAL_REAL_SMOKE=1 and configured env paths/credentials.",
+        "Emit blocked/skipped real-service evidence when credentials, Qwen endpoint, policy decisions, or release gates are absent; blocked/skipped smoke evidence is diagnostic only and cannot satisfy the expected-target completion claim.",
+        "Run and report cargo fmt, cargo clippy, cargo test, and smoke commands when available."
+      ],
+      "forbidden_scope": [
+        "Do not add credentials or example secret values.",
+        "Do not mark fixture evidence, skipped smoke, or blocked real-service gates as production acceptance.",
+        "Do not change product behavior beyond narrow bug fixes needed to make tests reflect source-backed contracts.",
+        "Do not claim commands passed unless they actually ran in this task execution cycle."
+      ],
+      "acceptance": [
+        "Every PRD AC-001 through AC-019 has test or acceptance evidence mapped in the testing report.",
+        "Fixture E2E proves passed, partial, blocked, missing artifact, metadata-only, paid-unconfirmed, access-restricted, secret leak, and production-fixture rejection paths.",
+        "Real-service smoke proves SerpApi search, non-fixture artifact retrieval, Qwen candidate/image evaluation, accepted image, validated package, and secret scan when prerequisites are present.",
+        "When prerequisites are absent, smoke emits machine-readable blocked/skipped evidence and explicitly marks full expected-target completion as not proven."
+      ],
+      "verification": [
+        "cargo fmt --all -- --check",
+        "cargo clippy --all-targets --all-features -- -D warnings",
+        "cargo test --all",
+        "image-retrieval self-check --config \"$IMAGE_RETRIEVAL_CONFIG\" --query-plan \"$IMAGE_RETRIEVAL_QUERY_PLAN\" --format json",
+        "image-retrieval run --query-plan \"$IMAGE_RETRIEVAL_QUERY_PLAN\" --config \"$IMAGE_RETRIEVAL_CONFIG\" --output-dir \"$IMAGE_RETRIEVAL_OUTPUT_DIR\" --mode production --format json",
+        "image-retrieval validate-package --package-dir \"$IMAGE_RETRIEVAL_OUTPUT_DIR/package\" --format json"
+      ],
+      "stop_conditions": [
+        "Stop and record blocked evidence if cargo is unavailable.",
+        "Stop real-service smoke and write blocked/skipped report if IMAGE_RETRIEVAL_REAL_SMOKE is not set or required credentials/endpoints/policy decisions are absent.",
+        "Stop if tests reveal a source/design contradiction requiring PRD/HLD/LLD update."
+      ],
+      "dependencies": [
+        "TASK-005"
+      ],
+      "handoff_requirements": [
+        "Testing report, verification logs or blocked-command records, fixture packages, and real-service smoke report are ready for final acceptance; the handoff must clearly state whether real SerpApi + retrieval + Qwen evidence proved the expected target."
+      ],
+      "task_description_path": "tasks/development/v1.1/TASK-006/task.md",
+      "fixture_dir": "tasks/development/v1.1/TASK-006",
+      "prompt_path": "tasks/development/v1.1/TASK-006/PROMPT.md",
+      "agents_path": "tasks/development/v1.1/TASK-006/AGENTS.md",
+      "claude_path": "tasks/development/v1.1/TASK-006/CLAUDE.md",
+      "spec_path": "tasks/development/v1.1/TASK-006/spec.yaml"
+    },
+    {
+      "task_id": "TASK-007",
+      "title": "Final v1.1 delivery acceptance",
+      "task_type": "delivery_acceptance",
+      "source_refs": [
+        "docs/v1.1/PRD.md",
+        "docs/v1.1/HLD.md",
+        "docs/v1.1/LLD.md",
+        "docs/design/v1.1-TASK-007-detailed-design-acceptance-review.md",
+        "tasks/development/v1.1/development-planning.json"
+      ],
+      "inputs": [
+        "All non-deferred TASK-001 through TASK-006 outputs, handoffs, verification logs, package evidence, testing report, real-service smoke report, and release-gate status."
+      ],
+      "expected_outputs": [
+        "tasks/development/v1.1/acceptance-report.md"
+      ],
+      "impacted_areas": [
+        "tasks/development/v1.1/acceptance-report.md"
+      ],
+      "allowed_scope": [
+        "Review all task outputs against PRD/HLD/LLD and this development plan.",
+        "Verify requirement coverage, DAG completion, package output, local verification evidence, real-service smoke evidence, blockers, explicit release-waived notes that do not claim accepted completion, and no-new-scope compliance.",
+        "Write a final acceptance report with accepted, blocked, or rejected verdict. Only accepted means the v1.1 expected target is proven.",
+        "Record constrained defect findings discovered during acceptance; only fix documentation typos in the acceptance report itself."
+      ],
+      "forbidden_scope": [
+        "Do not add new product scope, provider behavior, retrieval behavior, or tests except acceptance-report documentation.",
+        "Do not mark accepted when SerpApi, retrieval artifact, Qwen, package validation, or real-service smoke evidence is missing. A waiver may only produce blocked/release-waived language, not accepted completion.",
+        "Do not claim cargo or smoke commands passed unless evidence from TASK-006 exists."
+      ],
+      "acceptance": [
+        "Acceptance report covers every FR/AC and states pass/fail/blocked/waived evidence.",
+        "Final verdict is blocked or rejected when required task output, verification, package validation, or real-service smoke evidence is missing; waiver language must not convert missing expected-target evidence into accepted completion.",
+        "Final verdict confirms image search + artifact-backed retrieval + Qwen acceptance + canonical package when accepted.",
+        "Unresolved paid, robots/site-rule, authorization, quality calibration, or environment blockers are recorded with explicit handling."
+      ],
+      "verification": [
+        "Review tasks/development/v1.1/development-planning.json",
+        "Review all TASK-001..TASK-006 handoffs",
+        "Review TASK-006 verification logs and smoke reports",
+        "Review generated package with validate-package evidence",
+        "Review requirement_coverage_matrix and release gates",
+        "Verify acceptance-report.md content includes verdict, evidence, SerpApi, retrieval, Qwen, package, and real-service evidence status"
+      ],
+      "stop_conditions": [
+        "Stop and reject acceptance if any non-deferred task evidence is missing.",
+        "Stop and reject or require blocked/release-waived handling if real-service smoke is blocked and the release still claims full expected-target completion.",
+        "Stop if requirement coverage cannot be traced to implementation evidence."
+      ],
+      "dependencies": [
+        "TASK-001",
+        "TASK-002",
+        "TASK-003",
+        "TASK-004",
+        "TASK-005",
+        "TASK-006"
+      ],
+      "handoff_requirements": [
+        "Final acceptance report gives the next user or release owner a clear pass/fail verdict, evidence index, and remaining blockers."
+      ],
+      "task_description_path": "tasks/development/v1.1/TASK-007/task.md",
+      "fixture_dir": "tasks/development/v1.1/TASK-007",
+      "prompt_path": "tasks/development/v1.1/TASK-007/PROMPT.md",
+      "agents_path": "tasks/development/v1.1/TASK-007/AGENTS.md",
+      "claude_path": "tasks/development/v1.1/TASK-007/CLAUDE.md",
+      "spec_path": "tasks/development/v1.1/TASK-007/spec.yaml"
+    }
+  ],
+  "dag": {
+    "nodes": [
+      "TASK-001",
+      "TASK-002",
+      "TASK-003",
+      "TASK-004",
+      "TASK-005",
+      "TASK-006",
+      "TASK-007"
+    ],
+    "edges": [
+      {
+        "from": "TASK-001",
+        "to": "TASK-002",
+        "reason": "Search provider work consumes NormalizedQueryPlan, RuntimeConfig.providers, policy, and redaction helpers.",
+        "consumed_output": "NormalizedQueryPlan and RuntimeConfig.providers",
+        "source_refs": [
+          "docs/design/v1.1-TASK-001-queryplan-config-policy-design.md",
+          "docs/design/v1.1-TASK-002-search-provider-candidate-design.md"
+        ]
+      },
+      {
+        "from": "TASK-001",
+        "to": "TASK-003",
+        "reason": "Quality work consumes QualityRequirements, VlmEvaluationConfig, policy, and redaction helpers.",
+        "consumed_output": "QualityRequirements, VlmEvaluationConfig, policy config, redaction helpers",
+        "source_refs": [
+          "docs/design/v1.1-TASK-001-queryplan-config-policy-design.md",
+          "docs/design/v1.1-TASK-003-quality-vlm-design.md"
+        ]
+      },
+      {
+        "from": "TASK-002",
+        "to": "TASK-003",
+        "reason": "Candidate quality consumes normalized search candidates and provider provenance.",
+        "consumed_output": "SearchSessionOutcome and CandidateRecord",
+        "source_refs": [
+          "docs/design/v1.1-TASK-002-search-provider-candidate-design.md",
+          "docs/design/v1.1-TASK-003-quality-vlm-design.md"
+        ]
+      },
+      {
+        "from": "TASK-001",
+        "to": "TASK-004",
+        "reason": "Retrieval consumes retrieval policy, channel config, redaction, and retrieval_batch_target.",
+        "consumed_output": "RetrievalPolicy, RuntimeConfig.retrieval_channels, retrieval_batch_target",
+        "source_refs": [
+          "docs/design/v1.1-TASK-001-queryplan-config-policy-design.md",
+          "docs/design/v1.1-TASK-004-retrieval-artifact-channel-design.md"
+        ]
+      },
+      {
+        "from": "TASK-003",
+        "to": "TASK-004",
+        "reason": "Retrieval must plan only from candidates accepted by mechanical and Qwen candidate quality gates.",
+        "consumed_output": "RetrievableCandidateBatch with approved candidates and rejected decision evidence",
+        "source_refs": [
+          "docs/design/v1.1-TASK-003-quality-vlm-design.md",
+          "docs/design/v1.1-TASK-004-retrieval-artifact-channel-design.md"
+        ]
+      },
+      {
+        "from": "TASK-001",
+        "to": "TASK-005",
+        "reason": "Orchestrator consumes admitted query plan, runtime config, policy, and retry invariants.",
+        "consumed_output": "NormalizedQueryPlan, RuntimeConfig, AttemptCounterState",
+        "source_refs": [
+          "docs/design/v1.1-TASK-001-queryplan-config-policy-design.md",
+          "docs/design/v1.1-TASK-005-orchestrator-package-validation-cli-design.md"
+        ]
+      },
+      {
+        "from": "TASK-002",
+        "to": "TASK-005",
+        "reason": "Orchestrator calls search and packages image recall evidence.",
+        "consumed_output": "SearchSessionOutcome and provider readiness evidence",
+        "source_refs": [
+          "docs/design/v1.1-TASK-002-search-provider-candidate-design.md",
+          "docs/design/v1.1-TASK-005-orchestrator-package-validation-cli-design.md"
+        ]
+      },
+      {
+        "from": "TASK-003",
+        "to": "TASK-005",
+        "reason": "Orchestrator calls candidate/image quality and packages VLM decisions.",
+        "consumed_output": "CandidateQualityOutcome plus image acceptance API/decision types",
+        "source_refs": [
+          "docs/design/v1.1-TASK-003-quality-vlm-design.md",
+          "docs/design/v1.1-TASK-005-orchestrator-package-validation-cli-design.md"
+        ]
+      },
+      {
+        "from": "TASK-004",
+        "to": "TASK-005",
+        "reason": "Orchestrator consumes retrieval artifacts for package and validation.",
+        "consumed_output": "RetrievalBatchResult and RetrievalArtifactResult",
+        "source_refs": [
+          "docs/design/v1.1-TASK-004-retrieval-artifact-channel-design.md",
+          "docs/design/v1.1-TASK-005-orchestrator-package-validation-cli-design.md"
+        ]
+      },
+      {
+        "from": "TASK-005",
+        "to": "TASK-006",
+        "reason": "Testing requires the complete CLI workflow, package builder, validator, and self-check.",
+        "consumed_output": "Full run CLI, canonical package, package validator, self-check",
+        "source_refs": [
+          "docs/design/v1.1-TASK-005-orchestrator-package-validation-cli-design.md",
+          "docs/design/v1.1-TASK-006-testing-real-service-acceptance-design.md"
+        ]
+      },
+      {
+        "from": "TASK-001",
+        "to": "TASK-007",
+        "reason": "Final acceptance depends on all implementation task evidence.",
+        "consumed_output": "TASK-001 handoff and verification evidence",
+        "source_refs": [
+          "docs/v1.1/LLD.md"
+        ]
+      },
+      {
+        "from": "TASK-002",
+        "to": "TASK-007",
+        "reason": "Final acceptance depends on all implementation task evidence.",
+        "consumed_output": "TASK-002 handoff and verification evidence",
+        "source_refs": [
+          "docs/v1.1/LLD.md"
+        ]
+      },
+      {
+        "from": "TASK-003",
+        "to": "TASK-007",
+        "reason": "Final acceptance depends on all implementation task evidence.",
+        "consumed_output": "TASK-003 handoff and verification evidence",
+        "source_refs": [
+          "docs/v1.1/LLD.md"
+        ]
+      },
+      {
+        "from": "TASK-004",
+        "to": "TASK-007",
+        "reason": "Final acceptance depends on all implementation task evidence.",
+        "consumed_output": "TASK-004 handoff and verification evidence",
+        "source_refs": [
+          "docs/v1.1/LLD.md"
+        ]
+      },
+      {
+        "from": "TASK-005",
+        "to": "TASK-007",
+        "reason": "Final acceptance depends on full workflow and package evidence.",
+        "consumed_output": "TASK-005 handoff and package evidence",
+        "source_refs": [
+          "docs/v1.1/LLD.md"
+        ]
+      },
+      {
+        "from": "TASK-006",
+        "to": "TASK-007",
+        "reason": "Final acceptance consumes testing and smoke evidence.",
+        "consumed_output": "Testing report, verification logs, real-service smoke report",
+        "source_refs": [
+          "docs/design/v1.1-TASK-006-testing-real-service-acceptance-design.md"
+        ]
+      }
+    ],
+    "parallel_groups": [],
+    "execution_order": [
+      "TASK-001",
+      "TASK-002",
+      "TASK-003",
+      "TASK-004",
+      "TASK-005",
+      "TASK-006",
+      "TASK-007"
+    ],
+    "cycle_check": {
+      "status": "pass",
+      "cycles": []
+    }
+  },
+  "task_descriptions": [
+    {
+      "task_id": "TASK-001",
+      "path": "tasks/development/v1.1/TASK-001/task.md",
+      "status": "ready"
+    },
+    {
+      "task_id": "TASK-002",
+      "path": "tasks/development/v1.1/TASK-002/task.md",
+      "status": "ready"
+    },
+    {
+      "task_id": "TASK-003",
+      "path": "tasks/development/v1.1/TASK-003/task.md",
+      "status": "ready"
+    },
+    {
+      "task_id": "TASK-004",
+      "path": "tasks/development/v1.1/TASK-004/task.md",
+      "status": "ready"
+    },
+    {
+      "task_id": "TASK-005",
+      "path": "tasks/development/v1.1/TASK-005/task.md",
+      "status": "ready"
+    },
+    {
+      "task_id": "TASK-006",
+      "path": "tasks/development/v1.1/TASK-006/task.md",
+      "status": "ready"
+    },
+    {
+      "task_id": "TASK-007",
+      "path": "tasks/development/v1.1/TASK-007/task.md",
+      "status": "ready"
+    }
+  ],
+  "fixtures": [
+    {
+      "task_id": "TASK-001",
+      "fixture_dir": "tasks/development/v1.1/TASK-001",
+      "files": [
+        "tasks/development/v1.1/TASK-001/PROMPT.md",
+        "tasks/development/v1.1/TASK-001/AGENTS.md",
+        "tasks/development/v1.1/TASK-001/CLAUDE.md",
+        "tasks/development/v1.1/TASK-001/spec.yaml"
+      ],
+      "status": "ready",
+      "package_type": "multi_task_subtask",
+      "relationship_doc_path": "tasks/development/v1.1/TASKS.md"
+    },
+    {
+      "task_id": "TASK-002",
+      "fixture_dir": "tasks/development/v1.1/TASK-002",
+      "files": [
+        "tasks/development/v1.1/TASK-002/PROMPT.md",
+        "tasks/development/v1.1/TASK-002/AGENTS.md",
+        "tasks/development/v1.1/TASK-002/CLAUDE.md",
+        "tasks/development/v1.1/TASK-002/spec.yaml"
+      ],
+      "status": "ready",
+      "package_type": "multi_task_subtask",
+      "relationship_doc_path": "tasks/development/v1.1/TASKS.md"
+    },
+    {
+      "task_id": "TASK-003",
+      "fixture_dir": "tasks/development/v1.1/TASK-003",
+      "files": [
+        "tasks/development/v1.1/TASK-003/PROMPT.md",
+        "tasks/development/v1.1/TASK-003/AGENTS.md",
+        "tasks/development/v1.1/TASK-003/CLAUDE.md",
+        "tasks/development/v1.1/TASK-003/spec.yaml"
+      ],
+      "status": "ready",
+      "package_type": "multi_task_subtask",
+      "relationship_doc_path": "tasks/development/v1.1/TASKS.md"
+    },
+    {
+      "task_id": "TASK-004",
+      "fixture_dir": "tasks/development/v1.1/TASK-004",
+      "files": [
+        "tasks/development/v1.1/TASK-004/PROMPT.md",
+        "tasks/development/v1.1/TASK-004/AGENTS.md",
+        "tasks/development/v1.1/TASK-004/CLAUDE.md",
+        "tasks/development/v1.1/TASK-004/spec.yaml"
+      ],
+      "status": "ready",
+      "package_type": "multi_task_subtask",
+      "relationship_doc_path": "tasks/development/v1.1/TASKS.md"
+    },
+    {
+      "task_id": "TASK-005",
+      "fixture_dir": "tasks/development/v1.1/TASK-005",
+      "files": [
+        "tasks/development/v1.1/TASK-005/PROMPT.md",
+        "tasks/development/v1.1/TASK-005/AGENTS.md",
+        "tasks/development/v1.1/TASK-005/CLAUDE.md",
+        "tasks/development/v1.1/TASK-005/spec.yaml"
+      ],
+      "status": "ready",
+      "package_type": "multi_task_subtask",
+      "relationship_doc_path": "tasks/development/v1.1/TASKS.md"
+    },
+    {
+      "task_id": "TASK-006",
+      "fixture_dir": "tasks/development/v1.1/TASK-006",
+      "files": [
+        "tasks/development/v1.1/TASK-006/PROMPT.md",
+        "tasks/development/v1.1/TASK-006/AGENTS.md",
+        "tasks/development/v1.1/TASK-006/CLAUDE.md",
+        "tasks/development/v1.1/TASK-006/spec.yaml"
+      ],
+      "status": "ready",
+      "package_type": "multi_task_subtask",
+      "relationship_doc_path": "tasks/development/v1.1/TASKS.md"
+    },
+    {
+      "task_id": "TASK-007",
+      "fixture_dir": "tasks/development/v1.1/TASK-007",
+      "files": [
+        "tasks/development/v1.1/TASK-007/PROMPT.md",
+        "tasks/development/v1.1/TASK-007/AGENTS.md",
+        "tasks/development/v1.1/TASK-007/CLAUDE.md",
+        "tasks/development/v1.1/TASK-007/spec.yaml"
+      ],
+      "status": "ready",
+      "package_type": "multi_task_subtask",
+      "relationship_doc_path": "tasks/development/v1.1/TASKS.md"
+    }
+  ],
+  "coverage_matrix": [
+    {
+      "source_area": "QueryPlan/config/policy and retry targets",
+      "covered_by_tasks": [
+        "TASK-001"
+      ],
+      "verification": [
+        "domain/query_plan/config tests"
+      ],
+      "evidence": [
+        "NormalizedQueryPlan and RuntimeConfig DTOs"
+      ]
+    },
+    {
+      "source_area": "Image search capability with SerpApi default provider",
+      "covered_by_tasks": [
+        "TASK-002"
+      ],
+      "verification": [
+        "search integration tests and SerpApi fixture normalization"
+      ],
+      "evidence": [
+        "SearchSessionOutcome and image-recalls.json projection"
+      ]
+    },
+    {
+      "source_area": "Candidate and image validation with Qwen 3.5 VLM",
+      "covered_by_tasks": [
+        "TASK-003"
+      ],
+      "verification": [
+        "quality/VLM tests"
+      ],
+      "evidence": [
+        "CandidateQualityOutcome and image acceptance API/decision types"
+      ]
+    },
+    {
+      "source_area": "Artifact-backed retrieval and fallback",
+      "covered_by_tasks": [
+        "TASK-004"
+      ],
+      "verification": [
+        "retrieval artifact/fallback tests"
+      ],
+      "evidence": [
+        "RetrievalBatchResult with local artifacts and trace"
+      ]
+    },
+    {
+      "source_area": "CLI run, package, validation, self-check",
+      "covered_by_tasks": [
+        "TASK-005"
+      ],
+      "verification": [
+        "orchestrator/package/CLI tests"
+      ],
+      "evidence": [
+        "canonical package and validation.json"
+      ]
+    },
+    {
+      "source_area": "Testing and real-service acceptance evidence",
+      "covered_by_tasks": [
+        "TASK-006"
+      ],
+      "verification": [
+        "fmt/clippy/test plus real smoke or blocked evidence"
+      ],
+      "evidence": [
+        "testing-report.md and real-service-smoke-report.json"
+      ]
+    },
+    {
+      "source_area": "Final product acceptance",
+      "covered_by_tasks": [
+        "TASK-007"
+      ],
+      "verification": [
+        "acceptance review checks"
+      ],
+      "evidence": [
+        "acceptance-report.md"
+      ]
+    }
+  ],
+  "requirement_coverage_matrix": [
+    {
+      "coverage_id": "RC-001",
+      "requirement_family": "CLI run workflow and retry/package delivery",
+      "source_requirements": [
+        "FR-001",
+        "FR-011",
+        "FR-012",
+        "FR-013",
+        "FR-014",
+        "FR-015",
+        "AC-001",
+        "AC-011",
+        "AC-012",
+        "AC-013",
+        "AC-014",
+        "AC-015",
+        "AC-016",
+        "AC-017",
+        "AC-019"
+      ],
+      "covered_by_tasks": [
+        "TASK-005",
+        "TASK-006",
+        "TASK-007"
+      ],
+      "verified_by": [
+        "cargo test --all",
+        "fixture E2E CLI run",
+        "validate-package evidence",
+        "final acceptance review"
+      ],
+      "required_evidence": [
+        "canonical package files",
+        "validation.json",
+        "testing-report.md",
+        "acceptance-report.md"
+      ]
+    },
+    {
+      "coverage_id": "RC-002",
+      "requirement_family": "QueryPlan defaults and target derivation",
+      "source_requirements": [
+        "FR-002",
+        "FR-003",
+        "FR-007",
+        "AC-002",
+        "AC-003",
+        "AC-007"
+      ],
+      "covered_by_tasks": [
+        "TASK-001",
+        "TASK-004",
+        "TASK-006",
+        "TASK-007"
+      ],
+      "verified_by": [
+        "cargo test --test domain_baseline_test",
+        "cargo test --test retrieval_test",
+        "cargo test --all",
+        "final acceptance review"
+      ],
+      "required_evidence": [
+        "NormalizedQueryPlan tests",
+        "candidate_target evidence",
+        "retrieval_batch_target evidence"
+      ]
+    },
+    {
+      "coverage_id": "RC-003",
+      "requirement_family": "Search providers and SerpApi default provider",
+      "source_requirements": [
+        "FR-004",
+        "FR-005",
+        "AC-004",
+        "AC-005",
+        "AC-018"
+      ],
+      "covered_by_tasks": [
+        "TASK-002",
+        "TASK-006",
+        "TASK-007"
+      ],
+      "verified_by": [
+        "cargo test --test search_integration_test",
+        "cargo test --all",
+        "SerpApi fixture normalization",
+        "real-service smoke"
+      ],
+      "required_evidence": [
+        "ProviderReadinessReport tests",
+        "SerpApi image_results[] normalization",
+        "image-recalls.json"
+      ]
+    },
+    {
+      "coverage_id": "RC-004",
+      "requirement_family": "Candidate and image quality with Qwen 3.5 VLM",
+      "source_requirements": [
+        "FR-006",
+        "FR-010",
+        "AC-006",
+        "AC-010"
+      ],
+      "covered_by_tasks": [
+        "TASK-003",
+        "TASK-006",
+        "TASK-007"
+      ],
+      "verified_by": [
+        "cargo test --test candidate_quality_test",
+        "cargo test --all",
+        "Qwen unavailable/invalid/fixture tests",
+        "real-service smoke"
+      ],
+      "required_evidence": [
+        "CandidateQualityOutcome tests",
+        "image acceptance API/decision tests",
+        "Qwen decisions"
+      ]
+    },
+    {
+      "coverage_id": "RC-005",
+      "requirement_family": "Artifact-backed retrieval and fallback",
+      "source_requirements": [
+        "FR-008",
+        "FR-009",
+        "AC-008",
+        "AC-009"
+      ],
+      "covered_by_tasks": [
+        "TASK-004",
+        "TASK-006",
+        "TASK-007"
+      ],
+      "verified_by": [
+        "cargo test --test retrieval_test",
+        "cargo test --all",
+        "retrieval artifact integration",
+        "package validation tests",
+        "real-service smoke"
+      ],
+      "required_evidence": [
+        "RetrievalArtifactResult tests",
+        "normal_web_fetch.direct_image_fetch trace",
+        "artifact files and checksum evidence"
+      ]
+    },
+    {
+      "coverage_id": "RC-006",
+      "requirement_family": "Architecture testability",
+      "source_requirements": [
+        "AC-018"
+      ],
+      "covered_by_tasks": [
+        "TASK-001",
+        "TASK-002",
+        "TASK-003",
+        "TASK-004",
+        "TASK-005",
+        "TASK-006",
+        "TASK-007"
+      ],
+      "verified_by": [
+        "independent unit/integration test partitions",
+        "cargo test --all",
+        "final acceptance review"
+      ],
+      "required_evidence": [
+        "module-specific tests",
+        "task handoffs",
+        "acceptance-report.md"
+      ]
+    }
+  ],
+  "cohesion_and_independent_acceptance_review": {
+    "status": "pass",
+    "standard": "cohesive_and_independently_acceptable",
+    "reviewed_task_ids": [
+      "TASK-001",
+      "TASK-002",
+      "TASK-003",
+      "TASK-004",
+      "TASK-005",
+      "TASK-006",
+      "TASK-007"
+    ],
+    "task_reviews": [
+      {
+        "task_id": "TASK-001",
+        "primary_responsibility": "Build the v1.1 input, config, policy, and shared domain foundation.",
+        "cohesion_basis": [
+          "Owns one bounded output cluster: src/domain/query_plan.rs, src/domain/config.rs, src/domain/policy.rs, src/domain/mod.rs, src/policy/mod.rs, src/error/mod.rs, tests/domain_baseline_test.rs.",
+          "Does not perform work owned by upstream or downstream task IDs."
+        ],
+        "acceptance_surface": [
+          "Domain/config/policy unit and integration tests."
+        ],
+        "dependencies_declared": [],
+        "hidden_dependencies": [],
+        "overlap_with_tasks": [],
+        "acceptance_evidence": [
+          "Source refs define the responsibility: docs/v1.1/PRD.md, docs/v1.1/HLD.md, docs/v1.1/LLD.md, docs/design/v1.1-TASK-001-queryplan-config-policy-design.md.",
+          "Expected output paths are src/domain/query_plan.rs, src/domain/config.rs, src/domain/policy.rs, src/domain/mod.rs, src/policy/mod.rs, src/error/mod.rs, tests/domain_baseline_test.rs.",
+          "Acceptance criteria are task-scoped: Valid QueryPlan/config input produces NormalizedQueryPlan and RuntimeConfig with package-safe diagnostics.; All target derivation and retry/full-attempt invariants are represented by typed data and tests..",
+          "Verification includes: cargo fmt --all -- --check; cargo clippy --all-targets --all-features -- -D warnings."
+        ],
+        "verdict": "pass"
+      },
+      {
+        "task_id": "TASK-002",
+        "primary_responsibility": "Implement pluggable image search with SerpApi as the default broad provider.",
+        "cohesion_basis": [
+          "Owns one bounded output cluster: src/search, src/domain/search.rs, src/domain/candidate.rs, src/ports/mod.rs, tests/search_integration_test.rs.",
+          "Does not perform work owned by upstream or downstream task IDs."
+        ],
+        "acceptance_surface": [
+          "Search provider contract, scheduler, SerpApi normalization, and readiness tests."
+        ],
+        "dependencies_declared": [
+          "TASK-001"
+        ],
+        "hidden_dependencies": [],
+        "overlap_with_tasks": [],
+        "acceptance_evidence": [
+          "Source refs define the responsibility: docs/v1.1/PRD.md, docs/v1.1/HLD.md, docs/v1.1/LLD.md, docs/design/v1.1-TASK-002-search-provider-candidate-design.md.",
+          "Expected output paths are src/ports/mod.rs, src/domain/search.rs, src/domain/candidate.rs, src/search, tests/search_integration_test.rs.",
+          "Acceptance criteria are task-scoped: At least one ready real provider can be scheduled when configured; missing SerpApi credentials produce PROVIDER_CREDENTIAL_MISSING readiness evidence.; SerpApi image_results[] fixtures normalize into package-safe CandidateRecord values with provenance and dedupe evidence..",
+          "Verification includes: cargo fmt --all -- --check; cargo clippy --all-targets --all-features -- -D warnings."
+        ],
+        "verdict": "pass"
+      },
+      {
+        "task_id": "TASK-003",
+        "primary_responsibility": "Implement mechanical and Qwen subjective gates for candidates and images.",
+        "cohesion_basis": [
+          "Owns one bounded output cluster: src/quality, src/domain/image.rs, src/domain/metrics.rs, src/ports/mod.rs, tests/candidate_quality_test.rs.",
+          "Does not perform work owned by upstream or downstream task IDs."
+        ],
+        "acceptance_surface": [
+          "Quality and VLM unit/integration tests."
+        ],
+        "dependencies_declared": [
+          "TASK-001",
+          "TASK-002"
+        ],
+        "hidden_dependencies": [],
+        "overlap_with_tasks": [],
+        "acceptance_evidence": [
+          "Source refs define the responsibility: docs/v1.1/PRD.md, docs/v1.1/HLD.md, docs/v1.1/LLD.md, docs/design/v1.1-TASK-003-quality-vlm-design.md.",
+          "Expected output paths are src/quality, src/domain/image.rs, src/domain/metrics.rs, src/ports/mod.rs, tests/candidate_quality_test.rs.",
+          "Acceptance criteria are task-scoped: Candidate quality rejects mechanically blocked candidates before VLM and sends only mechanically passed candidates to Qwen in production.; Qwen unavailable, disabled, invalid response, missing decision, timeout, or fixture-in-production produces execution-blocked evidence..",
+          "Verification includes: cargo fmt --all -- --check; cargo clippy --all-targets --all-features -- -D warnings."
+        ],
+        "verdict": "pass"
+      },
+      {
+        "task_id": "TASK-004",
+        "primary_responsibility": "Implement retrieval channels that actually fetch images and produce complete artifact evidence.",
+        "cohesion_basis": [
+          "Owns one bounded output cluster: src/retrieval, src/domain/retrieval.rs, src/ports/mod.rs, tests/retrieval_test.rs.",
+          "Does not perform work owned by upstream or downstream task IDs."
+        ],
+        "acceptance_surface": [
+          "Retrieval artifact, fallback, policy, and evidence tests."
+        ],
+        "dependencies_declared": [
+          "TASK-001",
+          "TASK-003"
+        ],
+        "hidden_dependencies": [],
+        "overlap_with_tasks": [],
+        "acceptance_evidence": [
+          "Source refs define the responsibility: docs/v1.1/PRD.md, docs/v1.1/HLD.md, docs/v1.1/LLD.md, docs/design/v1.1-TASK-004-retrieval-artifact-channel-design.md.",
+          "Expected output paths are src/retrieval, src/domain/retrieval.rs, src/ports/mod.rs, tests/retrieval_test.rs.",
+          "Acceptance criteria are task-scoped: Every RetrievalStatus::Complete result has all artifact paths, checksum, content type, dimensions or diagnostic, media match, ownership, and trace evidence.; Fallback order is direct image fetch, source-page resolve, self-hosted service, paid online service, with policy blockers recorded..",
+          "Verification includes: cargo fmt --all -- --check; cargo clippy --all-targets --all-features -- -D warnings."
+        ],
+        "verdict": "pass"
+      },
+      {
+        "task_id": "TASK-005",
+        "primary_responsibility": "Wire all implemented capabilities into the CLI delivery workflow and package contract.",
+        "cohesion_basis": [
+          "Owns one bounded output cluster: src/main.rs, src/orchestrator, src/delivery, src/self_check, src/validation, src/domain/delivery.rs, tests/e2e_fixture_test.rs.",
+          "Does not perform work owned by upstream or downstream task IDs."
+        ],
+        "acceptance_surface": [
+          "CLI, orchestrator, package builder, validator, and fixture E2E tests."
+        ],
+        "dependencies_declared": [
+          "TASK-001",
+          "TASK-002",
+          "TASK-003",
+          "TASK-004"
+        ],
+        "hidden_dependencies": [],
+        "overlap_with_tasks": [],
+        "acceptance_evidence": [
+          "Source refs define the responsibility: docs/v1.1/PRD.md, docs/v1.1/HLD.md, docs/v1.1/LLD.md, docs/design/v1.1-TASK-005-orchestrator-package-validation-cli-design.md.",
+          "Expected output paths are src/main.rs, src/orchestrator, src/delivery, src/self_check, src/validation, src/domain/delivery.rs, tests/e2e_fixture_test.rs.",
+          "Acceptance criteria are task-scoped: image-retrieval run executes the full search + quality + retrieval + image acceptance + package + validation flow and no longer stops at planning output.; Package status is passed only when accepted images reach required count and validator passes; partial and blocked are evidence-backed..",
+          "Verification includes: cargo fmt --all -- --check; cargo clippy --all-targets --all-features -- -D warnings."
+        ],
+        "verdict": "pass"
+      },
+      {
+        "task_id": "TASK-006",
+        "primary_responsibility": "Prove the implemented search and retrieval workflow with deterministic and real-service evidence.",
+        "cohesion_basis": [
+          "Owns one bounded output cluster: tests, tests/fixtures/v1_1, tasks/development/v1.1/testing-report.md, tasks/development/v1.1/real-service-smoke-report.json.",
+          "Does not perform work owned by upstream or downstream task IDs."
+        ],
+        "acceptance_surface": [
+          "Testing report, cargo command results, fixture E2E, and real-service smoke evidence."
+        ],
+        "dependencies_declared": [
+          "TASK-005"
+        ],
+        "hidden_dependencies": [],
+        "overlap_with_tasks": [],
+        "acceptance_evidence": [
+          "Source refs define the responsibility: docs/v1.1/PRD.md, docs/v1.1/LLD.md, docs/design/v1.1-TASK-006-testing-real-service-acceptance-design.md, RELEASE_GATES.md.",
+          "Expected output paths are tests, tests/fixtures/v1_1, tasks/development/v1.1/testing-report.md, tasks/development/v1.1/real-service-smoke-report.json.",
+          "Acceptance criteria are task-scoped: Every PRD AC-001 through AC-019 has test or acceptance evidence mapped in the testing report.; Fixture E2E proves passed, partial, blocked, missing artifact, metadata-only, paid-unconfirmed, access-restricted, secret leak, and production-fixture rejection paths..",
+          "Verification includes: cargo fmt --all -- --check; cargo clippy --all-targets --all-features -- -D warnings."
+        ],
+        "verdict": "pass"
+      },
+      {
+        "task_id": "TASK-007",
+        "primary_responsibility": "Decide whether v1.1 genuinely satisfies image search plus retrieval acceptance.",
+        "cohesion_basis": [
+          "Owns one bounded output cluster: tasks/development/v1.1/acceptance-report.md.",
+          "Does not perform work owned by upstream or downstream task IDs."
+        ],
+        "acceptance_surface": [
+          "Final acceptance report."
+        ],
+        "dependencies_declared": [
+          "TASK-001",
+          "TASK-002",
+          "TASK-003",
+          "TASK-004",
+          "TASK-005",
+          "TASK-006"
+        ],
+        "hidden_dependencies": [],
+        "overlap_with_tasks": [],
+        "acceptance_evidence": [
+          "Source refs define the responsibility: docs/v1.1/PRD.md, docs/v1.1/HLD.md, docs/v1.1/LLD.md, docs/design/v1.1-TASK-007-detailed-design-acceptance-review.md, tasks/development/v1.1/development-planning.json.",
+          "Expected output paths are tasks/development/v1.1/acceptance-report.md.",
+          "Acceptance criteria are task-scoped: Acceptance report covers every FR/AC and states pass/fail/blocked evidence.; accepted is allowed only when required task output, verification, package validation, and real-service smoke evidence prove the expected target.",
+          "Verification includes: Review tasks/development/v1.1/development-planning.json; Review all TASK-001..TASK-006 handoffs; verify acceptance-report.md content includes verdict, evidence, SerpApi, retrieval, Qwen, package, and real-service evidence status."
+        ],
+        "verdict": "pass"
+      }
+    ],
+    "split_required": [],
+    "merge_required": [],
+    "hidden_dependencies": [],
+    "acceptance_evidence": [
+      "Source refs, expected output paths, verification commands, and acceptance criteria are recorded for every task.",
+      "Reverse source requirement coverage maps FR/AC IDs to tasks, verification, and required evidence.",
+      "Task package fixtures provide executor-ready source, boundary, verification, and handoff instructions."
+    ],
+    "review_reasoning": [
+      "Each task owns one bounded implementation or verification surface.",
+      "TASK-004 explicitly depends on TASK-003 so retrieval only operates on quality-approved candidates.",
+      "TASK-007 is the single final delivery acceptance task and depends on every non-deferred task."
+    ]
+  },
+  "delivery_acceptance": {
+    "task_id": "TASK-007",
+    "report_path": "tasks/development/v1.1/acceptance-report.md",
+    "standards": [
+      "source traceability from PRD/HLD/LLD to implementation evidence",
+      "current-phase FR/AC coverage and no new product scope",
+      "all non-deferred task DAG outputs complete with handoff evidence",
+      "verification evidence for cargo fmt, cargo clippy, cargo test, fixture E2E, package validation, and real-service smoke; blocked smoke evidence is diagnostic and cannot prove accepted completion",
+      "downstream handoff readiness through canonical package and acceptance report"
+    ],
+    "methods": [
+      "review development-planning.json and every task package",
+      "review all TASK-001 through TASK-006 handoff evidence and changed output paths",
+      "run or review verification command logs and blocked-command records",
+      "review generated package, validate-package report, testing-report.md, real-service-smoke-report.json, and release gates",
+      "write acceptance report to tasks/development/v1.1/acceptance-report.md"
+    ],
+    "evidence_required": [
+      "tasks/development/v1.1/development-planning.json",
+      "tasks/development/v1.1/TASKS.md and every task package directory",
+      "TASK-001 through TASK-006 handoff evidence",
+      "verification logs or blocked-command records",
+      "canonical package files and validate-package evidence",
+      "tasks/development/v1.1/testing-report.md",
+      "tasks/development/v1.1/real-service-smoke-report.json",
+      "tasks/development/v1.1/acceptance-report.md"
+    ],
+    "verification_commands_or_checks": [
+      "review source traceability and requirement coverage matrix",
+      "cargo fmt --all -- --check",
+      "cargo clippy --all-targets --all-features -- -D warnings",
+      "cargo test --all",
+      "review fixture E2E package validation",
+      "review real-service smoke pass/blocked/skipped evidence",
+      "verify acceptance-report.md content includes verdict, evidence, SerpApi, retrieval, Qwen, package, and real-service evidence status"
+    ],
+    "pass_fail_rules": [
+      "fail if required evidence is missing",
+      "fail if any required verification command failed without blocker record",
+      "fail if any current-phase FR/AC is uncovered",
+      "fail accepted completion if SerpApi search, artifact retrieval, Qwen evaluation, real-service smoke, or package validation evidence is missing",
+      "fail if unresolved blockers are not recorded as required fixes or explicit blocked/release-waived notes",
+      "fail if implementation scope exceeds the plan"
+    ],
+    "blocker_conditions": [
+      "missing task handoff or dependency output",
+      "failed cargo verification or package validation",
+      "missing SerpApi credentials or adapter readiness without blocked evidence",
+      "missing Qwen 3.5 VLM endpoint/token/readiness without blocked evidence",
+      "real-service smoke blocked while release claims full expected-target completion",
+      "unresolved paid/robots/authorization/quality gate without warning, blocker, or waiver"
+    ],
+    "source_traceability_required": true,
+    "coverage_required": true
+  },
+  "task_logic_review": {
+    "status": "pass",
+    "reviewed_task_ids": [
+      "TASK-001",
+      "TASK-002",
+      "TASK-003",
+      "TASK-004",
+      "TASK-005",
+      "TASK-006",
+      "TASK-007"
+    ],
+    "checks": [
+      "cohesion",
+      "independent acceptance",
+      "source traceability",
+      "reverse requirement coverage",
+      "boundary clarity",
+      "verification sufficiency",
+      "stop condition sufficiency",
+      "handoff completeness",
+      "dependency input clarity"
+    ],
+    "blocking_findings": [],
+    "required_revisions": []
+  },
+  "plan_integrity_review": {
+    "status": "pass",
+    "checks": [
+      "current-phase requirement coverage",
+      "output and acceptance coverage",
+      "source FR/AC ID coverage",
+      "DAG acyclicity",
+      "edge consumed-output quality",
+      "execution order validity",
+      "parallel safety",
+      "final delivery acceptance correctness",
+      "deferred and release blocker isolation"
+    ],
+    "coverage_findings": [
+      "FR-001 through FR-015 and AC-001 through AC-019 are covered by implementation/testing/final acceptance tasks.",
+      "Image search plus artifact retrieval is covered directly by TASK-002 and TASK-004 and integrated by TASK-005/TASK-006."
+    ],
+    "dependency_findings": [
+      "DAG is acyclic.",
+      "TASK-004 depends on TASK-003, preventing retrieval of unevaluated search candidates.",
+      "TASK-005 depends on all implementation capability tasks before integrating the full workflow.",
+      "TASK-007 depends on every non-deferred task and is last."
+    ],
+    "parallel_safety_findings": [
+      "No parallel groups are declared because the accepted LLD chain has direct/transitive dependencies between all capability tasks."
+    ],
+    "execution_order_findings": [
+      "Execution order TASK-001, TASK-002, TASK-003, TASK-004, TASK-005, TASK-006, TASK-007 is topological and matches the product flow."
+    ],
+    "delivery_acceptance_findings": [
+      "TASK-007 has concrete report path, evidence, verification checks, binary pass/fail rules, and blocker conditions."
+    ],
+    "blocking_findings": [],
+    "required_revisions": []
+  },
+  "planning_gate_report": [
+    {
+      "gate": "source_readiness",
+      "status": "pass",
+      "evidence": "PRD/HLD/LLD and accepted detailed design documents are inventoried."
+    },
+    {
+      "gate": "traceability",
+      "status": "pass",
+      "evidence": "Tasks and reverse coverage matrix cite PRD/HLD/LLD and detailed design refs."
+    },
+    {
+      "gate": "scope_readiness",
+      "status": "pass",
+      "evidence": "In-scope Rust CLI image search + retrieval work and out-of-scope Web UI/SaaS/image generation work are explicit."
+    },
+    {
+      "gate": "stack_readiness",
+      "status": "pass",
+      "evidence": "Cargo.toml confirms Rust 2021, clap, serde, thiserror, ureq."
+    },
+    {
+      "gate": "task_cohesion",
+      "status": "pass",
+      "evidence": "Each task owns one output cluster and one acceptance surface."
+    },
+    {
+      "gate": "independent_acceptance",
+      "status": "pass",
+      "evidence": "Each task has expected outputs, verification, stop conditions, and handoff requirements."
+    },
+    {
+      "gate": "cohesion_independent_acceptance",
+      "status": "pass",
+      "evidence": "cohesion_and_independent_acceptance_review.status=pass."
+    },
+    {
+      "gate": "staged_planning_rigor",
+      "status": "pass",
+      "evidence": "All four phase reports are present and passing."
+    },
+    {
+      "gate": "task_logic_review",
+      "status": "pass",
+      "evidence": "task_logic_review.status=pass with no blockers."
+    },
+    {
+      "gate": "dag_soundness",
+      "status": "pass",
+      "evidence": "cycle_check.status=pass and topological execution order is recorded."
+    },
+    {
+      "gate": "parallel_safety",
+      "status": "pass",
+      "evidence": "No parallel groups declared due direct/transitive dependencies."
+    },
+    {
+      "gate": "plan_integrity_review",
+      "status": "pass",
+      "evidence": "plan_integrity_review.status=pass with no blockers."
+    },
+    {
+      "gate": "task_description_readiness",
+      "status": "pass",
+      "evidence": "Every task has task.md."
+    },
+    {
+      "gate": "task_fixture_readiness",
+      "status": "pass",
+      "evidence": "Every task has PROMPT.md, AGENTS.md, CLAUDE.md, and spec.yaml."
+    },
+    {
+      "gate": "spec_executor_2_contract",
+      "status": "pass",
+      "evidence": "Every spec.yaml is a 2.0 pointer contract."
+    },
+    {
+      "gate": "delivery_acceptance_task",
+      "status": "pass",
+      "evidence": "TASK-007 is the only delivery_acceptance task and is last."
+    },
+    {
+      "gate": "acceptance_contract",
+      "status": "pass",
+      "evidence": "delivery_acceptance defines standards, methods, evidence, checks, pass/fail rules, and blockers."
+    },
+    {
+      "gate": "no_starter_prompt_template",
+      "status": "pass",
+      "evidence": "Only task-scoped prompts under task folders are generated."
+    }
+  ],
+  "external_dependencies": [
+    {
+      "dependency": "SerpApi Google Images service and credentials",
+      "status": "implementation_and_environment_gate",
+      "planning_handling": "TASK-002 implements adapter and readiness. TASK-006 real smoke requires SERPAPI_API_KEY or configured equivalent, otherwise blocked evidence is required."
+    },
+    {
+      "dependency": "Qwen 3.5 VLM endpoint/model/token readiness",
+      "status": "implementation_and_environment_gate",
+      "planning_handling": "TASK-003 implements adapter/readiness. TASK-006 real smoke requires QWEN_API_TOKEN and endpoint/model config, otherwise blocked evidence is required."
+    },
+    {
+      "dependency": "Paid retrieval enablement and budget",
+      "status": "release_decision_open",
+      "planning_handling": "TASK-001/TASK-004 keep paid disabled by default and TASK-006 records blocked/skipped paid smoke unless explicitly allowed."
+    },
+    {
+      "dependency": "robots/site-rule and authorization policy",
+      "status": "release_decision_open",
+      "planning_handling": "TASK-001/TASK-004/TASK-005 expose warning/blocker posture; no silent bypass is allowed."
+    },
+    {
+      "dependency": "Quality threshold calibration or waiver",
+      "status": "release_decision_open",
+      "planning_handling": "TASK-001/TASK-003/TASK-006 record defaults, calibration evidence, or waiver before final acceptance."
+    }
+  ],
+  "open_questions": [
+    "Will v1.1 release enable paid retrieval smoke, or should paid channels remain disabled-only?",
+    "Should unresolved robots/site-rule posture default to warning or blocker for production smoke?",
+    "What Qwen 3.5 VLM endpoint/base URL and model id will production config use?"
+  ],
+  "required_fixes": []
+}

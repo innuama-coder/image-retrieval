@@ -1,0 +1,22 @@
+version: "2.0"
+name: "TASK-006-image-retrieval-v1.1"
+repo:
+  url: "https://github.com/innuama-coder/image-retrieval.git"
+  branch: "main"
+task_dir: "tasks/development/v1.1/TASK-006"
+executor: "codex"
+deliverables:
+  - path: "tests"
+    verify: "cargo test --all"
+  - path: "tests/fixtures/v1_1"
+    verify: "cargo test --all"
+  - path: "tasks/development/v1.1/testing-report.md"
+    verify: "cargo test --all"
+  - path: "tasks/development/v1.1/real-service-smoke-report.json"
+    verify: "cargo test --all"
+execution:
+  poll_interval_sec: 5
+  idle_timeout_sec: 120
+  max_duration_min: 60
+  max_nudge_count: 10
+  max_consecutive_escalate: 3

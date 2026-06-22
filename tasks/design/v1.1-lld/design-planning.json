@@ -1,0 +1,213 @@
+{
+  "planning_status": "ready",
+  "planning_name": "design",
+  "task_version": "v1.1-lld",
+  "output_root": "tasks/design/v1.1-lld",
+  "work_class": "software_development",
+  "detailed_design_root": "docs/design",
+  "quality_validator_path": "tasks/design/v1.1-lld/validate_design_doc_quality.py",
+  "spec_executor_handoff": {
+    "spec_version": "2.0",
+    "repo": {
+      "url": "https://github.com/innuama-coder/image-retrieval.git",
+      "branch": "main"
+    },
+    "availability_status": "requires_publish",
+    "required_before_run": [
+      "Commit tasks/design/v1.1-lld planning artifacts to main or another referenced branch before spec-executor clones them.",
+      "Push the referenced branch if spec-executor runs from the remote repository."
+    ],
+    "task_package_files": ["PROMPT.md", "AGENTS.md", "CLAUDE.md", "spec.yaml"],
+    "process_files": [
+      "tasks/design/v1.1-lld/design-planning.json",
+      "tasks/design/v1.1-lld/validate_design_doc_quality.py"
+    ],
+    "verify_runtime": {
+      "language": "Python 3",
+      "command_strategy": "try py -3, then python3, then python",
+      "required_for": "per-task detailed design document quality validation"
+    }
+  },
+  "planning_target": {
+    "work_type": "software_design",
+    "planning_purpose": "Plan future v1.1 LLD detailed design work before implementation tasks execute.",
+    "default_output_root": "tasks/design/v1.1-lld",
+    "deliverable_root": "docs/design",
+    "acceptance_object": "final design acceptance task and docs/design acceptance report",
+    "evidence_model": ["PRD", "HLD", "LLD draft", "source evidence", "acceptance criteria"],
+    "planning_boundary": "planning only; do not write design deliverables or implementation code"
+  },
+  "source_inventory": [
+    {"path": "AGENTS.md", "kind": "constitution", "used_for": "Product flow, Rust CLI boundary, provider/channel/Qwen 3.5 VLM rules."},
+    {"path": "docs/v1.1/PRD.md", "kind": "prd", "used_for": "v1.1 functional and acceptance requirements."},
+    {"path": "docs/v1.1/HLD.md", "kind": "hld", "used_for": "Architecture, module boundaries, decisions, risks."},
+    {"path": "docs/design/v1.1-completion-target-design.md", "kind": "completion_design", "used_for": "Completion target and capability delta."},
+    {"path": "src/lib.rs", "kind": "source", "used_for": "Current Rust module map."},
+    {"path": "src/domain", "kind": "source", "used_for": "Existing domain model conventions."},
+    {"path": "src/search", "kind": "source", "used_for": "Existing search module conventions."},
+    {"path": "src/retrieval", "kind": "source", "used_for": "Existing retrieval module conventions."}
+  ],
+  "source_interpretation": {
+    "current_phase": "v1.1 LLD planning",
+    "software_stack": "Rust CLI",
+    "design_obligations": [
+      "Detailed QueryPlan/config/policy/domain design",
+      "Detailed search provider/candidate design",
+      "Detailed quality/Qwen 3.5 VLM design",
+      "Detailed retrieval artifact/channel design",
+      "Detailed orchestrator/package/validation/CLI design",
+      "Detailed testing and acceptance design"
+    ],
+    "planning_boundary": "This plan does not create the detailed design documents; it only creates future design task packages."
+  },
+  "design_scope": {
+    "in_scope": [
+      "Future detailed design documents under docs/design/",
+      "Rust module boundaries and trait/type contracts",
+      "Control flow, data flow, state, diagnostics, security, observability, verification design"
+    ],
+    "out_of_scope": [
+      "Product source code changes",
+      "Runtime tests",
+      "Build manifests",
+      "Actual docs/design detailed design deliverables during planning"
+    ]
+  },
+  "project_context": {
+    "language": "Rust",
+    "product_shape": "local CLI",
+    "repo_url": "https://github.com/innuama-coder/image-retrieval.git",
+    "branch": "main",
+    "existing_modules": ["domain", "ports", "search", "retrieval", "quality", "orchestrator", "delivery", "policy", "self_check"]
+  },
+  "planning_review_stages": [
+    {"stage_id": "overall_planning", "stage": "overall_planning", "status": "pass", "checks": ["PRD/HLD present", "Rust stack identified", "scope bounded"], "findings": ["Planning target is bounded to future docs/design detailed design deliverables."], "evidence_refs": ["docs/v1.1/PRD.md", "docs/v1.1/HLD.md", "AGENTS.md"]},
+    {"stage_id": "task_formation", "stage": "task_formation", "status": "pass", "checks": ["one docs/design path per task", "documentation-only wording", "source refs present"], "findings": ["Seven cohesive subtasks cover six detailed designs plus final design acceptance."], "evidence_refs": ["docs/v1.1/LLD.md"]},
+    {"stage_id": "single_task_review", "stage": "single_task_review", "status": "pass", "checks": ["cohesion", "independent acceptance", "no hidden dependencies"], "findings": ["Each subtask has one primary design concern and independently verifiable acceptance surface."], "evidence_refs": ["tasks/design/v1.1-lld/design-planning.json"]},
+    {"stage_id": "global_dag_review", "stage": "global_dag_review", "status": "pass", "checks": ["acyclic DAG", "coverage", "dependency direction"], "findings": ["DAG is acyclic and routes all detailed design tasks into the acceptance review."], "evidence_refs": ["tasks/design/v1.1-lld/design-planning.json"]},
+    {"stage_id": "artifact_generation", "stage": "artifact_generation", "status": "pass", "checks": ["planning JSON", "validator", "fixtures", "spec.yaml"], "findings": ["Planning artifacts include validator, prompts, agent instructions, Claude instructions, and specs."], "evidence_refs": ["tasks/design/v1.1-lld"]},
+    {"stage_id": "final_design_acceptance", "stage": "final_design_acceptance", "status": "pass", "checks": ["acceptance task exists", "depends on all design tasks", "report under docs/design"], "findings": ["TASK-007 is the final design acceptance subtask and depends on every detailed design subtask."], "evidence_refs": ["TASK-007"]}
+  ],
+  "tasks": [
+    {"task_id": "TASK-001", "title": "QueryPlan config policy domain detailed design", "task_type": "detailed_design", "source_refs": ["AGENTS.md", "docs/v1.1/PRD.md", "docs/v1.1/HLD.md", "docs/v1.1/LLD.md", "src/domain"], "inputs": ["PRD QueryPlan requirements", "HLD module view", "current domain modules"], "outputs": ["Normalized QueryPlan model", "Runtime config model", "policy/default/retry design"], "allowed_scope": ["Documentation-only detailed design for input/config/domain/policy"], "forbidden_scope": ["Do not implement code", "Do not modify tests or manifests"], "acceptance": ["Design covers defaults, validation, redaction, retry counters, error diagnostics"], "verification": ["Run generated design doc validator against design_doc_path"], "stop_conditions": ["Stop if public config schema cannot be designed without missing product decision"], "dependencies": [], "design_doc_path": "docs/design/v1.1-TASK-001-queryplan-config-policy-design.md", "fixture_dir": "tasks/design/v1.1-lld/fixtures/TASK-001", "prompt_path": "tasks/design/v1.1-lld/fixtures/TASK-001/PROMPT.md", "agents_path": "tasks/design/v1.1-lld/fixtures/TASK-001/AGENTS.md", "claude_path": "tasks/design/v1.1-lld/fixtures/TASK-001/CLAUDE.md", "spec_path": "tasks/design/v1.1-lld/fixtures/TASK-001/spec.yaml"},
+    {"task_id": "TASK-002", "title": "Search provider candidate detailed design", "task_type": "detailed_design", "source_refs": ["docs/v1.1/PRD.md", "docs/v1.1/HLD.md", "docs/v1.1/LLD.md", "src/search", "src/domain/candidate.rs"], "inputs": ["TASK-001 planned models", "search requirements", "current search modules"], "outputs": ["BaseSearchProvider contract", "provider readiness", "scheduler", "candidate normalization/dedupe/provenance"], "allowed_scope": ["Documentation-only detailed design for search and candidate model"], "forbidden_scope": ["Do not implement code", "Do not design retrieval execution"], "acceptance": ["Design covers provider readiness, weighted scheduling, provenance, dedupe, failure codes"], "verification": ["Run generated design doc validator against design_doc_path"], "stop_conditions": ["Stop if SerpApi adapter requirements cannot be expressed without changing the BaseSearchProvider contract or credential-redaction policy"], "dependencies": ["TASK-001"], "design_doc_path": "docs/design/v1.1-TASK-002-search-provider-candidate-design.md", "fixture_dir": "tasks/design/v1.1-lld/fixtures/TASK-002", "prompt_path": "tasks/design/v1.1-lld/fixtures/TASK-002/PROMPT.md", "agents_path": "tasks/design/v1.1-lld/fixtures/TASK-002/AGENTS.md", "claude_path": "tasks/design/v1.1-lld/fixtures/TASK-002/CLAUDE.md", "spec_path": "tasks/design/v1.1-lld/fixtures/TASK-002/spec.yaml"},
+    {"task_id": "TASK-003", "title": "Quality and Qwen 3.5 VLM detailed design", "task_type": "detailed_design", "source_refs": ["AGENTS.md", "docs/v1.1/PRD.md", "docs/v1.1/HLD.md", "docs/v1.1/LLD.md", "src/quality", "src/ports"], "inputs": ["candidate model", "Qwen 3.5 VLM requirement", "quality modules"], "outputs": ["candidate mechanical evidence", "image mechanical evidence", "Qwen 3.5 VLM DTOs", "blocked production behavior"], "allowed_scope": ["Documentation-only detailed design for quality and evaluation boundary"], "forbidden_scope": ["Do not implement code", "Do not substitute fixture for production"], "acceptance": ["Design covers mechanical/reference metrics, Qwen 3.5 VLM request/response, unavailable behavior"], "verification": ["Run generated design doc validator against design_doc_path"], "stop_conditions": ["Stop if the qwen_3_5_vlm adapter boundary cannot be designed without hard-coded credentials or changing product scope"], "dependencies": ["TASK-001", "TASK-002"], "design_doc_path": "docs/design/v1.1-TASK-003-quality-vlm-design.md", "fixture_dir": "tasks/design/v1.1-lld/fixtures/TASK-003", "prompt_path": "tasks/design/v1.1-lld/fixtures/TASK-003/PROMPT.md", "agents_path": "tasks/design/v1.1-lld/fixtures/TASK-003/AGENTS.md", "claude_path": "tasks/design/v1.1-lld/fixtures/TASK-003/CLAUDE.md", "spec_path": "tasks/design/v1.1-lld/fixtures/TASK-003/spec.yaml"},
+    {"task_id": "TASK-004", "title": "Retrieval artifact channel detailed design", "task_type": "detailed_design", "source_refs": ["AGENTS.md", "docs/v1.1/PRD.md", "docs/v1.1/HLD.md", "docs/v1.1/LLD.md", "src/retrieval", "src/domain/retrieval.rs"], "inputs": ["retrievable candidates from TASK-003", "retrieval requirements", "current retrieval modules"], "outputs": ["RetrievalJob", "RetrievalArtifactResult", "fallback attempt model", "artifact generation and validation evidence"], "allowed_scope": ["Documentation-only detailed design for retrieval artifacts and channels"], "forbidden_scope": ["Do not implement code", "Do not mark images as delivered"], "acceptance": ["Design covers artifact paths, sidecar, summary, task report, visual description, checksum, trace, fallback"], "verification": ["Run generated design doc validator against design_doc_path"], "stop_conditions": ["Stop if paid/compliance behavior requires unresolved decision"], "dependencies": ["TASK-001", "TASK-002", "TASK-003"], "design_doc_path": "docs/design/v1.1-TASK-004-retrieval-artifact-channel-design.md", "fixture_dir": "tasks/design/v1.1-lld/fixtures/TASK-004", "prompt_path": "tasks/design/v1.1-lld/fixtures/TASK-004/PROMPT.md", "agents_path": "tasks/design/v1.1-lld/fixtures/TASK-004/AGENTS.md", "claude_path": "tasks/design/v1.1-lld/fixtures/TASK-004/CLAUDE.md", "spec_path": "tasks/design/v1.1-lld/fixtures/TASK-004/spec.yaml"},
+    {"task_id": "TASK-005", "title": "Orchestrator package validation CLI detailed design", "task_type": "detailed_design", "source_refs": ["docs/v1.1/PRD.md", "docs/v1.1/HLD.md", "docs/v1.1/LLD.md", "src/orchestrator", "src/delivery", "src/main.rs"], "inputs": ["search design", "quality design", "retrieval design"], "outputs": ["run loop", "retry state", "canonical package schema", "validation checks", "CLI/self-check commands"], "allowed_scope": ["Documentation-only detailed design for orchestration, package, validation, CLI"], "forbidden_scope": ["Do not implement code", "Do not add provider/channel protocols"], "acceptance": ["Design covers full run, retry, package files, manifest links, validation fail rules, self-check"], "verification": ["Run generated design doc validator against design_doc_path"], "stop_conditions": ["Stop if upstream design task outputs are missing"], "dependencies": ["TASK-001", "TASK-002", "TASK-003", "TASK-004"], "design_doc_path": "docs/design/v1.1-TASK-005-orchestrator-package-validation-cli-design.md", "fixture_dir": "tasks/design/v1.1-lld/fixtures/TASK-005", "prompt_path": "tasks/design/v1.1-lld/fixtures/TASK-005/PROMPT.md", "agents_path": "tasks/design/v1.1-lld/fixtures/TASK-005/AGENTS.md", "claude_path": "tasks/design/v1.1-lld/fixtures/TASK-005/CLAUDE.md", "spec_path": "tasks/design/v1.1-lld/fixtures/TASK-005/spec.yaml"},
+    {"task_id": "TASK-006", "title": "Testing and real service acceptance detailed design", "task_type": "detailed_design", "source_refs": ["docs/v1.1/PRD.md", "docs/v1.1/HLD.md", "docs/v1.1/LLD.md", "RELEASE_GATES.md", "tests"], "inputs": ["all design task outputs", "PRD acceptance table", "release gates"], "outputs": ["unit/integration/E2E test matrix", "real-service verification design", "blocked evidence policy"], "allowed_scope": ["Documentation-only detailed design for testing and acceptance evidence"], "forbidden_scope": ["Do not implement tests", "Do not run verification commands"], "acceptance": ["Design maps every PRD AC to tests, evidence, or blocker; defines real-service smoke criteria"], "verification": ["Run generated design doc validator against design_doc_path"], "stop_conditions": ["Stop if acceptance environment cannot be determined"], "dependencies": ["TASK-005"], "design_doc_path": "docs/design/v1.1-TASK-006-testing-real-service-acceptance-design.md", "fixture_dir": "tasks/design/v1.1-lld/fixtures/TASK-006", "prompt_path": "tasks/design/v1.1-lld/fixtures/TASK-006/PROMPT.md", "agents_path": "tasks/design/v1.1-lld/fixtures/TASK-006/AGENTS.md", "claude_path": "tasks/design/v1.1-lld/fixtures/TASK-006/CLAUDE.md", "spec_path": "tasks/design/v1.1-lld/fixtures/TASK-006/spec.yaml"},
+    {"task_id": "TASK-007", "title": "Detailed design acceptance review", "task_type": "design_acceptance", "source_refs": ["docs/v1.1/PRD.md", "docs/v1.1/HLD.md", "tasks/design/v1.1-lld/design-planning.json"], "inputs": ["all planned detailed design documents"], "outputs": ["docs/design/v1.1-TASK-007-detailed-design-acceptance-review.md"], "allowed_scope": ["Documentation-only acceptance review"], "forbidden_scope": ["Do not implement code", "Do not rewrite design docs outside acceptance report"], "acceptance": ["Report inventories all documents, verdicts coverage, lists blockers, and applies validator evidence"], "verification": ["Run generated design doc validator in acceptance mode"], "stop_conditions": ["Stop if any detailed design document is missing"], "dependencies": ["TASK-001", "TASK-002", "TASK-003", "TASK-004", "TASK-005", "TASK-006"], "design_doc_path": "docs/design/v1.1-TASK-007-detailed-design-acceptance-review.md", "fixture_dir": "tasks/design/v1.1-lld/fixtures/TASK-007", "prompt_path": "tasks/design/v1.1-lld/fixtures/TASK-007/PROMPT.md", "agents_path": "tasks/design/v1.1-lld/fixtures/TASK-007/AGENTS.md", "claude_path": "tasks/design/v1.1-lld/fixtures/TASK-007/CLAUDE.md", "spec_path": "tasks/design/v1.1-lld/fixtures/TASK-007/spec.yaml"}
+  ],
+  "dag": {
+    "nodes": [
+      {"task_id": "TASK-001"},
+      {"task_id": "TASK-002"},
+      {"task_id": "TASK-003"},
+      {"task_id": "TASK-004"},
+      {"task_id": "TASK-005"},
+      {"task_id": "TASK-006"},
+      {"task_id": "TASK-007"}
+    ],
+    "edges": [
+      {"from": "TASK-001", "to": "TASK-002", "reason": "Search design consumes normalized QueryPlan and config policy design.", "source_refs": ["docs/v1.1/LLD.md"]},
+      {"from": "TASK-001", "to": "TASK-003", "reason": "Quality design consumes policy and domain evidence design.", "source_refs": ["docs/v1.1/LLD.md"]},
+      {"from": "TASK-002", "to": "TASK-003", "reason": "Candidate quality design consumes candidate normalization and provenance design.", "source_refs": ["docs/v1.1/LLD.md"]},
+      {"from": "TASK-001", "to": "TASK-004", "reason": "Retrieval design consumes retrieval policy and config design.", "source_refs": ["docs/v1.1/LLD.md"]},
+      {"from": "TASK-002", "to": "TASK-004", "reason": "Retrieval design consumes candidate URL/source provenance design.", "source_refs": ["docs/v1.1/LLD.md"]},
+      {"from": "TASK-003", "to": "TASK-004", "reason": "Retrieval design consumes the accepted retrievable-candidate evidence and quality gate contract.", "source_refs": ["docs/v1.1/LLD.md"]},
+      {"from": "TASK-001", "to": "TASK-005", "reason": "Orchestrator design consumes run input and retry model design.", "source_refs": ["docs/v1.1/HLD.md"]},
+      {"from": "TASK-002", "to": "TASK-005", "reason": "Orchestrator design consumes search design.", "source_refs": ["docs/v1.1/HLD.md"]},
+      {"from": "TASK-003", "to": "TASK-005", "reason": "Orchestrator design consumes quality/Qwen 3.5 VLM design.", "source_refs": ["docs/v1.1/HLD.md"]},
+      {"from": "TASK-004", "to": "TASK-005", "reason": "Orchestrator design consumes retrieval artifact design.", "source_refs": ["docs/v1.1/HLD.md"]},
+      {"from": "TASK-005", "to": "TASK-006", "reason": "Testing design consumes full workflow and package design.", "source_refs": ["docs/v1.1/PRD.md"]},
+      {"from": "TASK-001", "to": "TASK-007", "reason": "Acceptance reviews all detailed design documents.", "source_refs": ["tasks/design/v1.1-lld/design-planning.json"]},
+      {"from": "TASK-002", "to": "TASK-007", "reason": "Acceptance reviews all detailed design documents.", "source_refs": ["tasks/design/v1.1-lld/design-planning.json"]},
+      {"from": "TASK-003", "to": "TASK-007", "reason": "Acceptance reviews all detailed design documents.", "source_refs": ["tasks/design/v1.1-lld/design-planning.json"]},
+      {"from": "TASK-004", "to": "TASK-007", "reason": "Acceptance reviews all detailed design documents.", "source_refs": ["tasks/design/v1.1-lld/design-planning.json"]},
+      {"from": "TASK-005", "to": "TASK-007", "reason": "Acceptance reviews all detailed design documents.", "source_refs": ["tasks/design/v1.1-lld/design-planning.json"]},
+      {"from": "TASK-006", "to": "TASK-007", "reason": "Acceptance reviews all detailed design documents.", "source_refs": ["tasks/design/v1.1-lld/design-planning.json"]}
+    ],
+    "parallel_groups": [],
+    "cycle_check": {"status": "pass", "cycles": []}
+  },
+  "fixtures": [
+    {"task_id": "TASK-001", "fixture_dir": "tasks/design/v1.1-lld/fixtures/TASK-001", "prompt_path": "tasks/design/v1.1-lld/fixtures/TASK-001/PROMPT.md", "agents_path": "tasks/design/v1.1-lld/fixtures/TASK-001/AGENTS.md", "claude_path": "tasks/design/v1.1-lld/fixtures/TASK-001/CLAUDE.md", "spec_path": "tasks/design/v1.1-lld/fixtures/TASK-001/spec.yaml", "package_type": "multi_task_subtask", "relationship_doc_path": "tasks/design/v1.1-lld/fixtures/TASKS.md"},
+    {"task_id": "TASK-002", "fixture_dir": "tasks/design/v1.1-lld/fixtures/TASK-002", "prompt_path": "tasks/design/v1.1-lld/fixtures/TASK-002/PROMPT.md", "agents_path": "tasks/design/v1.1-lld/fixtures/TASK-002/AGENTS.md", "claude_path": "tasks/design/v1.1-lld/fixtures/TASK-002/CLAUDE.md", "spec_path": "tasks/design/v1.1-lld/fixtures/TASK-002/spec.yaml", "package_type": "multi_task_subtask", "relationship_doc_path": "tasks/design/v1.1-lld/fixtures/TASKS.md"},
+    {"task_id": "TASK-003", "fixture_dir": "tasks/design/v1.1-lld/fixtures/TASK-003", "prompt_path": "tasks/design/v1.1-lld/fixtures/TASK-003/PROMPT.md", "agents_path": "tasks/design/v1.1-lld/fixtures/TASK-003/AGENTS.md", "claude_path": "tasks/design/v1.1-lld/fixtures/TASK-003/CLAUDE.md", "spec_path": "tasks/design/v1.1-lld/fixtures/TASK-003/spec.yaml", "package_type": "multi_task_subtask", "relationship_doc_path": "tasks/design/v1.1-lld/fixtures/TASKS.md"},
+    {"task_id": "TASK-004", "fixture_dir": "tasks/design/v1.1-lld/fixtures/TASK-004", "prompt_path": "tasks/design/v1.1-lld/fixtures/TASK-004/PROMPT.md", "agents_path": "tasks/design/v1.1-lld/fixtures/TASK-004/AGENTS.md", "claude_path": "tasks/design/v1.1-lld/fixtures/TASK-004/CLAUDE.md", "spec_path": "tasks/design/v1.1-lld/fixtures/TASK-004/spec.yaml", "package_type": "multi_task_subtask", "relationship_doc_path": "tasks/design/v1.1-lld/fixtures/TASKS.md"},
+    {"task_id": "TASK-005", "fixture_dir": "tasks/design/v1.1-lld/fixtures/TASK-005", "prompt_path": "tasks/design/v1.1-lld/fixtures/TASK-005/PROMPT.md", "agents_path": "tasks/design/v1.1-lld/fixtures/TASK-005/AGENTS.md", "claude_path": "tasks/design/v1.1-lld/fixtures/TASK-005/CLAUDE.md", "spec_path": "tasks/design/v1.1-lld/fixtures/TASK-005/spec.yaml", "package_type": "multi_task_subtask", "relationship_doc_path": "tasks/design/v1.1-lld/fixtures/TASKS.md"},
+    {"task_id": "TASK-006", "fixture_dir": "tasks/design/v1.1-lld/fixtures/TASK-006", "prompt_path": "tasks/design/v1.1-lld/fixtures/TASK-006/PROMPT.md", "agents_path": "tasks/design/v1.1-lld/fixtures/TASK-006/AGENTS.md", "claude_path": "tasks/design/v1.1-lld/fixtures/TASK-006/CLAUDE.md", "spec_path": "tasks/design/v1.1-lld/fixtures/TASK-006/spec.yaml", "package_type": "multi_task_subtask", "relationship_doc_path": "tasks/design/v1.1-lld/fixtures/TASKS.md"},
+    {"task_id": "TASK-007", "fixture_dir": "tasks/design/v1.1-lld/fixtures/TASK-007", "prompt_path": "tasks/design/v1.1-lld/fixtures/TASK-007/PROMPT.md", "agents_path": "tasks/design/v1.1-lld/fixtures/TASK-007/AGENTS.md", "claude_path": "tasks/design/v1.1-lld/fixtures/TASK-007/CLAUDE.md", "spec_path": "tasks/design/v1.1-lld/fixtures/TASK-007/spec.yaml", "package_type": "multi_task_subtask", "relationship_doc_path": "tasks/design/v1.1-lld/fixtures/TASKS.md"}
+  ],
+  "coverage_matrix": [
+    {"source_area": "QueryPlan/config/defaults/retry", "covered_by_tasks": ["TASK-001", "TASK-007"], "verification": ["validator on TASK-001 design doc", "design acceptance"]},
+    {"source_area": "Search providers/candidates", "covered_by_tasks": ["TASK-002", "TASK-007"], "verification": ["validator on TASK-002 design doc", "design acceptance"]},
+    {"source_area": "Quality/Qwen 3.5 VLM", "covered_by_tasks": ["TASK-003", "TASK-007"], "verification": ["validator on TASK-003 design doc", "design acceptance"]},
+    {"source_area": "Retrieval artifact channels", "covered_by_tasks": ["TASK-004", "TASK-007"], "verification": ["validator on TASK-004 design doc", "design acceptance"]},
+    {"source_area": "Orchestrator/package/validation/CLI", "covered_by_tasks": ["TASK-005", "TASK-007"], "verification": ["validator on TASK-005 design doc", "design acceptance"]},
+    {"source_area": "Testing and real-service acceptance", "covered_by_tasks": ["TASK-006", "TASK-007"], "verification": ["validator on TASK-006 design doc", "design acceptance"]}
+  ],
+  "cohesion_and_independent_acceptance_review": {
+    "status": "pass",
+    "standard": "cohesive_and_independently_acceptable",
+    "reviewed_task_ids": ["TASK-001", "TASK-002", "TASK-003", "TASK-004", "TASK-005", "TASK-006", "TASK-007"],
+    "task_reviews": [
+      {"task_id": "TASK-001", "primary_design_concern": "QueryPlan/config/policy/domain", "cohesion_basis": ["single input/domain design document"], "acceptance_surface": ["docs/design/v1.1-TASK-001-queryplan-config-policy-design.md"], "dependencies_declared": [], "hidden_dependencies": [], "overlap_with_tasks": [], "acceptance_evidence": ["source PRD/HLD maps to docs/design/v1.1-TASK-001-queryplan-config-policy-design.md acceptance"], "verdict": "pass"},
+      {"task_id": "TASK-002", "primary_design_concern": "search provider and candidate design", "cohesion_basis": ["single search design document"], "acceptance_surface": ["docs/design/v1.1-TASK-002-search-provider-candidate-design.md"], "dependencies_declared": ["TASK-001"], "hidden_dependencies": [], "overlap_with_tasks": [], "acceptance_evidence": ["source PRD/HLD maps to docs/design/v1.1-TASK-002-search-provider-candidate-design.md acceptance"], "verdict": "pass"},
+      {"task_id": "TASK-003", "primary_design_concern": "quality and Qwen 3.5 VLM design", "cohesion_basis": ["single quality design document"], "acceptance_surface": ["docs/design/v1.1-TASK-003-quality-vlm-design.md"], "dependencies_declared": ["TASK-001", "TASK-002"], "hidden_dependencies": [], "overlap_with_tasks": [], "acceptance_evidence": ["source PRD/HLD maps to docs/design/v1.1-TASK-003-quality-vlm-design.md acceptance"], "verdict": "pass"},
+      {"task_id": "TASK-004", "primary_design_concern": "retrieval artifact channel design", "cohesion_basis": ["single retrieval design document"], "acceptance_surface": ["docs/design/v1.1-TASK-004-retrieval-artifact-channel-design.md"], "dependencies_declared": ["TASK-001", "TASK-002", "TASK-003"], "hidden_dependencies": [], "overlap_with_tasks": [], "acceptance_evidence": ["source PRD/HLD maps to docs/design/v1.1-TASK-004-retrieval-artifact-channel-design.md acceptance"], "verdict": "pass"},
+      {"task_id": "TASK-005", "primary_design_concern": "orchestrator package validation CLI design", "cohesion_basis": ["single integration design document"], "acceptance_surface": ["docs/design/v1.1-TASK-005-orchestrator-package-validation-cli-design.md"], "dependencies_declared": ["TASK-001", "TASK-002", "TASK-003", "TASK-004"], "hidden_dependencies": [], "overlap_with_tasks": [], "acceptance_evidence": ["source PRD/HLD maps to docs/design/v1.1-TASK-005-orchestrator-package-validation-cli-design.md acceptance"], "verdict": "pass"},
+      {"task_id": "TASK-006", "primary_design_concern": "testing and real-service acceptance design", "cohesion_basis": ["single testing design document"], "acceptance_surface": ["docs/design/v1.1-TASK-006-testing-real-service-acceptance-design.md"], "dependencies_declared": ["TASK-005"], "hidden_dependencies": [], "overlap_with_tasks": [], "acceptance_evidence": ["source PRD/HLD maps to docs/design/v1.1-TASK-006-testing-real-service-acceptance-design.md acceptance"], "verdict": "pass"},
+      {"task_id": "TASK-007", "primary_design_concern": "final design acceptance", "cohesion_basis": ["single acceptance report"], "acceptance_surface": ["docs/design/v1.1-TASK-007-detailed-design-acceptance-review.md"], "dependencies_declared": ["TASK-001", "TASK-002", "TASK-003", "TASK-004", "TASK-005", "TASK-006"], "hidden_dependencies": [], "overlap_with_tasks": [], "acceptance_evidence": ["source planning maps to docs/design/v1.1-TASK-007-detailed-design-acceptance-review.md acceptance"], "verdict": "pass"}
+    ],
+    "split_required": [],
+    "merge_required": [],
+    "hidden_dependencies": [],
+    "acceptance_evidence": ["source traceability for one docs/design deliverable per task", "verify command per spec.yaml", "acceptance review task covers all tasks"],
+    "review_reasoning": ["Each task owns one design concern and one future docs/design deliverable."]
+  },
+  "design_acceptance": {
+    "task_id": "TASK-007",
+    "report_path": "docs/design/v1.1-TASK-007-detailed-design-acceptance-review.md",
+    "standards": ["source traceability", "coverage quality", "handoff readiness", "complete design document set", "control/data flow coverage", "Rust module and trait/type precision", "no-code compliance", "explicit blockers"],
+    "methods": ["read design-planning.json", "check every planned docs/design document", "verify each deliverable with validator", "review coverage matrix", "write acceptance report"],
+    "evidence_required": ["design-planning.json", "docs/design deliverables", "spec.yaml verify commands", "validate_design_doc_quality.py", "all six detailed design docs", "all task fixture directories", "validator output", "acceptance report"],
+    "verification_commands_or_checks": ["verify validator command from each spec.yaml", "review acceptance-mode validator for TASK-007 report"],
+    "pass_fail_rules": ["missing design doc fails", "failed validator fails", "source traceability gap fails", "unresolved blocker not recorded fails", "code/test/manifest changes during design task fail"],
+    "blocker_conditions": ["missing design doc", "failed validator", "unresolved PRD/HLD contradiction", "Qwen 3.5 VLM adapter boundary cannot be designed without hard-coded credentials or product-scope changes", "provider decision absent where design needs concrete default", "quality validator unavailable"],
+    "source_traceability_required": true,
+    "coverage_required": true
+  },
+  "planning_gate_report": [
+    {"gate": "source_readiness", "status": "pass", "evidence": "PRD, HLD, completion design, and source module evidence inventoried."},
+    {"gate": "traceability", "status": "pass", "evidence": "coverage_matrix maps source areas to tasks."},
+    {"gate": "project_context_readiness", "status": "pass", "evidence": "Rust CLI stack identified from Cargo/src evidence."},
+    {"gate": "control_flow_readiness", "status": "pass", "evidence": "Runtime/orchestrator control flow is assigned to TASK-005."},
+    {"gate": "data_flow_readiness", "status": "pass", "evidence": "QueryPlan, candidate, artifact, package, and validation data flows are assigned across TASK-001 through TASK-006."},
+    {"gate": "technical_decision_readiness", "status": "pass", "evidence": "Known unresolved external decisions are tracked as open_questions and stop_conditions."},
+    {"gate": "staged_review_readiness", "status": "pass", "evidence": "All required planning_review_stages are present and passing."},
+    {"gate": "dag_soundness", "status": "pass", "evidence": "cycle_check.status=pass."},
+    {"gate": "parallel_safety", "status": "pass", "evidence": "Dependent design tasks are serialized through DAG edges; acceptance depends on all tasks."},
+    {"gate": "task_fixture_readiness", "status": "pass", "evidence": "Every task has PROMPT.md, AGENTS.md, CLAUDE.md, and spec.yaml."},
+    {"gate": "spec_executor_contract", "status": "pass", "evidence": "spec_executor_handoff declares version, repo, runtime, task package files, and process files."},
+    {"gate": "spec_executor_repo_availability", "status": "warning", "evidence": "Generated package is local working-tree content and requires publish before remote execution."},
+    {"gate": "verify_runtime_readiness", "status": "pass", "evidence": "Python 3 command strategy is declared for py -3, python3, and python."},
+    {"gate": "quality_context_contract", "status": "pass", "evidence": "Validator and planning JSON are included as process files."},
+    {"gate": "design_doc_quality_gate", "status": "pass", "evidence": "Each spec.yaml verifies the planned docs/design deliverable with validate_design_doc_quality.py."},
+    {"gate": "design_acceptance_task", "status": "pass", "evidence": "TASK-007 depends on all detailed design tasks."},
+    {"gate": "acceptance_contract", "status": "pass", "evidence": "design_acceptance object defines standards, methods, evidence, checks, fail rules, blockers, traceability, and coverage."},
+    {"gate": "cohesion_independent_acceptance", "status": "pass", "evidence": "cohesion review status pass."},
+    {"gate": "planning_only_boundary", "status": "pass", "evidence": "No planned docs/design deliverable is created by this planning JSON."},
+    {"gate": "no_starter_prompt_template", "status": "pass", "evidence": "Fixtures are task-specific and include exact design_doc_path values."}
+  ],
+  "external_dependencies": [
+    {"dependency": "default broad image search provider", "status": "closed", "planning_handling": "Product decision recorded after planning: use SerpApi Google Images as the v1.1 default ImageSearch provider. Detailed design tasks must require a `serpapi_google_images` adapter, `SERPAPI_API_KEY` by default, and real-service smoke evidence."},
+    {"dependency": "default subjective evaluation provider", "status": "closed", "planning_handling": "Product decision recorded after planning: use direct Qwen 3.5 VLM via `qwen_3_5_vlm`, default token env `QWEN_API_TOKEN`, and externalized endpoint/model config. Design tasks must require adapter readiness, redaction, response validation, and real-service smoke evidence."},
+    {"dependency": "paid retrieval enablement", "status": "open", "planning_handling": "Paid channel design remains disabled-by-default."},
+    {"dependency": "robots/site-rule and authorization policy", "status": "open", "planning_handling": "Policy design must expose blocker/warning behavior."}
+  ],
+  "open_questions": [
+    "Can paid retrieval be used in real-service verification?",
+    "What robots/site-rule and authorization policy is required?"
+  ],
+  "required_fixes": []
+}

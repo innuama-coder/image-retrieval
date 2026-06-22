@@ -1,0 +1,8 @@
+# macOS
+.DS_Store
+
+# Rust build artifacts
+/target
+
+# Local diagnostic bundles (not for the repo)
+tasks/development/spec-exec-rust-toolchain-bug.zip

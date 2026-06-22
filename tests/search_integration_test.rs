@@ -1,3 +1,4 @@
+#![allow(deprecated, unused_imports)]
 //! Search integration tests.
 //!
 //! End-to-end scenarios covering provider registration, weighted scheduling,

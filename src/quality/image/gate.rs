@@ -1,3 +1,4 @@
+#![allow(deprecated)]
 //! Image Acceptance Gate — mechanical + OpenClaw evaluation orchestrator.
 //!
 //! Implements the "先机械、后主观、再归一" flow for images:

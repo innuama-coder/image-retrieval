@@ -1,3 +1,4 @@
+#![allow(deprecated)]
 //! Candidate mechanical validation — blocking reasons and reference signals.
 //!
 //! References: PRD §校验与评价产品要求, HLD §Candidate Quality Gate,
@@ -307,13 +308,274 @@ pub fn validate_candidate_mechanical(
 }
 
 // ---------------------------------------------------------------------------
+// v1.1 candidate mechanical validation — produces MetricFact-based assessment
+// ---------------------------------------------------------------------------
+
+/// Run v1.1 mechanical validation on a single candidate.
+///
+/// Returns a [`CandidateMechanicalAssessment`] with typed [`MetricFact`]s
+/// instead of the legacy string-based evidence.
+///
+/// Checks:
+/// 1. Image URL missing or invalid → `CANDIDATE_IMAGE_URL_MISSING` / `CANDIDATE_IMAGE_URL_INVALID`
+/// 2. Query ownership mismatch → `CANDIDATE_QUERY_OWNERSHIP_MISMATCH`
+/// 3. Duplicate → `CANDIDATE_DUPLICATE_BLOCKED`
+/// 4. Negative scope contradiction → `CANDIDATE_NEGATIVE_SCOPE_CONTRADICTION`
+/// 5. Below absolute dimensions → `CANDIDATE_BELOW_ABSOLUTE_DIMENSIONS`
+pub fn validate_candidate_mechanical_v11(
+    candidate: &CandidateRecord,
+    expected_query_plan_id: &str,
+    seen_urls: &HashSet<String>,
+    prohibited_domains: &[String],
+    negative_scope: &[String],
+    fixture_mode: bool,
+) -> crate::domain::candidate::CandidateMechanicalAssessment {
+    use crate::domain::candidate::CandidateMechanicalAssessment;
+    use crate::domain::metrics::{MetricFact, QualityMetricCode};
+
+    let candidate_id = candidate.candidate_id.clone();
+    let query_plan_id = expected_query_plan_id.to_string();
+    let mut blocking = Vec::new();
+    let mut reference = Vec::new();
+
+    // 1. Image URL check
+    let url = candidate.image_url.trim();
+    if url.is_empty() {
+        blocking.push(MetricFact::candidate_blocking(
+            QualityMetricCode::CandidateImageUrlMissing,
+            candidate_id.to_string(),
+            &query_plan_id,
+            "candidate image URL is missing",
+        ));
+    } else if !url.starts_with("http://") && !url.starts_with("https://") {
+        blocking.push(MetricFact::candidate_blocking(
+            QualityMetricCode::CandidateImageUrlInvalid,
+            candidate_id.to_string(),
+            &query_plan_id,
+            format!("candidate image URL has unsupported scheme: {}", url),
+        ));
+    }
+
+    // 2. Query ownership mismatch
+    if candidate.query_plan_id != expected_query_plan_id {
+        blocking.push(MetricFact::candidate_blocking(
+            QualityMetricCode::CandidateQueryOwnershipMismatch,
+            candidate_id.to_string(),
+            &query_plan_id,
+            format!(
+                "candidate query_plan_id '{}' != expected '{}'",
+                candidate.query_plan_id, expected_query_plan_id
+            ),
+        ));
+    }
+
+    // 3. Duplicate detection
+    if !url.is_empty() && seen_urls.contains(url) {
+        blocking.push(MetricFact::candidate_blocking(
+            QualityMetricCode::CandidateDuplicateBlocked,
+            candidate_id.to_string(),
+            &query_plan_id,
+            "candidate is a duplicate of a previously-seen candidate",
+        ));
+    }
+
+    // 4. Prohibited source domain
+    if !url.is_empty() {
+        let url_lower = url.to_lowercase();
+        for domain in prohibited_domains {
+            let domain_lower = domain.to_lowercase();
+            if url_lower.contains(&domain_lower) {
+                blocking.push(MetricFact::candidate_blocking(
+                    QualityMetricCode::CandidateProhibitedSource,
+                    candidate_id.to_string(),
+                    &query_plan_id,
+                    format!("candidate source domain '{}' is prohibited", domain),
+                ));
+                break;
+            }
+        }
+    }
+
+    // 5. Negative scope contradiction
+    if let Some(ref title) = candidate.title {
+        let lower_title = title.to_lowercase();
+        for neg in negative_scope {
+            if lower_title.contains(&neg.to_lowercase()) {
+                blocking.push(MetricFact::candidate_blocking(
+                    QualityMetricCode::CandidateNegativeScopeContradiction,
+                    candidate_id.to_string(),
+                    &query_plan_id,
+                    format!(
+                        "candidate title contradicts negative scope '{}': {:?}",
+                        neg, title
+                    ),
+                ));
+                break;
+            }
+        }
+    }
+
+    // 6. Dimensions check
+    if let Some(w) = candidate.width {
+        if let Some(h) = candidate.height {
+            const MIN_WIDTH: u32 = 2;
+            const MIN_HEIGHT: u32 = 2;
+            if w < MIN_WIDTH || h < MIN_HEIGHT {
+                blocking.push(
+                    MetricFact::candidate_blocking(
+                        QualityMetricCode::CandidateBelowAbsoluteDimensions,
+                        candidate_id.to_string(),
+                        &query_plan_id,
+                        format!(
+                            "dimensions {}x{} below absolute minimum {}x{}",
+                            w, h, MIN_WIDTH, MIN_HEIGHT
+                        ),
+                    )
+                    .with_value(format!("{}x{}", w, h))
+                    .with_threshold(format!("{}x{}", MIN_WIDTH, MIN_HEIGHT)),
+                );
+            }
+        }
+    }
+
+    // 7. Fixture check: block fixture candidates in production (non-fixture) mode
+    if !fixture_mode && candidate.provider_kind == "fixture" {
+        blocking.push(MetricFact::candidate_blocking(
+            QualityMetricCode::CandidateFixtureNotProduction,
+            candidate_id.to_string(),
+            &query_plan_id,
+            "fixture candidate evidence cannot be used in production mode",
+        ));
+    }
+
+    // --- Reference metrics ---
+
+    // Provider rank
+    reference.push(MetricFact::candidate_reference(
+        QualityMetricCode::CandidateProviderRank,
+        candidate_id.to_string(),
+        &query_plan_id,
+        format!(
+            "provider rank: {}, global hint: {}",
+            candidate.provider_rank,
+            candidate
+                .global_rank_hint
+                .map_or("none".into(), |r| r.to_string())
+        ),
+    ));
+
+    // Dimensions reported
+    match (candidate.width, candidate.height) {
+        (Some(w), Some(h)) => {
+            reference.push(MetricFact::candidate_reference(
+                QualityMetricCode::CandidateDimensionsReported,
+                candidate_id.to_string(),
+                &query_plan_id,
+                format!("dimensions: {}x{}", w, h),
+            ));
+        }
+        _ => {
+            reference.push(MetricFact::candidate_reference(
+                QualityMetricCode::CandidateDimensionsReported,
+                candidate_id.to_string(),
+                &query_plan_id,
+                "dimensions not reported by provider",
+            ));
+        }
+    }
+
+    // Source page present
+    if candidate.source_page_url.is_some() {
+        reference.push(MetricFact::candidate_reference(
+            QualityMetricCode::CandidateSourcePagePresent,
+            candidate_id.to_string(),
+            &query_plan_id,
+            "source page URL present",
+        ));
+    } else {
+        reference.push(MetricFact::candidate_reference(
+            QualityMetricCode::CandidateSourcePagePresent,
+            candidate_id.to_string(),
+            &query_plan_id,
+            "source page URL absent",
+        ));
+    }
+
+    // License hint
+    if let Some(ref license) = candidate.license_hint {
+        reference.push(MetricFact::candidate_reference(
+            QualityMetricCode::CandidateLicenseHint,
+            candidate_id.to_string(),
+            &query_plan_id,
+            format!("license hint: {}", license),
+        ));
+    } else {
+        reference.push(MetricFact::candidate_reference(
+            QualityMetricCode::CandidateLicenseHint,
+            candidate_id.to_string(),
+            &query_plan_id,
+            "no license information",
+        ));
+    }
+
+    // Source authority hint
+    if let Some(ref hint) = candidate.provenance.source_authority_hint {
+        reference.push(MetricFact::candidate_reference(
+            QualityMetricCode::CandidateSourceAuthorityHint,
+            candidate_id.to_string(),
+            &query_plan_id,
+            format!("source authority: {}", hint),
+        ));
+    }
+
+    // Text context match
+    let snippet_info = match (&candidate.title, &candidate.snippet) {
+        (Some(t), Some(s)) => format!("title: {}, snippet: {}", t, s),
+        (Some(t), None) => format!("title: {}", t),
+        (None, Some(s)) => format!("snippet: {}", s),
+        (None, None) => "no text context".into(),
+    };
+    reference.push(MetricFact::candidate_reference(
+        QualityMetricCode::CandidateTextContextMatch,
+        candidate_id.to_string(),
+        &query_plan_id,
+        snippet_info,
+    ));
+
+    // Diversity signal
+    reference.push(MetricFact::candidate_reference(
+        QualityMetricCode::CandidateDiversitySignal,
+        candidate_id.to_string(),
+        &query_plan_id,
+        format!(
+            "source: {}, provider: {}",
+            candidate.provider_id,
+            candidate
+                .provenance
+                .source_authority_hint
+                .as_deref()
+                .unwrap_or("unknown")
+        ),
+    ));
+
+    CandidateMechanicalAssessment {
+        candidate_id,
+        query_plan_id,
+        passed: blocking.is_empty(),
+        blocking_metrics: blocking,
+        reference_metrics: reference,
+        evaluated_at: String::new(),
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::candidate::{CandidateId, ImageDimensions, ProviderId};
+    use crate::domain::candidate::{CandidateId, ProviderId};
 
     fn make_candidate(id: &str, url: &str, title: Option<&str>) -> CandidateRecord {
         let cid = CandidateId::new(id);

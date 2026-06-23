@@ -352,12 +352,18 @@ impl QueryPlanId {
 
     /// Generate a new unique id.
     pub fn generate() -> Self {
+        use std::sync::atomic::{AtomicU64, Ordering};
         use std::time::{SystemTime, UNIX_EPOCH};
+        // A process-local monotonic counter guarantees uniqueness even when two
+        // calls land in the same nanosecond (the timestamp alone collides under
+        // load — see the regression this fixes).
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_nanos())
             .unwrap_or(0);
-        Self(format!("qp-{:016x}", nanos))
+        let seq = COUNTER.fetch_add(1, Ordering::Relaxed);
+        Self(format!("qp-{:016x}-{:x}", nanos, seq))
     }
 }
 

@@ -157,7 +157,7 @@ fn main() {
     let result = match &cli.command {
         Command::Run {
             query_plan,
-            config: _config,
+            config,
             output_dir,
             mode,
             format,
@@ -168,6 +168,7 @@ fn main() {
             let qp_path = plan.as_ref().unwrap_or(query_plan);
             cmd_run(
                 qp_path,
+                config,
                 output_dir,
                 mode,
                 format,
@@ -206,6 +207,7 @@ fn main() {
 
 fn cmd_run(
     query_plan_path: &str,
+    config_path: &str,
     output_dir: &str,
     mode: &str,
     format: &str,
@@ -289,18 +291,38 @@ fn cmd_run(
         return Ok(None);
     }
 
-    // 7. Full pipeline loop (simplified — real search/retrieval/VLM adapters
-    //    are called through their trait boundaries when configured)
+    // 7. Full pipeline loop.
+    //
+    // Production mode runs the real end-to-end pipeline (search → candidate
+    // quality gate + Qwen VLM → retrieval → image acceptance gate + Qwen VLM),
+    // recording accepted images and coverage gaps into the orchestrator.
+    // Fixture and other non-dry-run modes stay on the attempt-tracking path
+    // until their fixtures are wired through this module.
     let attempt = orchestrator.start_attempt();
 
-    // In a full production run, this would call:
-    //   - search provider adapter (TASK-002)
-    //   - candidate quality gate + VLM (TASK-003)
-    //   - retrieval channel (TASK-004)
-    //   - image acceptance gate + VLM (TASK-003)
-    //
-    // For now, the orchestrator tracks attempts properly and produces
-    // the correct status based on what upstream tasks produce.
+    if execution_mode == ExecutionMode::Production {
+        let config = match std::fs::read_to_string(config_path) {
+            Ok(s) => match toml::from_str::<image_retrieval::domain::config::RuntimeConfig>(&s) {
+                Ok(cfg) => cfg,
+                Err(e) => {
+                    let msg = format!("Cannot parse runtime config '{}': {}", config_path, e);
+                    print_error(&msg, format);
+                    return Err(exit_code::CONFIG_ERROR);
+                }
+            },
+            Err(e) => {
+                let msg = format!("Cannot read runtime config '{}': {}", config_path, e);
+                print_error(&msg, format);
+                return Err(exit_code::CONFIG_ERROR);
+            }
+        };
+
+        image_retrieval::pipeline::execute_production_attempt(
+            &config,
+            &validated,
+            &mut orchestrator,
+        )?;
+    }
 
     orchestrator.finish_attempt(attempt);
 

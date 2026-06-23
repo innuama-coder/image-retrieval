@@ -27,6 +27,7 @@ pub mod search;
 pub mod delivery;
 pub mod observability;
 pub mod orchestrator;
+pub mod pipeline;
 pub mod policy;
 pub mod quality;
 pub mod self_check;

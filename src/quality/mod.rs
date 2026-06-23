@@ -7,6 +7,7 @@
 
 pub mod candidate;
 pub mod image;
+pub mod qwen_vlm;
 
 /// Re-export quality-related domain types for convenience.
 pub use crate::domain::candidate::CandidateDecision;

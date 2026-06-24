@@ -23,15 +23,20 @@
 
 use clap::{Parser, Subcommand};
 use image_retrieval::delivery::build_canonical_package;
+use image_retrieval::domain::config::{
+    RetrievalChannelKind, RuntimeConfig, SearchProviderKind, VlmEvaluatorKind,
+};
 use image_retrieval::domain::delivery::{ExecutionMode, PackageStatus, RunRequest};
 use image_retrieval::domain::query_plan::{validate_query_plan, QueryPlanInput};
+use image_retrieval::domain::search::{ProviderReadiness, ProviderReadinessStatus};
 use image_retrieval::orchestrator::RunOrchestrator;
+use image_retrieval::pipeline::build_provider_registry;
 use image_retrieval::self_check::{
     format_self_check_v11, run_self_check_v11, ChannelReadinessEntry, ProviderReadinessEntry,
     SelfCheckRequestV11,
 };
 use image_retrieval::validation::{
-    validate_package_dir, PackageValidationRequest, PackageValidator,
+    validate_package_dir_with_mode, PackageValidationRequest, PackageValidator,
 };
 use std::path::PathBuf;
 use std::process;
@@ -68,7 +73,7 @@ enum Command {
         output_dir: String,
 
         /// Execution mode: production, fixture, or dry-run.
-        #[arg(long, default_value = "fixture")]
+        #[arg(long, default_value = "production")]
         mode: String,
 
         /// Output format: human or json.
@@ -106,6 +111,10 @@ enum Command {
         /// Path to the package directory.
         #[arg(long)]
         package_dir: String,
+
+        /// Validation mode: production, fixture, or dry-run.
+        #[arg(long, default_value = "production")]
+        execution_mode: String,
 
         /// Output format: human or json.
         #[arg(long, default_value = "human")]
@@ -177,15 +186,16 @@ fn main() {
             )
         }
         Command::SelfCheck {
-            config: _config,
+            config,
             query_plan,
             format,
-        } => cmd_self_check(query_plan, format),
+        } => cmd_self_check(config, query_plan, format),
         Command::ValidatePackage {
             package_dir,
+            execution_mode,
             format,
             write_report,
-        } => cmd_validate_package(package_dir, format, *write_report),
+        } => cmd_validate_package(package_dir, execution_mode, format, *write_report),
         Command::InspectPackage {
             package_dir,
             format,
@@ -212,8 +222,16 @@ fn cmd_run(
     mode: &str,
     format: &str,
     fail_on_partial: bool,
-    _allow_fixture: bool,
+    allow_fixture: bool,
 ) -> Result<Option<i32>, i32> {
+    if allow_fixture {
+        print_error(
+            "--allow-fixture is deprecated and unsupported; use --mode fixture for fixture-only runs.",
+            format,
+        );
+        return Err(exit_code::INPUT_ERROR);
+    }
+
     // 1. Load QueryPlan
     let input = load_query_plan(query_plan_path)?;
 
@@ -235,19 +253,7 @@ fn cmd_run(
     };
 
     // 3. Determine execution mode
-    let execution_mode = match mode {
-        "production" => ExecutionMode::Production,
-        "fixture" => ExecutionMode::Fixture,
-        "dry-run" => ExecutionMode::DryRun,
-        other => {
-            let msg = format!(
-                "Invalid execution mode: {} (use production, fixture, or dry-run)",
-                other
-            );
-            print_error(&msg, format);
-            return Err(exit_code::INPUT_ERROR);
-        }
-    };
+    let execution_mode = parse_execution_mode(mode, format)?;
 
     // 4. Build run request
     let run_id = format!(
@@ -298,47 +304,60 @@ fn cmd_run(
     // recording accepted images and coverage gaps into the orchestrator.
     // Fixture and other non-dry-run modes stay on the attempt-tracking path
     // until their fixtures are wired through this module.
-    let attempt = orchestrator.start_attempt();
+    let production_config = if execution_mode == ExecutionMode::Production {
+        Some(load_runtime_config(config_path, format)?)
+    } else {
+        None
+    };
 
-    if execution_mode == ExecutionMode::Production {
-        let config = match std::fs::read_to_string(config_path) {
-            Ok(s) => match toml::from_str::<image_retrieval::domain::config::RuntimeConfig>(&s) {
-                Ok(cfg) => cfg,
-                Err(e) => {
-                    let msg = format!("Cannot parse runtime config '{}': {}", config_path, e);
-                    print_error(&msg, format);
-                    return Err(exit_code::CONFIG_ERROR);
-                }
-            },
-            Err(e) => {
-                let msg = format!("Cannot read runtime config '{}': {}", config_path, e);
-                print_error(&msg, format);
-                return Err(exit_code::CONFIG_ERROR);
-            }
-        };
+    loop {
+        let accepted_before = orchestrator.accepted_count();
+        let gaps_before = orchestrator.gaps.len() as u32;
+        let mut attempt = orchestrator.start_attempt();
 
-        image_retrieval::pipeline::execute_production_attempt(
-            &config,
-            &validated,
-            &mut orchestrator,
-        )?;
+        if let Some(config) = production_config.as_ref() {
+            let summary = image_retrieval::pipeline::execute_production_attempt(
+                config,
+                &validated,
+                &mut orchestrator,
+            )?;
+            attempt.search_candidate_count = summary.search_candidate_count as u32;
+            attempt.retrievable_candidate_count = summary.retrievable_candidate_count as u32;
+            attempt.retrieval_job_count = summary.retrieval_job_count as u32;
+            attempt.retrieval_complete_count = summary.retrieval_complete_count as u32;
+        } else {
+            orchestrator.record_gap(
+                image_retrieval::domain::delivery::CoverageGapType::ExternalDecisionBlocked,
+                validated.required_count,
+                image_retrieval::domain::delivery::WorkflowFailureCode::BlockedDelivery,
+                image_retrieval::domain::delivery::PipelineStage::ProviderReadiness,
+                "Non-production fixture mode does not create production delivery evidence.",
+                true,
+            );
+        }
+
+        attempt.accepted_delta_count = orchestrator
+            .accepted_count()
+            .saturating_sub(accepted_before);
+        attempt.gap_delta_count = (orchestrator.gaps.len() as u32).saturating_sub(gaps_before);
+        orchestrator.finish_attempt(attempt);
+
+        if orchestrator.target_met() {
+            break;
+        }
+        if !orchestrator.advance_to_retry() {
+            orchestrator.record_diagnostic(
+                image_retrieval::domain::delivery::WorkflowDiagnostic::blocker(
+                    image_retrieval::domain::delivery::WorkflowFailureCode::RetryExhausted,
+                    image_retrieval::domain::delivery::PipelineStage::CoverageCheck,
+                    "Retries exhausted without meeting required image count.",
+                ),
+            );
+            break;
+        }
     }
-
-    orchestrator.finish_attempt(attempt);
 
     // 8. Determine final state
-    if orchestrator.is_exhausted_without_target() {
-        // In a real run, gaps would have been recorded by search/quality/retrieval stages.
-        // Since we have no real adapters connected, if target isn't met after exhaustion,
-        // we produce blocked (no images) or partial (some images) based on accepted.
-        orchestrator.record_diagnostic(
-            image_retrieval::domain::delivery::WorkflowDiagnostic::blocker(
-                image_retrieval::domain::delivery::WorkflowFailureCode::RetryExhausted,
-                image_retrieval::domain::delivery::PipelineStage::CoverageCheck,
-                "Retries exhausted without meeting required image count.",
-            ),
-        );
-    }
     orchestrator.state.update_status();
 
     // 9. Build canonical package
@@ -360,11 +379,17 @@ fn cmd_run(
     };
 
     // 10. Run package validator
-    let validation_result = validate_package_dir(&package_dir);
+    let validation_result = validate_package_dir_with_mode(&package_dir, execution_mode);
     let validation_passed = match &validation_result {
         Ok(report) => report.status == image_retrieval::domain::delivery::ValidationStatus::Pass,
         Err(_) => false,
     };
+    if let Ok(report) = &validation_result {
+        let val_path = package_dir.join("validation.json");
+        if let Ok(content) = serde_json::to_string_pretty(report) {
+            let _ = std::fs::write(&val_path, content);
+        }
+    }
 
     if let Ok(report) = &validation_result {
         if format == "human" {
@@ -425,7 +450,11 @@ fn cmd_run(
 // self-check command
 // ===========================================================================
 
-fn cmd_self_check(query_plan_path: &Option<String>, format: &str) -> Result<Option<i32>, i32> {
+fn cmd_self_check(
+    config_path: &str,
+    query_plan_path: &Option<String>,
+    format: &str,
+) -> Result<Option<i32>, i32> {
     // Load QueryPlan if provided
     let query_plan_input = if let Some(path) = query_plan_path {
         load_query_plan(path)?
@@ -436,37 +465,17 @@ fn cmd_self_check(query_plan_path: &Option<String>, format: &str) -> Result<Opti
         }
     };
 
-    // Build v1.1 self-check request with sensible defaults
+    let config = load_runtime_config(config_path, format)?;
+
     let request = SelfCheckRequestV11 {
         query_plan_input,
-        providers: vec![ProviderReadinessEntry {
-            provider_id: "serpapi_google_images".into(),
-            display_name: "SerpApi Google Images".into(),
-            enabled: std::env::var("SERPAPI_API_KEY").is_ok(),
-            weight: 1,
-            readiness: if std::env::var("SERPAPI_API_KEY").is_ok() {
-                image_retrieval::domain::search::ProviderReadiness::Ready
-            } else {
-                image_retrieval::domain::search::ProviderReadiness::MissingCredentials
-            },
-            reason: if std::env::var("SERPAPI_API_KEY").is_ok() {
-                Some("SERPAPI_API_KEY configured".into())
-            } else {
-                Some("SERPAPI_API_KEY not set — search provider unavailable".into())
-            },
-        }],
-        channels: vec![ChannelReadinessEntry {
-            channel_id: "normal_web_fetch".into(),
-            display_name: "Normal Web Fetch".into(),
-            tier: "web_fetch".into(),
-            enabled: true,
-            readiness: image_retrieval::domain::retrieval::RetrievalChannelReadiness::Ready,
-            reason: Some("normal web fetch available as fallback".into()),
-        }],
-        vlm_available: std::env::var("QWEN_API_TOKEN").is_ok(),
-        vlm_credential_configured: std::env::var("QWEN_API_TOKEN").is_ok(),
-        vlm_endpoint_configured: true,
-        paid_channel_confirmed: false,
+        providers: self_check_provider_entries(&config),
+        channels: self_check_channel_entries(&config),
+        vlm_provider_id: config.vlm_evaluation.provider_id.clone(),
+        vlm_available: vlm_available(&config),
+        vlm_credential_configured: vlm_credential_configured(&config),
+        vlm_endpoint_configured: vlm_endpoint_configured(&config),
+        paid_channel_confirmed: config.policy.allow_paid_channels,
         output_dir_writable: true,
         policy_risks: vec![],
     };
@@ -498,13 +507,15 @@ fn cmd_self_check(query_plan_path: &Option<String>, format: &str) -> Result<Opti
 
 fn cmd_validate_package(
     package_dir: &str,
+    execution_mode: &str,
     format: &str,
     write_report: bool,
 ) -> Result<Option<i32>, i32> {
+    let execution_mode = parse_execution_mode(execution_mode, format)?;
     let validator = PackageValidator::new();
     let request = PackageValidationRequest {
         package_dir: PathBuf::from(package_dir),
-        execution_mode: ExecutionMode::Fixture,
+        execution_mode,
         expected_query_plan_id: None,
     };
 
@@ -691,6 +702,172 @@ fn cmd_inspect_package(package_dir: &str, format: &str, show: &str) -> Result<Op
 // Helpers
 // ===========================================================================
 
+fn load_runtime_config(path: &str, format: &str) -> Result<RuntimeConfig, i32> {
+    match std::fs::read_to_string(path) {
+        Ok(s) => match toml::from_str::<RuntimeConfig>(&s) {
+            Ok(cfg) => Ok(cfg),
+            Err(e) => {
+                let msg = format!("Cannot parse runtime config '{}': {}", path, e);
+                print_error(&msg, format);
+                Err(exit_code::CONFIG_ERROR)
+            }
+        },
+        Err(e) => {
+            let msg = format!("Cannot read runtime config '{}': {}", path, e);
+            print_error(&msg, format);
+            Err(exit_code::CONFIG_ERROR)
+        }
+    }
+}
+
+fn self_check_provider_entries(config: &RuntimeConfig) -> Vec<ProviderReadinessEntry> {
+    let fixture_mode = config
+        .providers
+        .iter()
+        .any(|provider| provider.provider_kind == SearchProviderKind::Fixture);
+    let previous_fixture_mode = std::env::var("IMAGE_RETRIEVAL_FIXTURE_MODE").ok();
+    if fixture_mode {
+        std::env::set_var("IMAGE_RETRIEVAL_FIXTURE_MODE", "1");
+    }
+
+    let registry = build_provider_registry(config);
+    let mut entries = registry
+        .evaluate_readiness()
+        .into_iter()
+        .map(|report| ProviderReadinessEntry {
+            provider_id: report.provider_id.to_string(),
+            display_name: report.display_name,
+            enabled: report.status != ProviderReadinessStatus::Disabled,
+            weight: report.configured_weight as i32,
+            readiness: legacy_provider_readiness(&report.status),
+            reason: report
+                .evidence
+                .first()
+                .map(|e| e.message.clone())
+                .or_else(|| Some(report.status.to_string())),
+        })
+        .collect::<Vec<_>>();
+
+    match previous_fixture_mode {
+        Some(value) => std::env::set_var("IMAGE_RETRIEVAL_FIXTURE_MODE", value),
+        None if fixture_mode => std::env::remove_var("IMAGE_RETRIEVAL_FIXTURE_MODE"),
+        None => {}
+    }
+
+    entries.sort_by(|a, b| a.provider_id.cmp(&b.provider_id));
+    entries
+}
+
+fn legacy_provider_readiness(status: &ProviderReadinessStatus) -> ProviderReadiness {
+    match status {
+        ProviderReadinessStatus::Ready => ProviderReadiness::Ready,
+        ProviderReadinessStatus::Disabled => ProviderReadiness::Disabled,
+        ProviderReadinessStatus::MissingCredentials => ProviderReadiness::MissingCredentials,
+        ProviderReadinessStatus::Misconfigured => ProviderReadiness::Misconfigured,
+        ProviderReadinessStatus::QuotaExhausted => ProviderReadiness::RateLimited,
+        ProviderReadinessStatus::HealthFailed
+        | ProviderReadinessStatus::ConstraintUnsupported
+        | ProviderReadinessStatus::Retired
+        | ProviderReadinessStatus::FixtureOnly
+        | ProviderReadinessStatus::Unavailable => ProviderReadiness::Unavailable,
+    }
+}
+
+fn self_check_channel_entries(config: &RuntimeConfig) -> Vec<ChannelReadinessEntry> {
+    config
+        .retrieval_channels
+        .iter()
+        .map(|channel| {
+            let credential_configured = channel
+                .credential_env
+                .as_deref()
+                .map(|env| std::env::var(env).is_ok())
+                .unwrap_or(true);
+            let is_paid = matches!(
+                channel.channel_kind,
+                RetrievalChannelKind::PaidOnlineService
+            ) || channel.tier.is_paid();
+            let paid_allowed = !is_paid || config.policy.allow_paid_channels;
+            let artifact_capable = matches!(
+                channel.channel_kind,
+                RetrievalChannelKind::NormalWebFetch | RetrievalChannelKind::Fixture
+            );
+            let ready =
+                channel.enabled && credential_configured && paid_allowed && artifact_capable;
+            let readiness = if ready {
+                image_retrieval::domain::retrieval::RetrievalChannelReadiness::Ready
+            } else if is_paid && !paid_allowed {
+                image_retrieval::domain::retrieval::RetrievalChannelReadiness::PaidUnconfirmed
+            } else if !channel.enabled {
+                image_retrieval::domain::retrieval::RetrievalChannelReadiness::Disabled
+            } else if !credential_configured {
+                image_retrieval::domain::retrieval::RetrievalChannelReadiness::MissingDependency
+            } else {
+                image_retrieval::domain::retrieval::RetrievalChannelReadiness::Misconfigured
+            };
+            let reason = if ready {
+                Some(format!("{} artifact retrieval ready", channel.channel_id))
+            } else if is_paid && !paid_allowed {
+                Some("paid channel requires explicit confirmation".into())
+            } else if !artifact_capable {
+                Some(format!(
+                    "{} is a boundary channel, not artifact-ready",
+                    channel.channel_id
+                ))
+            } else if !credential_configured {
+                Some(format!(
+                    "{} not set — retrieval channel unavailable",
+                    channel
+                        .credential_env
+                        .as_deref()
+                        .unwrap_or("credential env")
+                ))
+            } else {
+                Some(format!("{} is disabled", channel.channel_id))
+            };
+            ChannelReadinessEntry {
+                channel_id: channel.channel_id.clone(),
+                display_name: channel.channel_id.clone(),
+                tier: channel.tier.to_string(),
+                enabled: channel.enabled,
+                readiness,
+                reason,
+            }
+        })
+        .collect()
+}
+
+fn vlm_credential_configured(config: &RuntimeConfig) -> bool {
+    if matches!(
+        config.vlm_evaluation.provider_kind,
+        VlmEvaluatorKind::Fixture
+    ) || config.vlm_evaluation.fixture_mode
+    {
+        return config.vlm_evaluation.enabled;
+    }
+    config
+        .vlm_evaluation
+        .credential_env
+        .as_deref()
+        .map(|env| std::env::var(env).is_ok())
+        .unwrap_or(false)
+}
+
+fn vlm_endpoint_configured(config: &RuntimeConfig) -> bool {
+    matches!(
+        config.vlm_evaluation.provider_kind,
+        VlmEvaluatorKind::Fixture | VlmEvaluatorKind::Qwen35Vlm
+    ) || config.vlm_evaluation.fixture_mode
+        || config.vlm_evaluation.base_url.is_some()
+        || config.vlm_evaluation.endpoint.is_some()
+}
+
+fn vlm_available(config: &RuntimeConfig) -> bool {
+    config.vlm_evaluation.enabled
+        && vlm_credential_configured(config)
+        && vlm_endpoint_configured(config)
+}
+
 fn load_query_plan(path: &str) -> Result<QueryPlanInput, i32> {
     let content = std::fs::read_to_string(path).map_err(|e| {
         let msg = format!("Cannot read QueryPlan file '{}': {}", path, e);
@@ -712,6 +889,22 @@ fn print_error(msg: &str, format: &str) {
         }
         _ => {
             eprintln!("Error: {}", msg);
+        }
+    }
+}
+
+fn parse_execution_mode(mode: &str, format: &str) -> Result<ExecutionMode, i32> {
+    match mode {
+        "production" => Ok(ExecutionMode::Production),
+        "fixture" => Ok(ExecutionMode::Fixture),
+        "dry-run" => Ok(ExecutionMode::DryRun),
+        other => {
+            let msg = format!(
+                "Invalid execution mode: {} (use production, fixture, or dry-run)",
+                other
+            );
+            print_error(&msg, format);
+            Err(exit_code::INPUT_ERROR)
         }
     }
 }

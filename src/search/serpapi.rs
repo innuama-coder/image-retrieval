@@ -434,22 +434,7 @@ impl crate::ports::BaseSearchProvider for SerpApiGoogleImagesAdapter {
         let url = &self.endpoint;
 
         // Build query parameters — api_key is NEVER logged or serialized
-        let mut query_params: Vec<(String, String)> = vec![
-            ("engine".into(), "google_images".into()),
-            ("q".into(), request.query_text.clone()),
-            ("api_key".into(), api_key.to_string()),
-        ];
-
-        // Add safe filtering params
-        if let Some(license) = request.request_tags.iter().find_map(|(k, v)| {
-            if k == "license_type" {
-                Some(v.clone())
-            } else {
-                None
-            }
-        }) {
-            query_params.push(("license_type".into(), license));
-        }
+        let query_params = build_serpapi_query_params(request, api_key);
 
         // Build query string manually to avoid logging api_key
         let query_string = build_query_string(&query_params);
@@ -480,7 +465,10 @@ impl crate::ports::BaseSearchProvider for SerpApiGoogleImagesAdapter {
 
         match status_code {
             200 => {
-                let raw_results = self.parse_image_results(&body)?;
+                let raw_results = limit_raw_results(
+                    self.parse_image_results(&body)?,
+                    request.max_results as usize,
+                );
 
                 if raw_results.is_empty() {
                     return Ok(SearchResponse::empty(
@@ -596,6 +584,38 @@ impl crate::ports::BaseSearchProvider for SerpApiGoogleImagesAdapter {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+fn build_serpapi_query_params(request: &SearchRequest, api_key: &str) -> Vec<(String, String)> {
+    let mut query_params: Vec<(String, String)> = vec![
+        ("engine".into(), "google_images".into()),
+        ("q".into(), request.query_text.clone()),
+        ("num".into(), request.max_results.max(1).to_string()),
+        ("api_key".into(), api_key.to_string()),
+    ];
+
+    // Add safe filtering params
+    if let Some(license) = request.request_tags.iter().find_map(|(k, v)| {
+        if k == "license_type" {
+            Some(v.clone())
+        } else {
+            None
+        }
+    }) {
+        query_params.push(("license_type".into(), license));
+    }
+
+    query_params
+}
+
+fn limit_raw_results(
+    raw_results: Vec<ProviderRawImageResult>,
+    max_results: usize,
+) -> Vec<ProviderRawImageResult> {
+    if max_results == 0 {
+        return Vec::new();
+    }
+    raw_results.into_iter().take(max_results).collect()
+}
 
 /// Build a URL query string from key-value pairs.
 fn build_query_string(params: &[(String, String)]) -> String {
@@ -765,6 +785,80 @@ mod tests {
             results[0].image_url.as_deref(),
             Some("https://example.com/a.jpg")
         );
+    }
+
+    #[test]
+    fn serpapi_query_params_include_request_max_results() {
+        let request = SearchRequest::new(
+            crate::domain::query_plan::QueryPlanId::new("qp-1"),
+            ProviderId::new("serpapi_google_images"),
+            "sunset",
+            20,
+            1,
+            1,
+        );
+        let params = build_serpapi_query_params(&request, "secret-key");
+
+        assert!(params.contains(&("engine".to_string(), "google_images".to_string())));
+        assert!(params.contains(&("q".to_string(), "sunset".to_string())));
+        assert!(params.contains(&("num".to_string(), "20".to_string())));
+        assert!(params.contains(&("api_key".to_string(), "secret-key".to_string())));
+    }
+
+    #[test]
+    fn serpapi_limits_raw_results_to_request_max_results() {
+        let raw = vec![
+            ProviderRawImageResult {
+                provider_raw_id: Some("1".into()),
+                provider_rank: 1,
+                image_url: Some("https://example.com/1.jpg".into()),
+                source_page_url: None,
+                thumbnail_url: None,
+                title: None,
+                snippet: None,
+                width: None,
+                height: None,
+                mime_type: None,
+                license_hint: None,
+                attribution: None,
+                provider_extra_safe: BTreeMap::new(),
+            },
+            ProviderRawImageResult {
+                provider_raw_id: Some("2".into()),
+                provider_rank: 2,
+                image_url: Some("https://example.com/2.jpg".into()),
+                source_page_url: None,
+                thumbnail_url: None,
+                title: None,
+                snippet: None,
+                width: None,
+                height: None,
+                mime_type: None,
+                license_hint: None,
+                attribution: None,
+                provider_extra_safe: BTreeMap::new(),
+            },
+            ProviderRawImageResult {
+                provider_raw_id: Some("3".into()),
+                provider_rank: 3,
+                image_url: Some("https://example.com/3.jpg".into()),
+                source_page_url: None,
+                thumbnail_url: None,
+                title: None,
+                snippet: None,
+                width: None,
+                height: None,
+                mime_type: None,
+                license_hint: None,
+                attribution: None,
+                provider_extra_safe: BTreeMap::new(),
+            },
+        ];
+
+        let limited = limit_raw_results(raw, 2);
+        assert_eq!(limited.len(), 2);
+        assert_eq!(limited[0].provider_raw_id.as_deref(), Some("1"));
+        assert_eq!(limited[1].provider_raw_id.as_deref(), Some("2"));
     }
 
     #[test]

@@ -23,7 +23,7 @@
 //! References: PRD §交付物产品设计, HLD §Delivery Package Builder,
 //! `docs/design/TASK-007-delivery-policy-observability-design.md`
 
-use crate::domain::delivery::{DeliveryDecision, TaskStatus};
+use crate::domain::delivery::{DeliveredImageRecord, DeliveryDecision, TaskStatus};
 use crate::domain::image::ImageAcceptanceDecision;
 use crate::domain::metrics::MetricEvent;
 use crate::domain::query_plan::TaskPlan;
@@ -655,7 +655,7 @@ impl DeliveryPackageBuilder {
             .filter(|d| d.is_accepted())
             .enumerate()
             .map(|(i, decision)| {
-                if let ImageAcceptanceDecision::Accepted { image, notes } = decision {
+                if let ImageAcceptanceDecision::Accepted { image, notes, .. } = decision {
                     let filename = image
                         .local_path
                         .rsplit('/')
@@ -830,7 +830,7 @@ impl DeliveryPackageBuilder {
                 .filter(|d| d.is_accepted())
                 .enumerate()
             {
-                if let ImageAcceptanceDecision::Accepted { image, notes } = decision {
+                if let ImageAcceptanceDecision::Accepted { image, notes, .. } = decision {
                     md.push_str(&format!(
                         "{}. `{}` — {}\n",
                         i + 1,
@@ -903,7 +903,7 @@ impl DeliveryPackageBuilder {
             .iter()
             .filter(|d| d.is_accepted())
             .map(|d| match d {
-                ImageAcceptanceDecision::Accepted { image, notes } => {
+                ImageAcceptanceDecision::Accepted { image, notes, .. } => {
                     serde_json::json!({
                         "candidate_id": image.candidate_id,
                         "content_type": image.content_type,
@@ -1126,8 +1126,10 @@ mod tests {
                     width: 800,
                     height: 600,
                 }),
+                reference_metrics: vec![],
             },
             notes: "good match".into(),
+            vlm_evidence: None,
         }
     }
 
@@ -1139,6 +1141,7 @@ mod tests {
                 content_type: Some("image/jpeg".into()),
                 file_size_bytes: 0,
                 dimensions: None,
+                reference_metrics: vec![],
             },
             evidence: ImageMechanicalEvidence {
                 blocking_findings: vec!["zero-byte file".into()],
@@ -1734,7 +1737,7 @@ mod tests {
 // v1.1 CanonicalPackageBuilder — TASK-005
 // ===========================================================================
 
-use crate::domain::delivery::{DeliveredImageRecord, PackageStatus, WorkflowDiagnostic};
+use crate::domain::delivery::{PackageStatus, WorkflowDiagnostic};
 use crate::orchestrator::RunOrchestrator;
 
 /// Inputs for the v1.1 canonical package builder.
@@ -1775,8 +1778,23 @@ impl CanonicalPackageBuilder {
     pub fn build(&self, inputs: &CanonicalPackageInputs) -> Result<PathBuf> {
         let root = &self.package_root;
 
+        if root.exists() {
+            fs::remove_dir_all(root).map_err(|e| {
+                Error::internal(format!(
+                    "failed to remove stale package directory {}: {}",
+                    root.display(),
+                    e
+                ))
+            })?;
+        }
+
         // Create structure
-        for sub in &["images", "evidence", "diagnostics"] {
+        for sub in &[
+            "images",
+            "evidence",
+            "evidence/candidate-quality",
+            "diagnostics",
+        ] {
             fs::create_dir_all(root.join(sub)).map_err(|e| {
                 Error::internal(format!(
                     "failed to create {}/{}: {}",
@@ -1787,11 +1805,44 @@ impl CanonicalPackageBuilder {
             })?;
         }
 
-        let accepted_count = inputs.accepted_images.len() as u32;
+        let accepted_images = self.localize_accepted_images(root, &inputs.accepted_images)?;
+        let accepted_count = accepted_images.len() as u32;
         let gap_count = inputs.required_image_count.saturating_sub(accepted_count);
         let status_label = inputs.status.label().to_string();
 
         // 1. image-recalls.json
+        let recall_attempts = if inputs.attempt_records.is_empty() && !accepted_images.is_empty() {
+            vec![serde_json::json!({
+                "full_attempt_count": inputs.full_attempt_count,
+                "retry_count": inputs.retry_count,
+                "candidate_count": accepted_count,
+                "target_met": accepted_count >= inputs.candidate_target,
+                "candidates": accepted_images.iter().map(recalled_candidate_json).collect::<Vec<_>>(),
+            })]
+        } else {
+            inputs
+                .attempt_records
+                .iter()
+                .enumerate()
+                .map(|(idx, a)| {
+                    let candidates = if idx == 0 {
+                        accepted_images
+                            .iter()
+                            .map(recalled_candidate_json)
+                            .collect::<Vec<_>>()
+                    } else {
+                        Vec::new()
+                    };
+                    serde_json::json!({
+                        "full_attempt_count": a.full_attempt_count,
+                        "retry_count": a.retry_count,
+                        "candidate_count": a.search_candidate_count,
+                        "target_met": a.search_candidate_count >= inputs.candidate_target,
+                        "candidates": candidates,
+                    })
+                })
+                .collect::<Vec<_>>()
+        };
         self.write_json(
             root.join("image-recalls.json"),
             &serde_json::json!({
@@ -1799,12 +1850,7 @@ impl CanonicalPackageBuilder {
                 "run_id": inputs.run_id,
                 "query_plan_id": inputs.query_plan_id,
                 "candidate_target": inputs.candidate_target,
-                "attempts": inputs.attempt_records.iter().map(|a| serde_json::json!({
-                    "full_attempt_count": a.full_attempt_count,
-                    "retry_count": a.retry_count,
-                    "candidate_count": a.search_candidate_count,
-                    "target_met": a.search_candidate_count >= inputs.candidate_target,
-                })).collect::<Vec<_>>(),
+                "attempts": recall_attempts,
             }),
         )?;
 
@@ -1816,9 +1862,44 @@ impl CanonicalPackageBuilder {
                 "run_id": inputs.run_id,
                 "query_plan_id": inputs.query_plan_id,
                 "retrieval_batch_target": inputs.retrieval_batch_target,
-                "retrieval_results": [],
-                "image_acceptance_decisions": [],
-                "delivered_images": inputs.accepted_images.iter().map(|img| serde_json::json!({
+                "retrieval_results": accepted_images.iter().map(|img| serde_json::json!({
+                    "retrieval_job_id": img.retrieval_job_id,
+                    "candidate_id": img.candidate_id,
+                    "query_plan_id": img.query_plan_id,
+                    "channel_id": img.evidence.channel_id,
+                    "channel_tier": img.evidence.channel_tier,
+                    "retrieval_status": img.evidence.retrieval_status,
+                    "local_artifact_path": img.local_artifact_path,
+                    "source_artifact_path": img.source_artifact_path,
+                    "source_sidecar_path": img.source_sidecar_path,
+                    "content_summary_path": img.content_summary_path,
+                    "task_report_path": img.task_report_path,
+                    "visual_description_path": img.visual_description_path,
+                    "checksum_sha256": img.checksum_sha256,
+                    "content_type": img.content_type,
+                    "file_size_bytes": img.file_size_bytes,
+                    "image_dimensions": {
+                        "width": img.width,
+                        "height": img.height,
+                    },
+                    "media_type_match": img.evidence.media_type_match,
+                    "fetch_trace": img.evidence.fetch_trace,
+                    "failure_reason": img.evidence.failure_reason,
+                })).collect::<Vec<_>>(),
+                "image_acceptance_decisions": accepted_images.iter().map(|img| serde_json::json!({
+                    "decision_id": img.image_acceptance_decision_ref,
+                    "candidate_id": img.candidate_id,
+                    "retrieval_job_id": img.retrieval_job_id,
+                    "query_plan_id": img.query_plan_id,
+                    "mechanical_passed": img.evidence.image_decision.mechanical_passed,
+                    "vlm_passed": img.evidence.image_decision.vlm_passed,
+                    "artifact_complete": img.evidence.image_decision.artifact_complete,
+                    "final_status": img.evidence.image_decision.final_status,
+                    "blocking_reasons": img.evidence.image_decision.blocking_reasons,
+                    "reference_metrics": img.evidence.image_decision.reference_metrics,
+                    "vlm_decision": img.evidence.image_decision.vlm_decision,
+                })).collect::<Vec<_>>(),
+                "delivered_images": accepted_images.iter().map(|img| serde_json::json!({
                     "delivered_image_id": img.delivered_image_id,
                     "query_plan_id": img.query_plan_id,
                     "candidate_id": img.candidate_id,
@@ -1881,14 +1962,14 @@ impl CanonicalPackageBuilder {
             "schema_version": 1,
             "run_id": inputs.run_id,
             "query_plan_id": inputs.query_plan_id,
-            "entries": inputs.accepted_images.iter().enumerate().map(|(i, img)| serde_json::json!({
+            "entries": accepted_images.iter().enumerate().map(|(i, img)| serde_json::json!({
                 "manifest_entry_id": format!("manifest-{:04}", i + 1),
                 "candidate_id": img.candidate_id,
-                "provider_id": "unknown",
+                "provider_id": img.evidence.provider_id,
                 "candidate_status": "delivered",
                 "status_progression": ["recalled", "candidate_quality_passed", "selected_for_fetch", "fetched", "image_quality_passed", "delivered"],
                 "search_ref": format!("image-recalls.json#/attempts/0/candidates/{}", i),
-                "candidate_quality_ref": format!("evidence/candidate-quality/{}.json", img.candidate_id),
+                "candidate_quality_ref": img.candidate_quality_decision_ref,
                 "retrieval_job_id": img.retrieval_job_id,
                 "retrieval_result_ref": format!("retrieved-images.json#/retrieval_results/{}", i),
                 "artifact_refs": [
@@ -1899,7 +1980,7 @@ impl CanonicalPackageBuilder {
                     img.task_report_path,
                     img.visual_description_path,
                 ],
-                "image_acceptance_ref": format!("retrieved-images.json#/image_acceptance_decisions/{}", i),
+                "image_acceptance_ref": img.image_acceptance_decision_ref,
                 "delivery_ref": format!("delivery-report.json#/items/{}", i),
                 "validation_refs": [],
             })).collect::<Vec<_>>(),
@@ -1939,15 +2020,15 @@ impl CanonicalPackageBuilder {
             &serde_json::json!({
                 "schema_version": 1,
                 "run_id": inputs.run_id,
-                "items": inputs.accepted_images.iter().map(|img| serde_json::json!({
+                "items": accepted_images.iter().map(|img| serde_json::json!({
                     "candidate_id": img.candidate_id,
                     "retrieval_job_id": img.retrieval_job_id,
                     "delivery_status": "delivered",
-                    "mechanical_passed": true,
-                    "vlm_passed": true,
-                    "artifact_complete": true,
-                    "blocking_reasons": [],
-                    "reference_metrics": [],
+                    "mechanical_passed": img.evidence.image_decision.mechanical_passed,
+                    "vlm_passed": img.evidence.image_decision.vlm_passed,
+                    "artifact_complete": img.evidence.image_decision.artifact_complete,
+                    "blocking_reasons": img.evidence.image_decision.blocking_reasons,
+                    "reference_metrics": img.evidence.image_decision.reference_metrics,
                     "authorization_risk": "unknown",
                     "package_image_path": img.package_image_path,
                 })).collect::<Vec<_>>(),
@@ -2019,6 +2100,25 @@ impl CanonicalPackageBuilder {
             "safe_for_downstream": inputs.status == PackageStatus::Passed,
         }))?;
 
+        for img in &accepted_images {
+            self.write_json(
+                root.join(&img.candidate_quality_decision_ref),
+                &serde_json::json!({
+                    "schema_version": 1,
+                    "candidate_id": img.candidate_id,
+                    "query_plan_id": img.query_plan_id,
+                    "mechanical_passed": img.evidence.candidate_decision.mechanical_passed,
+                    "vlm_passed": img.evidence.candidate_decision.vlm_passed,
+                    "final_status": img.evidence.candidate_decision.final_status,
+                    "priority": img.evidence.candidate_decision.priority,
+                    "blocking_metrics": img.evidence.candidate_decision.blocking_metrics,
+                    "reference_metrics": img.evidence.candidate_decision.reference_metrics,
+                    "vlm_decision": img.evidence.candidate_decision.vlm_decision,
+                    "redaction_applied": true,
+                }),
+            )?;
+        }
+
         // Write diagnostics
         let diag_json = serde_json::to_string_pretty(&serde_json::json!({
             "diagnostics": inputs.diagnostics.iter().map(|d| serde_json::json!({
@@ -2034,7 +2134,7 @@ impl CanonicalPackageBuilder {
             .map_err(|e| Error::internal(format!("failed to write diagnostics: {}", e)))?;
 
         // Copy image artifacts into images/
-        for img in &inputs.accepted_images {
+        for img in &accepted_images {
             let src = Path::new(&img.local_artifact_path);
             if src.exists() && src.is_file() {
                 let filename = src
@@ -2049,6 +2149,167 @@ impl CanonicalPackageBuilder {
         }
 
         Ok(root.clone())
+    }
+
+    fn localize_accepted_images(
+        &self,
+        root: &Path,
+        images: &[DeliveredImageRecord],
+    ) -> Result<Vec<DeliveredImageRecord>> {
+        images
+            .iter()
+            .enumerate()
+            .map(|(index, img)| {
+                let mut localized = img.clone();
+                let mut path_replacements: Vec<(String, String)> = Vec::new();
+                let local = self.copy_artifact_to_package(
+                    root,
+                    &img.local_artifact_path,
+                    "images",
+                    &img.delivered_image_id,
+                    "image",
+                )?;
+                if !local.is_empty() {
+                    path_replacements.push((localized.local_artifact_path.clone(), local.clone()));
+                    path_replacements.push((localized.package_image_path.clone(), local.clone()));
+                    localized.local_artifact_path = local.clone();
+                    localized.package_image_path = local;
+                }
+                localized.candidate_quality_decision_ref = format!(
+                    "evidence/candidate-quality/{}.json",
+                    safe_path_component(&img.candidate_id)
+                );
+                localized.image_acceptance_decision_ref = format!(
+                    "retrieved-images.json#/image_acceptance_decisions/{}",
+                    index
+                );
+                localized.manifest_entry_ref = format!("manifest-{:04}", index + 1);
+                let old_source_artifact_path = localized.source_artifact_path.clone();
+                localized.source_artifact_path = self.copy_artifact_to_package(
+                    root,
+                    &img.source_artifact_path,
+                    "evidence",
+                    &img.delivered_image_id,
+                    "source",
+                )?;
+                path_replacements.push((
+                    old_source_artifact_path,
+                    localized.source_artifact_path.clone(),
+                ));
+                let old_source_sidecar_path = localized.source_sidecar_path.clone();
+                localized.source_sidecar_path = self.copy_artifact_to_package(
+                    root,
+                    &img.source_sidecar_path,
+                    "evidence",
+                    &img.delivered_image_id,
+                    "sidecar",
+                )?;
+                path_replacements.push((
+                    old_source_sidecar_path,
+                    localized.source_sidecar_path.clone(),
+                ));
+                let old_content_summary_path = localized.content_summary_path.clone();
+                localized.content_summary_path = self.copy_artifact_to_package(
+                    root,
+                    &img.content_summary_path,
+                    "evidence",
+                    &img.delivered_image_id,
+                    "summary",
+                )?;
+                path_replacements.push((
+                    old_content_summary_path,
+                    localized.content_summary_path.clone(),
+                ));
+                let old_task_report_path = localized.task_report_path.clone();
+                localized.task_report_path = self.copy_artifact_to_package(
+                    root,
+                    &img.task_report_path,
+                    "evidence",
+                    &img.delivered_image_id,
+                    "task-report",
+                )?;
+                path_replacements.push((old_task_report_path, localized.task_report_path.clone()));
+                let old_visual_description_path = localized.visual_description_path.clone();
+                localized.visual_description_path = self.copy_artifact_to_package(
+                    root,
+                    &img.visual_description_path,
+                    "evidence",
+                    &img.delivered_image_id,
+                    "visual-description",
+                )?;
+                path_replacements.push((
+                    old_visual_description_path,
+                    localized.visual_description_path.clone(),
+                ));
+                rewrite_reference_metric_paths(
+                    &mut localized.evidence.candidate_decision.reference_metrics,
+                    &path_replacements,
+                );
+                rewrite_reference_metric_paths(
+                    &mut localized.evidence.image_decision.reference_metrics,
+                    &path_replacements,
+                );
+                for trace in &mut localized.evidence.fetch_trace {
+                    rewrite_json_path_values(trace, &path_replacements);
+                }
+                if let Some(reason) = &mut localized.evidence.failure_reason {
+                    rewrite_json_path_values(reason, &path_replacements);
+                }
+                for rel in [
+                    &localized.source_sidecar_path,
+                    &localized.content_summary_path,
+                    &localized.task_report_path,
+                    &localized.visual_description_path,
+                ] {
+                    rewrite_packaged_text_artifact_paths(root, rel, &path_replacements)?;
+                }
+                Ok(localized)
+            })
+            .collect()
+    }
+
+    fn copy_artifact_to_package(
+        &self,
+        root: &Path,
+        source: &str,
+        subdir: &str,
+        delivered_image_id: &str,
+        label: &str,
+    ) -> Result<String> {
+        if source.is_empty() {
+            return Err(Error::internal(format!(
+                "accepted image '{}' is missing {} artifact path",
+                delivered_image_id, label
+            )));
+        }
+        let src = Path::new(source);
+        if src.is_relative() {
+            let packaged = root.join(src);
+            if packaged.exists() && packaged.is_file() {
+                return Ok(source.to_string());
+            }
+        }
+        if !src.exists() || !src.is_file() {
+            return Err(Error::internal(format!(
+                "accepted image '{}' {} artifact does not exist: {}",
+                delivered_image_id, label, source
+            )));
+        }
+        let file_name = src
+            .file_name()
+            .unwrap_or_else(|| std::ffi::OsStr::new("artifact"))
+            .to_string_lossy();
+        let relative = format!("{}/{}-{}-{}", subdir, delivered_image_id, label, file_name);
+        let dst = root.join(&relative);
+        fs::copy(src, &dst).map_err(|e| {
+            Error::internal(format!(
+                "failed to copy artifact {} -> {}: {}",
+                src.display(),
+                dst.display(),
+                e
+            ))
+        })?;
+        Ok(relative)
     }
 
     fn write_json(&self, path: PathBuf, value: &serde_json::Value) -> Result<()> {
@@ -2068,6 +2329,108 @@ impl CanonicalPackageBuilder {
         })?;
         Ok(())
     }
+}
+
+fn rewrite_reference_metric_paths(
+    metrics: &mut [serde_json::Value],
+    replacements: &[(String, String)],
+) {
+    for metric in metrics {
+        rewrite_json_path_values(metric, replacements);
+    }
+}
+
+fn rewrite_json_path_values(value: &mut serde_json::Value, replacements: &[(String, String)]) {
+    match value {
+        serde_json::Value::String(text) => {
+            if let Some((_, replacement)) = replacements
+                .iter()
+                .find(|(original, _)| !original.is_empty() && original == text)
+            {
+                *text = replacement.clone();
+            }
+        }
+        serde_json::Value::Array(values) => {
+            for value in values {
+                rewrite_json_path_values(value, replacements);
+            }
+        }
+        serde_json::Value::Object(map) => {
+            for (key, value) in map {
+                if key == "path" {
+                    if let Some(path) = value.as_str() {
+                        if let Some((_, replacement)) = replacements
+                            .iter()
+                            .find(|(original, _)| !original.is_empty() && original == path)
+                        {
+                            *value = serde_json::Value::String(replacement.clone());
+                            continue;
+                        }
+                    }
+                }
+                rewrite_json_path_values(value, replacements);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn rewrite_packaged_text_artifact_paths(
+    root: &Path,
+    relative_path: &str,
+    replacements: &[(String, String)],
+) -> Result<()> {
+    if relative_path.is_empty() || Path::new(relative_path).is_absolute() {
+        return Ok(());
+    }
+    let path = root.join(relative_path);
+    if !path.exists() || !path.is_file() {
+        return Ok(());
+    }
+    let Ok(mut content) = fs::read_to_string(&path) else {
+        return Ok(());
+    };
+    let original_content = content.clone();
+    for (original, replacement) in replacements {
+        if !original.is_empty() {
+            content = content.replace(original, replacement);
+        }
+    }
+    if content != original_content {
+        fs::write(&path, content).map_err(|e| {
+            Error::internal(format!(
+                "failed to rewrite artifact paths in {}: {}",
+                path.display(),
+                e
+            ))
+        })?;
+    }
+    Ok(())
+}
+
+fn recalled_candidate_json(img: &DeliveredImageRecord) -> serde_json::Value {
+    serde_json::json!({
+        "candidate_id": img.candidate_id,
+        "query_plan_id": img.query_plan_id,
+        "provider_id": img.evidence.provider_id,
+        "candidate_quality_ref": img.candidate_quality_decision_ref,
+        "retrieval_job_id": img.retrieval_job_id,
+        "delivered_image_id": img.delivered_image_id,
+        "status": "delivered",
+    })
+}
+
+fn safe_path_component(value: &str) -> String {
+    value
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.') {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect()
 }
 
 /// Build a canonical package from a RunOrchestrator after the run completes.
@@ -2101,7 +2464,10 @@ pub fn build_canonical_package(
 #[cfg(test)]
 mod canonical_tests {
     use super::*;
-    use crate::domain::delivery::{DeliveredImageRecord, ExecutionMode, PackageStatus};
+    use crate::domain::delivery::{
+        DeliveredCandidateQualityEvidence, DeliveredImageAcceptanceEvidence,
+        DeliveredImageEvidence, DeliveredImageRecord, ExecutionMode, PackageStatus,
+    };
     use std::sync::atomic::{AtomicU32, Ordering};
 
     fn temp_dir() -> PathBuf {
@@ -2112,20 +2478,26 @@ mod canonical_tests {
         dir
     }
 
-    fn make_delivered_image(id: &str) -> DeliveredImageRecord {
+    fn make_delivered_image_with_artifacts(id: &str, artifact_dir: &Path) -> DeliveredImageRecord {
+        let write = |name: &str| {
+            let path = artifact_dir.join(format!("{}-{}", id, name));
+            std::fs::write(&path, "not empty").unwrap();
+            path.display().to_string()
+        };
         DeliveredImageRecord {
             delivered_image_id: format!("d-{}", id),
             query_plan_id: "qp-test".into(),
             candidate_id: format!("c-{}", id),
             retrieval_job_id: format!("r-{}", id),
-            package_image_path: format!("images/{}.jpg", id),
-            local_artifact_path: format!("/tmp/{}.jpg", id),
-            source_artifact_path: format!("evidence/source-{}.json", id),
-            source_sidecar_path: format!("evidence/sidecar-{}.json", id),
-            content_summary_path: format!("evidence/summary-{}.json", id),
-            task_report_path: format!("evidence/report-{}.json", id),
-            visual_description_path: format!("evidence/visual-{}.json", id),
-            checksum_sha256: format!("sha256-{}", id),
+            package_image_path: write("image.jpg"),
+            local_artifact_path: write("image.jpg"),
+            source_artifact_path: write("source.html"),
+            source_sidecar_path: write("sidecar.json"),
+            content_summary_path: write("summary.txt"),
+            task_report_path: write("report.json"),
+            visual_description_path: write("visual.txt"),
+            checksum_sha256:
+                "sha256-ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad".into(),
             content_type: "image/jpeg".into(),
             file_size_bytes: 4096,
             width: Some(800),
@@ -2133,12 +2505,55 @@ mod canonical_tests {
             candidate_quality_decision_ref: format!("qd-{}", id),
             image_acceptance_decision_ref: format!("ia-{}", id),
             manifest_entry_ref: format!("m-{}", id),
+            evidence: DeliveredImageEvidence {
+                provider_id: "fixture_search".into(),
+                channel_id: "fixture_channel".into(),
+                channel_tier: "normal_web_fetch".into(),
+                retrieval_status: "complete".into(),
+                media_type_match: true,
+                fetch_trace: vec![serde_json::json!({
+                    "url": "https://example.com/image.jpg",
+                    "status": "complete"
+                })],
+                failure_reason: None,
+                candidate_decision: DeliveredCandidateQualityEvidence {
+                    mechanical_passed: true,
+                    vlm_passed: true,
+                    final_status: "retrievable".into(),
+                    priority: 5,
+                    blocking_metrics: vec![],
+                    reference_metrics: vec![
+                        serde_json::json!({"kind": "provider_confidence", "value": "fixture"}),
+                    ],
+                    vlm_decision: Some(serde_json::json!({
+                        "decision": "approve",
+                        "provider_id": "fixture_vlm"
+                    })),
+                },
+                image_decision: DeliveredImageAcceptanceEvidence {
+                    mechanical_passed: true,
+                    vlm_passed: true,
+                    artifact_complete: true,
+                    final_status: "accepted".into(),
+                    blocking_reasons: vec![],
+                    reference_metrics: vec![
+                        serde_json::json!({"kind": "file_size", "value": 4096}),
+                    ],
+                    vlm_decision: Some(serde_json::json!({
+                        "decision": "approve",
+                        "provider_id": "fixture_vlm",
+                        "notes": "fixture accepted"
+                    })),
+                },
+            },
         }
     }
 
     fn make_inputs(status: PackageStatus, accepted_count: u32) -> CanonicalPackageInputs {
+        let artifact_dir = temp_dir();
+        std::fs::create_dir_all(&artifact_dir).unwrap();
         let images: Vec<DeliveredImageRecord> = (0..accepted_count)
-            .map(|i| make_delivered_image(&format!("{:04}", i + 1)))
+            .map(|i| make_delivered_image_with_artifacts(&format!("{:04}", i + 1), &artifact_dir))
             .collect();
         CanonicalPackageInputs {
             run_id: "run-test-1".into(),
@@ -2156,6 +2571,15 @@ mod canonical_tests {
             attempt_records: vec![],
             execution_mode: ExecutionMode::Fixture,
         }
+    }
+
+    fn package_reference_exists(pkg: &Path, reference: &str) -> bool {
+        if let Some((file, pointer)) = reference.split_once('#') {
+            let value: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(pkg.join(file)).unwrap()).unwrap();
+            return pointer.is_empty() || value.pointer(pointer).is_some();
+        }
+        pkg.join(reference).exists()
     }
 
     #[test]
@@ -2305,6 +2729,289 @@ mod canonical_tests {
         assert_eq!(coverage["accepted_image_count"], 3);
         assert_eq!(coverage["gap_count"], 2);
         assert_eq!(coverage["status"], "partial");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn canonical_builder_copies_artifacts_and_writes_package_relative_paths() {
+        let dir = temp_dir();
+        let artifact_dir = temp_dir();
+        std::fs::create_dir_all(&artifact_dir).unwrap();
+
+        let builder = CanonicalPackageBuilder::new(&dir);
+        let mut inputs = make_inputs(PackageStatus::Passed, 0);
+        inputs.required_image_count = 1;
+        inputs.accepted_images = vec![make_delivered_image_with_artifacts("0001", &artifact_dir)];
+        let pkg = builder.build(&inputs).unwrap();
+
+        let report = crate::validation::validate_package_dir(&pkg).unwrap();
+        assert_eq!(
+            report.status,
+            crate::domain::delivery::ValidationStatus::Pass
+        );
+
+        let retrieved: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(pkg.join("retrieved-images.json")).unwrap())
+                .unwrap();
+        let delivered = &retrieved["delivered_images"][0];
+        for field in [
+            "local_artifact_path",
+            "source_artifact_path",
+            "source_sidecar_path",
+            "content_summary_path",
+            "task_report_path",
+            "visual_description_path",
+        ] {
+            let path = delivered[field].as_str().unwrap();
+            assert!(
+                !Path::new(path).is_absolute(),
+                "{} should be relative",
+                field
+            );
+            assert!(
+                pkg.join(path).exists(),
+                "{} should exist inside package",
+                field
+            );
+        }
+
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(&artifact_dir);
+    }
+
+    #[test]
+    fn canonical_builder_rewrites_reference_metric_artifact_paths() {
+        let dir = temp_dir();
+        let artifact_dir = temp_dir();
+        std::fs::create_dir_all(&artifact_dir).unwrap();
+
+        let builder = CanonicalPackageBuilder::new(&dir);
+        let mut inputs = make_inputs(PackageStatus::Passed, 0);
+        inputs.required_image_count = 1;
+        let mut image = make_delivered_image_with_artifacts("0001", &artifact_dir);
+        image.evidence.image_decision.reference_metrics = vec![
+            serde_json::json!({
+                "kind": "source_sidecar_path",
+                "path": image.source_sidecar_path,
+            }),
+            serde_json::json!({
+                "kind": "content_summary_path",
+                "path": image.content_summary_path,
+            }),
+            serde_json::json!({
+                "kind": "visual_description_path",
+                "path": image.visual_description_path,
+            }),
+        ];
+        inputs.accepted_images = vec![image];
+
+        let pkg = builder.build(&inputs).unwrap();
+        let retrieved: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(pkg.join("retrieved-images.json")).unwrap())
+                .unwrap();
+        let metrics = retrieved["image_acceptance_decisions"][0]["reference_metrics"]
+            .as_array()
+            .unwrap();
+
+        for metric in metrics {
+            let path = metric["path"].as_str().unwrap();
+            assert!(
+                !Path::new(path).is_absolute(),
+                "reference metric path should be package-relative: {}",
+                path
+            );
+            assert!(
+                pkg.join(path).exists(),
+                "reference metric path should exist in package: {}",
+                path
+            );
+        }
+
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(&artifact_dir);
+    }
+
+    #[test]
+    fn canonical_builder_rewrites_nested_artifact_paths_to_package_relative_paths() {
+        let dir = temp_dir();
+        let artifact_dir = temp_dir();
+        std::fs::create_dir_all(&artifact_dir).unwrap();
+
+        let builder = CanonicalPackageBuilder::new(&dir);
+        let mut inputs = make_inputs(PackageStatus::Passed, 0);
+        inputs.required_image_count = 1;
+        let mut image = make_delivered_image_with_artifacts("0001", &artifact_dir);
+        image.evidence.fetch_trace = vec![serde_json::json!({
+            "artifact_refs": [image.local_artifact_path.clone()],
+            "target_url_redacted": "https://example.com/image.jpg"
+        })];
+        inputs.accepted_images = vec![image];
+        let pkg = builder.build(&inputs).unwrap();
+        let retrieved: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(pkg.join("retrieved-images.json")).unwrap())
+                .unwrap();
+        let result = &retrieved["retrieval_results"][0];
+
+        let paths = [
+            "retrieved-images.json".to_string(),
+            result["content_summary_path"].as_str().unwrap().to_string(),
+            result["task_report_path"].as_str().unwrap().to_string(),
+            result["visual_description_path"]
+                .as_str()
+                .unwrap()
+                .to_string(),
+        ];
+        for rel in paths {
+            let content = std::fs::read_to_string(pkg.join(&rel)).unwrap();
+            assert!(
+                !content.contains(artifact_dir.to_str().unwrap()),
+                "{} still contains staging artifact directory",
+                rel
+            );
+        }
+
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(&artifact_dir);
+    }
+
+    #[test]
+    fn canonical_builder_writes_delivered_retrieval_and_acceptance_evidence() {
+        let dir = temp_dir();
+        let artifact_dir = temp_dir();
+        std::fs::create_dir_all(&artifact_dir).unwrap();
+
+        let builder = CanonicalPackageBuilder::new(&dir);
+        let mut inputs = make_inputs(PackageStatus::Passed, 0);
+        inputs.required_image_count = 1;
+        inputs.accepted_images = vec![make_delivered_image_with_artifacts("0001", &artifact_dir)];
+        let pkg = builder.build(&inputs).unwrap();
+
+        let retrieved: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(pkg.join("retrieved-images.json")).unwrap())
+                .unwrap();
+        assert_eq!(retrieved["retrieval_results"].as_array().unwrap().len(), 1);
+        assert_eq!(
+            retrieved["retrieval_results"][0]["channel_id"],
+            "fixture_channel"
+        );
+        assert_eq!(
+            retrieved["retrieval_results"][0]["channel_tier"],
+            "normal_web_fetch"
+        );
+        assert_eq!(
+            retrieved["retrieval_results"][0]["fetch_trace"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            retrieved["retrieval_results"][0]["candidate_id"],
+            retrieved["delivered_images"][0]["candidate_id"]
+        );
+        assert_eq!(
+            retrieved["image_acceptance_decisions"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            retrieved["image_acceptance_decisions"][0]["final_status"],
+            "accepted"
+        );
+        assert_eq!(
+            retrieved["image_acceptance_decisions"][0]["vlm_decision"]["decision"],
+            "approve"
+        );
+        assert!(pkg.join("evidence/candidate-quality/c-0001.json").exists());
+        let manifest: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(pkg.join("retrieval-manifest.json")).unwrap())
+                .unwrap();
+        assert_eq!(manifest["entries"][0]["provider_id"], "fixture_search");
+        let candidate_quality: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(pkg.join("evidence/candidate-quality/c-0001.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(candidate_quality["vlm_decision"]["decision"], "approve");
+
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(&artifact_dir);
+    }
+
+    #[test]
+    fn canonical_builder_manifest_refs_resolve_inside_package() {
+        let dir = temp_dir();
+        let artifact_dir = temp_dir();
+        std::fs::create_dir_all(&artifact_dir).unwrap();
+
+        let builder = CanonicalPackageBuilder::new(&dir);
+        let mut inputs = make_inputs(PackageStatus::Passed, 0);
+        inputs.required_image_count = 1;
+        inputs.candidate_target = 20;
+        inputs.attempt_records = vec![crate::domain::delivery::RunAttemptRecord {
+            attempt_id: "attempt-run-test-1-1".into(),
+            full_attempt_count: 1,
+            retry_count: 0,
+            started_at: "2026-06-24T00:00:00Z".into(),
+            finished_at: Some("2026-06-24T00:00:01Z".into()),
+            search_candidate_count: 20,
+            retrievable_candidate_count: 1,
+            retrieval_job_count: 1,
+            retrieval_complete_count: 1,
+            accepted_delta_count: 1,
+            gap_delta_count: 0,
+            terminal_reason: None,
+            diagnostics: vec![],
+        }];
+        inputs.accepted_images = vec![make_delivered_image_with_artifacts("0001", &artifact_dir)];
+
+        let pkg = builder.build(&inputs).unwrap();
+        let manifest: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(pkg.join("retrieval-manifest.json")).unwrap())
+                .unwrap();
+        let entry = &manifest["entries"][0];
+        for field in [
+            "search_ref",
+            "candidate_quality_ref",
+            "retrieval_result_ref",
+            "image_acceptance_ref",
+            "delivery_ref",
+        ] {
+            let reference = entry[field].as_str().unwrap();
+            assert!(
+                package_reference_exists(&pkg, reference),
+                "{} should resolve inside package: {}",
+                field,
+                reference
+            );
+        }
+
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(&artifact_dir);
+    }
+
+    #[test]
+    fn canonical_builder_rebuild_removes_stale_package_files() {
+        let dir = temp_dir();
+        let builder = CanonicalPackageBuilder::new(&dir);
+
+        let first_inputs = make_inputs(PackageStatus::Passed, 2);
+        let pkg = builder.build(&first_inputs).unwrap();
+        assert!(pkg.join("evidence/candidate-quality/c-0002.json").exists());
+
+        let second_inputs = make_inputs(PackageStatus::Passed, 1);
+        let rebuilt_pkg = builder.build(&second_inputs).unwrap();
+        assert!(rebuilt_pkg
+            .join("evidence/candidate-quality/c-0001.json")
+            .exists());
+        assert!(
+            !rebuilt_pkg
+                .join("evidence/candidate-quality/c-0002.json")
+                .exists(),
+            "rebuilt package must not retain stale evidence from a previous run"
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }

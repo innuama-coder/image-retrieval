@@ -210,7 +210,7 @@ pub enum VlmEvaluatorKind {
 /// Configuration for the VLM evaluation provider.
 ///
 /// Production defaults: provider_id = "qwen_3_5_vlm", kind = Qwen35Vlm,
-/// model = "qwen-3.5", credential_env = "QWEN_API_TOKEN".
+/// model = "qwen3-vl-plus", credential_env = "QWEN_API_KEY".
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VlmEvaluationConfig {
     /// Provider id.
@@ -264,11 +264,11 @@ fn default_vlm_provider_id() -> String {
 }
 
 fn default_vlm_model() -> String {
-    "qwen-3.5".into()
+    "qwen3-vl-plus".into()
 }
 
 fn default_vlm_credential_env() -> Option<String> {
-    Some("QWEN_API_TOKEN".into())
+    Some("QWEN_API_KEY".into())
 }
 
 impl Default for VlmEvaluationConfig {
@@ -633,8 +633,8 @@ mod tests {
         let config = VlmEvaluationConfig::default();
         assert_eq!(config.provider_id, "qwen_3_5_vlm");
         assert_eq!(config.provider_kind, VlmEvaluatorKind::Qwen35Vlm);
-        assert_eq!(config.model, "qwen-3.5");
-        assert_eq!(config.credential_env, Some("QWEN_API_TOKEN".into()));
+        assert_eq!(config.model, "qwen3-vl-plus");
+        assert_eq!(config.credential_env, Some("QWEN_API_KEY".into()));
         assert!(!config.enabled);
         assert!(!config.fixture_mode);
     }
@@ -722,7 +722,7 @@ mod tests {
     fn readiness_report_with_blockers() {
         let items = vec![
             ConfigReadiness::ready("serpapi"),
-            ConfigReadiness::not_ready("qwen", "QWEN_API_TOKEN not set", "MISSING"),
+            ConfigReadiness::not_ready("qwen", "QWEN_API_KEY not set", "MISSING"),
         ];
         let report = ConfigReadinessReport::new(items);
         assert!(!report.all_ready);
@@ -802,7 +802,7 @@ mod tests {
             "vlm_evaluation": {
                 "enabled": true,
                 "base_url": "https://api.example.com/v1",
-                "credential_env": "QWEN_API_TOKEN"
+                "credential_env": "QWEN_API_KEY"
             },
             "policy": {
                 "allow_paid_channels": false,

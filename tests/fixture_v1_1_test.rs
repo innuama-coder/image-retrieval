@@ -153,16 +153,21 @@ fn fixture_config_production_like_has_env_var_names_not_values() {
     assert_eq!(provider.endpoint, Some("https://serpapi.com/search".into()));
 
     assert_eq!(config.vlm_evaluation.provider_id, "qwen_3_5_vlm");
+    assert_eq!(config.vlm_evaluation.model, "qwen3-vl-plus");
     assert_eq!(
         config.vlm_evaluation.credential_env,
-        Some("QWEN_API_TOKEN".into())
+        Some("QWEN_API_KEY".into())
+    );
+    assert_eq!(
+        config.vlm_evaluation.base_url,
+        Some("https://dashscope.aliyuncs.com/compatible-mode/v1".into())
     );
     assert!(!config.vlm_evaluation.fixture_mode);
 
     // Verify no secret values in the config content (only env var names)
     let lower = content.to_lowercase();
     assert!(lower.contains("serpapi_api_key"));
-    assert!(lower.contains("qwen_api_token"));
+    assert!(lower.contains("qwen_api_key"));
     // No resolved secrets
     assert!(!lower.contains("sk-"));
     assert!(!lower.contains("eyj"));
@@ -212,6 +217,33 @@ fn fixture_package_passed_minimal_all_json_valid() {
             let _: serde_json::Value = serde_json::from_str(&content)
                 .unwrap_or_else(|_| panic!("invalid JSON: {}", path.display()));
         }
+    }
+}
+
+#[test]
+fn fixture_package_passed_minimal_preserves_image_reference_metrics() {
+    let retrieved: serde_json::Value =
+        read_fixture_json("packages/passed_minimal/retrieved-images.json");
+    let delivery: serde_json::Value =
+        read_fixture_json("packages/passed_minimal/delivery-report.json");
+
+    let image_metrics = retrieved["image_acceptance_decisions"][0]["reference_metrics"]
+        .as_array()
+        .expect("image acceptance reference metrics");
+    let delivery_metrics = delivery["items"][0]["reference_metrics"]
+        .as_array()
+        .expect("delivery reference metrics");
+
+    for metrics in [image_metrics, delivery_metrics] {
+        assert!(metrics
+            .iter()
+            .any(|metric| metric["kind"] == "retrieval_channel"));
+        assert!(metrics
+            .iter()
+            .any(|metric| metric["kind"] == "source_sidecar_path"));
+        assert!(metrics
+            .iter()
+            .any(|metric| metric["kind"] == "mechanical_reference"));
     }
 }
 

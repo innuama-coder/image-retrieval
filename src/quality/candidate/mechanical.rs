@@ -278,13 +278,19 @@ pub fn validate_candidate_mechanical(
                     dims.width, dims.height, MIN_WIDTH, MIN_HEIGHT
                 ),
             });
-        } else if dims.width < 50 || dims.height < 50 {
-            // Sub-50px in either dimension is suspect — record as reference
+        } else {
             reference.push(CandidateReferenceSignal::SourceQuality {
-                note: format!(
-                    "small dimensions: {}x{} — may be thumbnail or low-res",
-                    dims.width, dims.height
-                ),
+                note: if dims.width < 50 || dims.height < 50 {
+                    format!(
+                        "small dimensions: {}x{} — may be thumbnail or low-res",
+                        dims.width, dims.height
+                    )
+                } else {
+                    format!(
+                        "dimensions reported by provider: {}x{}",
+                        dims.width, dims.height
+                    )
+                },
             });
         }
     } else {
@@ -299,6 +305,34 @@ pub fn validate_candidate_mechanical(
         reference.push(CandidateReferenceSignal::ProviderConfidence {
             note: "candidate has no title or page URL — provider confidence may be low".into(),
         });
+    }
+    if let Some(source_page_url) = &candidate.source_page_url {
+        reference.push(CandidateReferenceSignal::SourceQuality {
+            note: format!("source page URL present: {}", source_page_url),
+        });
+    }
+    if let Some(license) = &candidate.license_hint {
+        reference.push(CandidateReferenceSignal::AuthorizationRisk {
+            note: format!("license hint: {}", license),
+        });
+    } else {
+        reference.push(CandidateReferenceSignal::AuthorizationRisk {
+            note: "license hint absent".into(),
+        });
+    }
+    match (&candidate.title, &candidate.snippet) {
+        (Some(title), Some(snippet)) => reference.push(CandidateReferenceSignal::TextContext {
+            note: format!("title: {}; snippet: {}", title, snippet),
+        }),
+        (Some(title), None) => reference.push(CandidateReferenceSignal::TextContext {
+            note: format!("title: {}", title),
+        }),
+        (None, Some(snippet)) => reference.push(CandidateReferenceSignal::TextContext {
+            note: format!("snippet: {}", snippet),
+        }),
+        (None, None) => reference.push(CandidateReferenceSignal::TextContext {
+            note: "no title or snippet".into(),
+        }),
     }
 
     CandidateMechanicalEvidence {
@@ -816,7 +850,7 @@ mod tests {
     }
 
     #[test]
-    fn title_with_must_include_no_text_signal() {
+    fn title_with_must_include_still_records_text_context_signal() {
         let c = make_candidate(
             "c8",
             "https://example.com/img.jpg",
@@ -834,7 +868,7 @@ mod tests {
             .reference_signals
             .iter()
             .any(|s| matches!(s, CandidateReferenceSignal::TextContext { .. }));
-        assert!(!has_text_signal);
+        assert!(has_text_signal);
     }
 
     // -----------------------------------------------------------------------
@@ -878,7 +912,7 @@ mod tests {
     }
 
     #[test]
-    fn adequate_dimensions_no_quality_signal() {
+    fn adequate_dimensions_record_reference_quality_signal() {
         let c = make_candidate_with_dims("c11", "https://example.com/img.jpg", None, 800, 600);
         let seen = HashSet::new();
         let evidence = validate_candidate_mechanical(
@@ -888,12 +922,12 @@ mod tests {
             QualityTier::General,
         );
         assert!(evidence.passed_mechanical());
-        // 800x600 — no low-quality signals
+        // 800x600 is not blocking, but still informs VLM context.
         let has_quality_signal = evidence
             .reference_signals
             .iter()
             .any(|s| matches!(s, CandidateReferenceSignal::SourceQuality { .. }));
-        assert!(!has_quality_signal);
+        assert!(has_quality_signal);
     }
 
     // -----------------------------------------------------------------------

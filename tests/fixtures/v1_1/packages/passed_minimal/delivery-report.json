@@ -1,5 +1,62 @@
 {
   "schema_version": 1,
+  "run_id": "run-fixture-passed-001",
+  "items": [
+    {
+      "candidate_id": "cand-001",
+      "retrieval_job_id": "ret-job-001",
+      "delivery_status": "delivered",
+      "mechanical_passed": true,
+      "vlm_passed": true,
+      "artifact_complete": true,
+      "blocking_reasons": [],
+      "reference_metrics": [
+        {
+          "kind": "retrieval_channel",
+          "channel_id": "fixture_channel",
+          "channel_tier": "fixture",
+          "retrieval_status": "complete"
+        },
+        {
+          "kind": "source_sidecar_path",
+          "path": "evidence/sidecar-cand-001.json"
+        },
+        {
+          "kind": "content_summary_path",
+          "path": "evidence/summary-cand-001.json"
+        },
+        {
+          "kind": "visual_description_path",
+          "path": "evidence/vd-cand-001.txt"
+        },
+        {
+          "kind": "fetch_trace_count",
+          "value": 1
+        },
+        {
+          "kind": "media_type_match",
+          "value": true
+        },
+        {
+          "kind": "mechanical_reference",
+          "value": "fixture image artifacts, checksum, media type, dimensions, sidecar, summary, task report, and visual description passed mechanical acceptance"
+        },
+        {
+          "kind": "file_size_bytes",
+          "value": 245760
+        },
+        {
+          "kind": "image_dimensions",
+          "width": 1920,
+          "height": 1080
+        }
+      ],
+      "authorization_risk": "unknown",
+      "package_image_path": "images/sunset-mountains-1920x1080.jpg"
+    }
+  ],
+  "rejected_items": [],
+  "policy_notes": [],
   "query_plan_id": "qp-fixture-passed-001",
   "delivery_status": "passed",
   "per_candidate": {
@@ -14,18 +71,6 @@
       "vlm_passed": true,
       "ownership_match": true,
       "blocking_reasons": []
-    },
-    "cand-002": {
-      "candidate_id": "cand-002",
-      "retrieval_job_id": "ret-job-002",
-      "delivered_qualified": false,
-      "all_artifacts_present": true,
-      "checksum_present": true,
-      "media_type_match": true,
-      "mechanical_passed": true,
-      "vlm_passed": false,
-      "ownership_match": true,
-      "blocking_reasons": ["VLM image evaluation rejected"]
     }
   }
 }

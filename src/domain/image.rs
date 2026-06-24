@@ -7,6 +7,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::candidate::VlmDecisionEvidence;
+
 /// A locally-fetched image that is ready for acceptance checks.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ImageRecord {
@@ -24,6 +26,10 @@ pub struct ImageRecord {
 
     /// Actual image dimensions determined by reading the file.
     pub dimensions: Option<super::candidate::ImageDimensions>,
+
+    /// Package-safe reference metrics for subjective VLM evaluation.
+    #[serde(default)]
+    pub reference_metrics: Vec<serde_json::Value>,
 }
 
 // ---------------------------------------------------------------------------
@@ -68,6 +74,9 @@ pub enum ImageAcceptanceDecision {
         image: ImageRecord,
         /// Quality/relevance notes for the delivery manifest.
         notes: String,
+        /// Subjective VLM evidence that approved this image.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        vlm_evidence: Option<VlmDecisionEvidence>,
     },
 
     /// Mechanical check blocked the image.
@@ -545,6 +554,7 @@ mod tests {
                 width: 800,
                 height: 600,
             }),
+            reference_metrics: vec![],
         }
     }
 
@@ -571,6 +581,7 @@ mod tests {
         let d = ImageAcceptanceDecision::Accepted {
             image: make_image(),
             notes: "good match".into(),
+            vlm_evidence: None,
         };
         assert!(d.is_accepted());
     }

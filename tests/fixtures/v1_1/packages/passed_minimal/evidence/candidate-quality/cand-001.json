@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "candidate_id": "cand-001",
+  "query_plan_id": "qp-fixture-passed-001",
+  "mechanical_passed": true,
+  "vlm_passed": true,
+  "final_status": "retrievable",
+  "priority": 1,
+  "blocking_metrics": [],
+  "reference_metrics": [
+    {
+      "kind": "search_provider",
+      "provider_id": "fixture_search",
+      "provider_rank": 1
+    }
+  ],
+  "vlm_decision": {
+    "decision": "approve",
+    "provider_id": "fixture_vlm",
+    "evidence_source": "fixture_candidate_evaluation"
+  },
+  "redaction_applied": true
+}

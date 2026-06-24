@@ -660,6 +660,7 @@ mod tests {
             content_type: Some("image/jpeg".into()),
             file_size_bytes: 4096,
             dimensions: Some(ImageDimensions { width, height }),
+            reference_metrics: vec![],
         }
     }
 
@@ -1066,6 +1067,7 @@ mod tests {
             content_type: None,
             file_size_bytes: 0,
             dimensions: None,
+            reference_metrics: vec![],
         };
 
         let state = orchestrator.accept_images(&[bad_image]).unwrap();
@@ -1247,7 +1249,7 @@ impl RunOrchestrator {
             ),
             full_attempt_count: self.state.full_attempt_count,
             retry_count: self.state.retry_count,
-            started_at: "now".into(), // placeholder
+            started_at: utc_now_rfc3339_seconds(),
             finished_at: None,
             search_candidate_count: 0,
             retrievable_candidate_count: 0,
@@ -1272,7 +1274,7 @@ impl RunOrchestrator {
             last.accepted_delta_count = attempt.accepted_delta_count;
             last.gap_delta_count = attempt.gap_delta_count;
             last.terminal_reason = attempt.terminal_reason.clone();
-            last.finished_at = Some("now".into());
+            last.finished_at = Some(utc_now_rfc3339_seconds());
         }
 
         self.state.accepted_images = self.accepted_images.clone();
@@ -1316,11 +1318,15 @@ impl RunOrchestrator {
     /// Add an accepted image. Skips duplicates.
     /// Syncs to the inner RunState automatically.
     pub fn add_accepted_image(&mut self, image: DeliveredImageRecord) {
-        if !self
-            .accepted_images
-            .iter()
-            .any(|a| a.delivered_image_id == image.delivered_image_id)
-        {
+        if self.target_met() {
+            return;
+        }
+        if !self.accepted_images.iter().any(|a| {
+            a.delivered_image_id == image.delivered_image_id
+                || a.candidate_id == image.candidate_id
+                || a.retrieval_job_id == image.retrieval_job_id
+                || (!a.checksum_sha256.is_empty() && a.checksum_sha256 == image.checksum_sha256)
+        }) {
             self.accepted_images.push(image);
             self.state.accepted_images = self.accepted_images.clone();
         }
@@ -1380,6 +1386,19 @@ impl RunOrchestrator {
     }
 }
 
+fn utc_now_rfc3339_seconds() -> String {
+    let now = time::OffsetDateTime::now_utc();
+    format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
+        now.year(),
+        u8::from(now.month()),
+        now.day(),
+        now.hour(),
+        now.minute(),
+        now.second()
+    )
+}
+
 #[cfg(test)]
 mod v11_tests {
     use super::*;
@@ -1406,6 +1425,40 @@ mod v11_tests {
         assert_eq!(orch.accepted_count(), 0);
         assert!(orch.can_attempt());
         assert!(!orch.is_exhausted_without_target());
+    }
+
+    #[test]
+    fn run_attempt_records_use_real_rfc3339_timestamps() {
+        let request = RunRequest {
+            query_plan_id: "qp-1".into(),
+            description: "test".into(),
+            required_image_count: 1,
+            retry_limit: 3,
+            candidate_target: 20,
+            retrieval_batch_target: 2,
+            execution_mode: ExecutionMode::Fixture,
+            output_dir: std::path::PathBuf::from("/tmp/test"),
+            run_id: "run-1".into(),
+        };
+        let mut orch = RunOrchestrator::new(request);
+        let mut attempt = orch.start_attempt();
+        attempt.search_candidate_count = 20;
+        orch.finish_attempt(attempt);
+
+        let recorded = orch.attempts.last().unwrap();
+        assert_ne!(recorded.started_at, "now");
+        assert!(
+            recorded.started_at.contains('T') && recorded.started_at.ends_with('Z'),
+            "started_at should be RFC3339 UTC: {}",
+            recorded.started_at
+        );
+        let finished_at = recorded.finished_at.as_deref().unwrap();
+        assert_ne!(finished_at, "now");
+        assert!(
+            finished_at.contains('T') && finished_at.ends_with('Z'),
+            "finished_at should be RFC3339 UTC: {}",
+            finished_at
+        );
     }
 
     #[test]
@@ -1443,10 +1496,14 @@ mod v11_tests {
             candidate_quality_decision_ref: "qd-1".into(),
             image_acceptance_decision_ref: "ia-1".into(),
             manifest_entry_ref: "m-1".into(),
+            evidence: Default::default(),
         };
 
         let mut img2 = img.clone();
         img2.delivered_image_id = "d-2".into();
+        img2.candidate_id = "c-2".into();
+        img2.retrieval_job_id = "r-2".into();
+        img2.checksum_sha256 = "def456".into();
         orch.add_accepted_image(img);
         orch.add_accepted_image(img2);
         assert!(orch.target_met());
@@ -1495,12 +1552,107 @@ mod v11_tests {
             candidate_quality_decision_ref: "qd-1".into(),
             image_acceptance_decision_ref: "ia-1".into(),
             manifest_entry_ref: "m-1".into(),
+            evidence: Default::default(),
         };
         orch.add_accepted_image(img);
 
         assert!(orch.is_exhausted_without_target());
         orch.state.update_status();
         assert_eq!(orch.status(), PackageStatus::Partial);
+    }
+
+    #[test]
+    fn run_orchestrator_does_not_count_same_candidate_twice_across_retries() {
+        let request = RunRequest {
+            query_plan_id: "qp-1".into(),
+            description: "test".into(),
+            required_image_count: 2,
+            retry_limit: 3,
+            candidate_target: 40,
+            retrieval_batch_target: 4,
+            execution_mode: ExecutionMode::Production,
+            output_dir: std::path::PathBuf::from("/tmp/test"),
+            run_id: "run-1".into(),
+        };
+        let mut orch = RunOrchestrator::new(request);
+
+        let mut img = DeliveredImageRecord {
+            delivered_image_id: "d-1".into(),
+            query_plan_id: "qp-1".into(),
+            candidate_id: "c-1".into(),
+            retrieval_job_id: "r-1".into(),
+            package_image_path: "images/img.jpg".into(),
+            local_artifact_path: "/tmp/img.jpg".into(),
+            source_artifact_path: "source".into(),
+            source_sidecar_path: "sidecar".into(),
+            content_summary_path: "summary".into(),
+            task_report_path: "report".into(),
+            visual_description_path: "visual".into(),
+            checksum_sha256: "sha256-same".into(),
+            content_type: "image/jpeg".into(),
+            file_size_bytes: 1024,
+            width: Some(800),
+            height: Some(600),
+            candidate_quality_decision_ref: "qd-1".into(),
+            image_acceptance_decision_ref: "ia-1".into(),
+            manifest_entry_ref: "m-1".into(),
+            evidence: Default::default(),
+        };
+        orch.add_accepted_image(img.clone());
+        img.delivered_image_id = "d-2".into();
+        img.retrieval_job_id = "r-2".into();
+        orch.add_accepted_image(img);
+
+        assert_eq!(orch.accepted_count(), 1);
+        assert!(!orch.target_met());
+    }
+
+    #[test]
+    fn run_orchestrator_never_accepts_more_images_than_required() {
+        let request = RunRequest {
+            query_plan_id: "qp-1".into(),
+            description: "test".into(),
+            required_image_count: 1,
+            retry_limit: 3,
+            candidate_target: 20,
+            retrieval_batch_target: 2,
+            execution_mode: ExecutionMode::Production,
+            output_dir: std::path::PathBuf::from("/tmp/test"),
+            run_id: "run-1".into(),
+        };
+        let mut orch = RunOrchestrator::new(request);
+
+        let mut img = DeliveredImageRecord {
+            delivered_image_id: "d-1".into(),
+            query_plan_id: "qp-1".into(),
+            candidate_id: "c-1".into(),
+            retrieval_job_id: "r-1".into(),
+            package_image_path: "images/img-1.jpg".into(),
+            local_artifact_path: "/tmp/img-1.jpg".into(),
+            source_artifact_path: "source-1".into(),
+            source_sidecar_path: "sidecar-1".into(),
+            content_summary_path: "summary-1".into(),
+            task_report_path: "report-1".into(),
+            visual_description_path: "visual-1".into(),
+            checksum_sha256: "sha256-one".into(),
+            content_type: "image/jpeg".into(),
+            file_size_bytes: 1024,
+            width: Some(800),
+            height: Some(600),
+            candidate_quality_decision_ref: "qd-1".into(),
+            image_acceptance_decision_ref: "ia-1".into(),
+            manifest_entry_ref: "m-1".into(),
+            evidence: Default::default(),
+        };
+        orch.add_accepted_image(img.clone());
+        img.delivered_image_id = "d-2".into();
+        img.candidate_id = "c-2".into();
+        img.retrieval_job_id = "r-2".into();
+        img.checksum_sha256 = "sha256-two".into();
+        orch.add_accepted_image(img);
+
+        assert_eq!(orch.accepted_count(), 1);
+        assert!(orch.target_met());
     }
 
     #[test]
@@ -1617,9 +1769,13 @@ mod v11_tests {
             candidate_quality_decision_ref: "qd-1".into(),
             image_acceptance_decision_ref: "ia-1".into(),
             manifest_entry_ref: "m-1".into(),
+            evidence: Default::default(),
         };
         let mut img2 = img.clone();
         img2.delivered_image_id = "d-2".into();
+        img2.candidate_id = "c-2".into();
+        img2.retrieval_job_id = "r-2".into();
+        img2.checksum_sha256 = "def456".into();
         orch.add_accepted_image(img);
         orch.add_accepted_image(img2);
         orch.state.update_status();

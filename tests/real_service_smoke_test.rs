@@ -56,6 +56,19 @@ fn credential_is_set(name: &str) -> bool {
     std::env::var(name).is_ok()
 }
 
+fn utc_now_rfc3339_seconds() -> String {
+    let now = time::OffsetDateTime::now_utc();
+    format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
+        now.year(),
+        u8::from(now.month()),
+        now.day(),
+        now.hour(),
+        now.minute(),
+        now.second()
+    )
+}
+
 /// Build a prerequisite summary suitable for machine-readable blocked/skipped
 /// evidence.
 fn build_prerequisite_summary() -> serde_json::Value {
@@ -74,7 +87,7 @@ fn build_prerequisite_summary() -> serde_json::Value {
         }),
         "credential_env_names_present": {
             "SERPAPI_API_KEY": credential_is_set("SERPAPI_API_KEY"),
-            "QWEN_API_TOKEN": credential_is_set("QWEN_API_TOKEN")
+            "QWEN_API_KEY": credential_is_set("QWEN_API_KEY")
         },
         "credential_values_redacted": true,
         "paid_opt_in": std::env::var("IMAGE_RETRIEVAL_ALLOW_PAID").map(|v| v == "1").unwrap_or(false)
@@ -190,6 +203,8 @@ fn classify_commands(
 fn build_smoke_report(status: &str, reason_code: Option<&str>, notes: &str) -> serde_json::Value {
     let prerequisites = build_prerequisite_summary();
     let (commands_run, commands_not_run) = classify_commands(&prerequisites);
+    let timestamp = utc_now_rfc3339_seconds();
+    let release_gates = release_gates_for_status(status);
 
     serde_json::json!({
         "schema_version": 1,
@@ -197,65 +212,8 @@ fn build_smoke_report(status: &str, reason_code: Option<&str>, notes: &str) -> s
         "status": status,
         "blocked_reason_code": reason_code,
         "skipped_reason_code": if status == "skipped" { Some("SMOKE_NOT_OPTED_IN") } else { None::<&str> },
-        "timestamp": "2026-06-22T00:00:00Z",
-        "release_gates": [
-            {
-                "gate_id": "GATE-RSV-001",
-                "status": "open",
-                "description": "Default real provider (SerpApi Google Images)",
-                "blocks": "Real service verification",
-                "decision_ref": null
-            },
-            {
-                "gate_id": "GATE-RSV-002",
-                "status": "open",
-                "description": "Built-in provider list & restricted/legacy policy",
-                "blocks": "Real service verification",
-                "decision_ref": null
-            },
-            {
-                "gate_id": "GATE-RSV-003",
-                "status": "open",
-                "description": "Paid retrieval channel enablement",
-                "blocks": "Real service verification",
-                "decision_ref": null
-            },
-            {
-                "gate_id": "GATE-RSV-004",
-                "status": "open",
-                "description": "robots.txt / site-rule compliance strategy",
-                "blocks": "Real service verification",
-                "decision_ref": null
-            },
-            {
-                "gate_id": "GATE-RSV-005",
-                "status": "open",
-                "description": "Quality tier calibration or waiver",
-                "blocks": "Real service verification",
-                "decision_ref": null
-            },
-            {
-                "gate_id": "GATE-MVP-001",
-                "status": "open",
-                "description": "Qwen 3.5 VLM production evaluation usage & responsibility",
-                "blocks": "MVP release",
-                "decision_ref": null
-            },
-            {
-                "gate_id": "GATE-MVP-003",
-                "status": "open",
-                "description": "Authorization blocking detailed rules",
-                "blocks": "MVP release",
-                "decision_ref": null
-            },
-            {
-                "gate_id": "GATE-MVP-005",
-                "status": "open",
-                "description": "Qwen 3.5 VLM adapter config/smoke",
-                "blocks": "MVP release",
-                "decision_ref": null
-            }
-        ],
+        "timestamp": timestamp,
+        "release_gates": release_gates,
         "environment": prerequisites,
         "self_check_status": if smoke_opted_in() { "not_run" } else { "skipped" },
         "package_dir": null,
@@ -263,6 +221,74 @@ fn build_smoke_report(status: &str, reason_code: Option<&str>, notes: &str) -> s
         "commands_not_run": commands_not_run,
         "notes": notes
     })
+}
+
+fn release_gates_for_status(status: &str) -> Vec<serde_json::Value> {
+    let gate_status = if status == "passed" { "closed" } else { "open" };
+    let decision_ref = if status == "passed" {
+        Some("tasks/development/v1.1/release-gate-decisions.md")
+    } else {
+        None
+    };
+    [
+        (
+            "GATE-RSV-001",
+            "Default real provider (SerpApi Google Images)",
+            "Real service verification",
+        ),
+        (
+            "GATE-RSV-002",
+            "Built-in provider list & restricted/legacy policy",
+            "Real service verification",
+        ),
+        (
+            "GATE-RSV-003",
+            "Paid retrieval channel enablement",
+            "Real service verification",
+        ),
+        (
+            "GATE-RSV-004",
+            "robots.txt / site-rule compliance strategy",
+            "Real service verification",
+        ),
+        (
+            "GATE-RSV-005",
+            "Quality tier calibration or waiver",
+            "Real service verification",
+        ),
+        (
+            "GATE-MVP-001",
+            "Qwen 3.5 VLM production evaluation usage & responsibility",
+            "MVP release",
+        ),
+        ("GATE-MVP-002", "Provider list/policy (MVP)", "MVP release"),
+        (
+            "GATE-MVP-003",
+            "Authorization blocking detailed rules",
+            "MVP release",
+        ),
+        (
+            "GATE-MVP-004",
+            "Fourth retrieval channel decision",
+            "MVP release",
+        ),
+        (
+            "GATE-MVP-005",
+            "Qwen 3.5 VLM adapter config/smoke",
+            "MVP release",
+        ),
+    ]
+    .into_iter()
+    .map(|(gate_id, description, blocks)| {
+        serde_json::json!({
+            "gate_id": gate_id,
+            "status": gate_status,
+            "description": description,
+            "blocks": blocks,
+            "decision_ref": decision_ref,
+        })
+    })
+    .collect()
 }
 
 // =============================================================================
@@ -285,15 +311,7 @@ fn real_service_smoke_preconditions_report() {
             "IMAGE_RETRIEVAL_REAL_SMOKE is not set to 1. ",
         );
 
-        // Write the report to a known location for handoff
-        let report_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("tasks")
-            .join("development")
-            .join("v1.1")
-            .join("real-service-smoke-report.json");
-        if let Ok(json) = serde_json::to_string_pretty(&report) {
-            let _ = std::fs::write(&report_path, &json);
-        }
+        write_report(&report);
 
         // Diagnostic: this is NOT a failure; it's expected skipped evidence
         eprintln!("[SKIPPED] Real-service smoke skipped: IMAGE_RETRIEVAL_REAL_SMOKE is not set.");
@@ -312,7 +330,7 @@ fn real_service_smoke_preconditions_report() {
         let serpapi_ok = prerequisites["credential_env_names_present"]["SERPAPI_API_KEY"]
             .as_bool()
             .unwrap_or(false);
-        let qwen_ok = prerequisites["credential_env_names_present"]["QWEN_API_TOKEN"]
+        let qwen_ok = prerequisites["credential_env_names_present"]["QWEN_API_KEY"]
             .as_bool()
             .unwrap_or(false);
 
@@ -330,7 +348,7 @@ fn real_service_smoke_preconditions_report() {
             missing.push("SERPAPI_API_KEY");
         }
         if !qwen_ok {
-            missing.push("QWEN_API_TOKEN");
+            missing.push("QWEN_API_KEY");
         }
 
         if !missing.is_empty() {
@@ -343,14 +361,7 @@ fn real_service_smoke_preconditions_report() {
                 ),
             );
 
-            let report_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("tasks")
-                .join("development")
-                .join("v1.1")
-                .join("real-service-smoke-report.json");
-            if let Ok(json) = serde_json::to_string_pretty(&report) {
-                let _ = std::fs::write(&report_path, &json);
-            }
+            write_report(&report);
 
             eprintln!(
                 "[BLOCKED] Real-service smoke blocked: missing prerequisites: {}",
@@ -361,6 +372,35 @@ fn real_service_smoke_preconditions_report() {
             run_real_smoke_flow();
         }
     }
+}
+
+#[test]
+fn smoke_report_is_written_only_when_report_path_is_explicit() {
+    let report = build_smoke_report(
+        "skipped",
+        None,
+        "IMAGE_RETRIEVAL_REAL_SMOKE is not set to 1.",
+    );
+
+    std::env::remove_var("IMAGE_RETRIEVAL_SMOKE_REPORT_PATH");
+    assert!(
+        !write_smoke_report_if_requested(&report),
+        "ordinary cargo test runs must not rewrite release evidence files"
+    );
+
+    let path = std::env::temp_dir().join(format!(
+        "image-retrieval-smoke-report-{}-{}.json",
+        std::process::id(),
+        utc_now_rfc3339_seconds().replace([':', '-'], "")
+    ));
+    std::env::set_var("IMAGE_RETRIEVAL_SMOKE_REPORT_PATH", &path);
+    assert!(write_smoke_report_if_requested(&report));
+    let written: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    assert_eq!(written["status"], "skipped");
+
+    std::env::remove_var("IMAGE_RETRIEVAL_SMOKE_REPORT_PATH");
+    let _ = std::fs::remove_file(path);
 }
 
 /// Execute the full real-service smoke flow.
@@ -519,36 +559,23 @@ fn run_real_smoke_flow() {
         }),
     ];
 
+    let timestamp = utc_now_rfc3339_seconds();
+    let release_gates = release_gates_for_status(status);
     let report = serde_json::json!({
         "schema_version": 1,
         "test_id": "real_service_smoke_v1_1",
         "status": status,
         "blocked_reason_code": reason_code,
         "skipped_reason_code": null,
-        "timestamp": "2026-06-22T00:00:00Z",
-        "release_gates": [
-            {
-                "gate_id": "GATE-RSV-001",
-                "status": if status == "passed" { "closed" } else { "open" },
-                "description": "Default real provider (SerpApi Google Images)",
-                "blocks": "Real service verification",
-                "decision_ref": null
-            },
-            {
-                "gate_id": "GATE-MVP-005",
-                "status": if status == "passed" { "closed" } else { "open" },
-                "description": "Qwen 3.5 VLM adapter config/smoke",
-                "blocks": "MVP release",
-                "decision_ref": null
-            }
-        ],
+        "timestamp": timestamp,
+        "release_gates": release_gates,
         "environment": {
             "config_path_present": true,
             "query_plan_path_present": true,
             "output_dir_writable": true,
             "credential_env_names_present": {
                 "SERPAPI_API_KEY": true,
-                "QWEN_API_TOKEN": true
+                "QWEN_API_KEY": true
             },
             "credential_values_redacted": true
         },
@@ -575,19 +602,30 @@ fn run_real_smoke_flow() {
     }
 }
 
-/// Write the smoke report to the handoff path.
+/// Write the smoke report to the explicitly configured handoff path.
 fn write_report(report: &serde_json::Value) {
-    let report_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tasks")
-        .join("development")
-        .join("v1.1")
-        .join("real-service-smoke-report.json");
+    if !write_smoke_report_if_requested(report) {
+        eprintln!(
+            "[SMOKE] Report not written; set IMAGE_RETRIEVAL_SMOKE_REPORT_PATH to persist it."
+        );
+    }
+}
+
+fn write_smoke_report_if_requested(report: &serde_json::Value) -> bool {
+    let Ok(report_path) = std::env::var("IMAGE_RETRIEVAL_SMOKE_REPORT_PATH") else {
+        return false;
+    };
+    let report_path = PathBuf::from(report_path);
     if let Ok(json) = serde_json::to_string_pretty(report) {
         if let Err(e) = std::fs::write(&report_path, &json) {
             eprintln!("[SMOKE] Failed to write smoke report: {}", e);
+            false
         } else {
             eprintln!("[SMOKE] Report written to {}", report_path.display());
+            true
         }
+    } else {
+        false
     }
 }
 
@@ -683,6 +721,7 @@ fn smoke_report_release_gates_are_all_open() {
     );
 
     let gates = report["release_gates"].as_array().unwrap();
+    assert_eq!(gates.len(), 10, "Smoke report must list all release gates");
     for gate in gates {
         let gate_id = gate["gate_id"].as_str().unwrap();
         let gate_status = gate["status"].as_str().unwrap();
@@ -706,7 +745,7 @@ fn smoke_report_environment_reports_credential_presence_only() {
     // Environment section reports boolean presence, never values
     let creds = &env["credential_env_names_present"];
     assert!(creds["SERPAPI_API_KEY"].is_boolean());
-    assert!(creds["QWEN_API_TOKEN"].is_boolean());
+    assert!(creds["QWEN_API_KEY"].is_boolean());
     assert!(env["credential_values_redacted"].as_bool().unwrap());
 
     // The report JSON text must never contain resolved credential values
@@ -720,11 +759,11 @@ fn smoke_report_environment_reports_credential_presence_only() {
             );
         }
     }
-    if let Ok(val) = std::env::var("QWEN_API_TOKEN") {
+    if let Ok(val) = std::env::var("QWEN_API_KEY") {
         if !val.is_empty() {
             assert!(
                 !json.contains(&val),
-                "Smoke report must not contain QWEN_API_TOKEN value"
+                "Smoke report must not contain QWEN_API_KEY value"
             );
         }
     }

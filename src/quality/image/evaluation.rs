@@ -204,6 +204,7 @@ pub fn normalize_image_conclusion(
         ImageEvaluationConclusion::Approve { notes } => ImageAcceptanceDecision::Accepted {
             image,
             notes: notes.unwrap_or_default(),
+            vlm_evidence: None,
         },
         ImageEvaluationConclusion::Reject { reason } => {
             ImageAcceptanceDecision::SubjectivelyRejected {
@@ -263,6 +264,7 @@ mod tests {
                 width: 800,
                 height: 600,
             }),
+            reference_metrics: vec![],
         }
     }
 

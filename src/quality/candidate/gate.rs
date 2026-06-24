@@ -11,7 +11,10 @@
 //! References: PRD §校验与评价产品要求, HLD §Candidate Quality Gate,
 //! `docs/design/TASK-004-candidate-quality-openclaw-design.md`
 
-use crate::domain::candidate::{CandidateDecision, CandidateRecord, RetrievableCandidateSequence};
+use crate::domain::candidate::{
+    CandidateDecision, CandidateMechanicalAssessment, CandidateQualityDecision, CandidateRecord,
+    RetrievableCandidateSequence, VlmSubjectDecision, VlmSubjectDecisionKind,
+};
 use crate::domain::query_plan::ValidatedQueryPlan;
 use crate::domain::search::SearchOutcome;
 use crate::error::{Error, Result};
@@ -21,7 +24,7 @@ use crate::quality::candidate::evaluation::{
     ExecutionBlockingFact,
 };
 use crate::quality::candidate::mechanical::{
-    validate_candidate_mechanical, CandidateMechanicalEvidence,
+    validate_candidate_mechanical, validate_candidate_mechanical_v11, CandidateMechanicalEvidence,
 };
 use std::collections::HashSet;
 
@@ -43,6 +46,10 @@ pub struct CandidateQualityGateResult {
     /// execution-blocked). Useful for diagnostics, metrics, and delivery
     /// manifest explanations.
     pub all_decisions: Vec<CandidateDecision>,
+
+    /// v1.1 quality decisions with mechanical metrics and VLM decisions
+    /// preserved for retrieval handoff, coverage, and package evidence.
+    pub quality_decisions: Vec<CandidateQualityDecision>,
 
     /// Execution blocking facts — non-empty when OpenClaw was unavailable
     /// and production policy requires it.
@@ -115,6 +122,15 @@ pub struct CandidateQualityGate<'a> {
 
     /// Query plan context for mechanical validation and evaluation requests.
     query_plan: ValidatedQueryPlan,
+
+    /// Active QueryPlan id used for ownership checks.
+    query_plan_id: Option<String>,
+
+    /// Prohibited source domains from runtime policy.
+    prohibited_domains: Vec<String>,
+
+    /// Whether fixture candidates are allowed in this gate execution.
+    fixture_mode: bool,
 }
 
 impl<'a> CandidateQualityGate<'a> {
@@ -123,6 +139,26 @@ impl<'a> CandidateQualityGate<'a> {
         Self {
             openclaw,
             query_plan,
+            query_plan_id: None,
+            prohibited_domains: Vec::new(),
+            fixture_mode: true,
+        }
+    }
+
+    /// Create a quality gate with explicit v1.1 runtime context.
+    pub fn new_with_context(
+        openclaw: &'a dyn OpenClawEvaluationPort,
+        query_plan: ValidatedQueryPlan,
+        query_plan_id: impl Into<String>,
+        prohibited_domains: Vec<String>,
+        fixture_mode: bool,
+    ) -> Self {
+        Self {
+            openclaw,
+            query_plan,
+            query_plan_id: Some(query_plan_id.into()),
+            prohibited_domains,
+            fixture_mode,
         }
     }
 
@@ -157,34 +193,55 @@ impl<'a> CandidateQualityGate<'a> {
 
         // Phase 1: Mechanical validation
         let mut mechanically_blocked: Vec<CandidateDecision> = Vec::new();
-        let mut mechanically_passed: Vec<(CandidateRecord, CandidateMechanicalEvidence)> =
-            Vec::new();
+        let mut quality_decisions: Vec<CandidateQualityDecision> = Vec::new();
+        let mut mechanically_passed: Vec<(
+            CandidateRecord,
+            CandidateMechanicalEvidence,
+            CandidateMechanicalAssessment,
+        )> = Vec::new();
 
         for candidate in candidates.iter().cloned() {
+            let expected_query_plan_id = self
+                .query_plan_id
+                .as_deref()
+                .unwrap_or(&candidate.query_plan_id);
             let evidence = validate_candidate_mechanical(
                 &candidate,
                 &seen_urls,
                 &self.query_plan.content_constraints,
                 self.query_plan.quality_tier,
             );
+            let assessment = validate_candidate_mechanical_v11(
+                &candidate,
+                expected_query_plan_id,
+                &seen_urls,
+                &self.prohibited_domains,
+                &self.query_plan.content_constraints.must_avoid,
+                self.fixture_mode,
+            );
 
-            if evidence.passed_mechanical() {
+            if assessment.passed {
                 // Track the URL for future duplicate detection
                 if !candidate.image_url.trim().is_empty() {
                     seen_urls.insert(candidate.image_url.clone());
                 }
-                mechanically_passed.push((candidate, evidence));
+                mechanically_passed.push((candidate, evidence, assessment));
             } else {
-                // Build rejection decision from blocking reasons
-                let reasons: Vec<String> = evidence
-                    .blocking_findings
+                // Build rejection decision from v1.1 blocking facts.
+                let reasons: Vec<String> = assessment
+                    .blocking_metrics
                     .iter()
-                    .map(|r| r.description())
+                    .map(|metric| metric.message.clone())
                     .collect();
                 mechanically_blocked.push(CandidateDecision::Rejected {
-                    candidate,
+                    candidate: candidate.clone(),
                     reason: reasons.join("; "),
                 });
+                quality_decisions.push(CandidateQualityDecision::mechanically_rejected(
+                    candidate.candidate_id.clone(),
+                    candidate.query_plan_id.clone(),
+                    assessment.blocking_metrics,
+                ));
             }
         }
 
@@ -201,6 +258,7 @@ impl<'a> CandidateQualityGate<'a> {
             return Ok(CandidateQualityGateResult {
                 retrievable_sequence: RetrievableCandidateSequence::empty(),
                 all_decisions,
+                quality_decisions,
                 execution_blocking_facts: Vec::new(),
                 summary,
             });
@@ -209,7 +267,7 @@ impl<'a> CandidateQualityGate<'a> {
         // Phase 2: Build evaluation requests
         let _requests: Vec<CandidateEvaluationRequest> = mechanically_passed
             .iter()
-            .map(|(candidate, evidence)| {
+            .map(|(candidate, evidence, _assessment)| {
                 CandidateEvaluationRequest::new(
                     candidate.clone(),
                     evidence.clone(),
@@ -233,16 +291,11 @@ impl<'a> CandidateQualityGate<'a> {
         // If the port returns an error (OpenClaw unavailable), all
         // mechanically-passed candidates become ExecutionBlocked.
 
-        let openclaw_result = self.openclaw.evaluate_candidates(
-            &mechanically_passed
-                .iter()
-                .map(|(c, _)| c.clone())
-                .collect::<Vec<_>>(),
-            &self.query_plan.description,
-        );
+        let openclaw_result = self.openclaw.evaluate_candidate_requests(&_requests);
 
         match openclaw_result {
             Ok(decisions) => {
+                validate_candidate_decision_response(&mechanically_passed, &decisions)?;
                 // The port returned decisions directly. We trust the port's
                 // normalization but we should still validate and potentially
                 // enrich the results. For now, we accept the port's output
@@ -251,6 +304,13 @@ impl<'a> CandidateQualityGate<'a> {
                 // But we need to distinguish between mechanical rejection
                 // (already handled) and evaluation-time rejection.
                 // The port's decisions go into our final decision list.
+                for (decision, (_candidate, _evidence, assessment)) in
+                    decisions.iter().zip(mechanically_passed.iter())
+                {
+                    quality_decisions.push(quality_decision_from_candidate_decision(
+                        decision, assessment,
+                    ));
+                }
                 all_decisions.extend(decisions);
 
                 let summary = self.build_summary(total, mechanically_blocked_count, &all_decisions);
@@ -260,6 +320,7 @@ impl<'a> CandidateQualityGate<'a> {
                 Ok(CandidateQualityGateResult {
                     retrievable_sequence,
                     all_decisions,
+                    quality_decisions,
                     execution_blocking_facts: Vec::new(),
                     summary,
                 })
@@ -272,12 +333,23 @@ impl<'a> CandidateQualityGate<'a> {
                     // All mechanically-passed candidates become ExecutionBlocked
                     let blocked_decisions: Vec<CandidateDecision> = mechanically_passed
                         .into_iter()
-                        .map(
-                            |(candidate, _evidence)| CandidateDecision::ExecutionBlocked {
-                                candidate,
-                                reason: e.to_string(),
-                            },
-                        )
+                        .map(|(candidate, _evidence, assessment)| {
+                            let reason = e.to_string();
+                            quality_decisions.push(CandidateQualityDecision::merged(
+                                candidate.candidate_id.clone(),
+                                candidate.query_plan_id.clone(),
+                                &assessment,
+                                Some(&VlmSubjectDecision {
+                                    subject_id: candidate.candidate_id.to_string(),
+                                    decision: VlmSubjectDecisionKind::Unexecutable,
+                                    confidence: None,
+                                    reason_codes: vec!["openclaw_unavailable".into()],
+                                    rationale_summary: reason.clone(),
+                                    evidence_refs: vec![],
+                                }),
+                            ));
+                            CandidateDecision::ExecutionBlocked { candidate, reason }
+                        })
                         .collect();
 
                     all_decisions.extend(blocked_decisions);
@@ -292,6 +364,7 @@ impl<'a> CandidateQualityGate<'a> {
                     Ok(CandidateQualityGateResult {
                         retrievable_sequence: RetrievableCandidateSequence::empty(),
                         all_decisions,
+                        quality_decisions,
                         execution_blocking_facts: vec![fact],
                         summary,
                     })
@@ -338,6 +411,115 @@ impl<'a> CandidateQualityGate<'a> {
     }
 }
 
+fn quality_decision_from_candidate_decision(
+    decision: &CandidateDecision,
+    assessment: &CandidateMechanicalAssessment,
+) -> CandidateQualityDecision {
+    let vlm = vlm_subject_decision_from_candidate_decision(decision);
+    let (candidate_id, query_plan_id) = match decision {
+        CandidateDecision::Accepted { candidate, .. }
+        | CandidateDecision::Rejected { candidate, .. }
+        | CandidateDecision::Uncertain { candidate, .. }
+        | CandidateDecision::ExecutionBlocked { candidate, .. } => (
+            candidate.candidate_id.clone(),
+            candidate.query_plan_id.clone(),
+        ),
+    };
+    CandidateQualityDecision::merged(candidate_id, query_plan_id, assessment, Some(&vlm))
+}
+
+fn validate_candidate_decision_response(
+    mechanically_passed: &[(
+        CandidateRecord,
+        CandidateMechanicalEvidence,
+        CandidateMechanicalAssessment,
+    )],
+    decisions: &[CandidateDecision],
+) -> Result<()> {
+    if decisions.len() != mechanically_passed.len() {
+        return Err(Error::execution_blocked(format!(
+            "VLM candidate response cardinality mismatch: expected {} decisions, got {}",
+            mechanically_passed.len(),
+            decisions.len()
+        )));
+    }
+
+    for ((expected_candidate, _evidence, _assessment), decision) in
+        mechanically_passed.iter().zip(decisions.iter())
+    {
+        let actual_id = candidate_decision_subject_id(decision);
+        let expected_id = expected_candidate.candidate_id.to_string();
+        if actual_id != expected_id {
+            return Err(Error::execution_blocked(format!(
+                "VLM candidate response subject id mismatch: expected {}, got {}",
+                expected_id, actual_id
+            )));
+        }
+    }
+
+    Ok(())
+}
+
+fn candidate_decision_subject_id(decision: &CandidateDecision) -> String {
+    match decision {
+        CandidateDecision::Accepted { candidate, .. }
+        | CandidateDecision::Rejected { candidate, .. }
+        | CandidateDecision::Uncertain { candidate, .. }
+        | CandidateDecision::ExecutionBlocked { candidate, .. } => {
+            candidate.candidate_id.to_string()
+        }
+    }
+}
+
+fn vlm_subject_decision_from_candidate_decision(
+    decision: &CandidateDecision,
+) -> VlmSubjectDecision {
+    match decision {
+        CandidateDecision::Accepted {
+            candidate,
+            vlm_evidence,
+            ..
+        } => VlmSubjectDecision {
+            subject_id: candidate.candidate_id.to_string(),
+            decision: VlmSubjectDecisionKind::Approve,
+            confidence: vlm_evidence.as_ref().and_then(|e| e.confidence),
+            reason_codes: vlm_evidence
+                .as_ref()
+                .map(|e| e.reason_codes.clone())
+                .unwrap_or_default(),
+            rationale_summary: vlm_evidence
+                .as_ref()
+                .and_then(|e| e.rationale_summary.clone())
+                .unwrap_or_else(|| "candidate approved by VLM".into()),
+            evidence_refs: vec![],
+        },
+        CandidateDecision::Rejected { candidate, reason } => VlmSubjectDecision {
+            subject_id: candidate.candidate_id.to_string(),
+            decision: VlmSubjectDecisionKind::Reject,
+            confidence: None,
+            reason_codes: vec!["candidate_rejected".into()],
+            rationale_summary: reason.clone(),
+            evidence_refs: vec![],
+        },
+        CandidateDecision::Uncertain { candidate, reason } => VlmSubjectDecision {
+            subject_id: candidate.candidate_id.to_string(),
+            decision: VlmSubjectDecisionKind::Uncertain,
+            confidence: None,
+            reason_codes: vec!["candidate_uncertain".into()],
+            rationale_summary: reason.clone(),
+            evidence_refs: vec![],
+        },
+        CandidateDecision::ExecutionBlocked { candidate, reason } => VlmSubjectDecision {
+            subject_id: candidate.candidate_id.to_string(),
+            decision: VlmSubjectDecisionKind::Unexecutable,
+            confidence: None,
+            reason_codes: vec!["candidate_execution_blocked".into()],
+            rationale_summary: reason.clone(),
+            evidence_refs: vec![],
+        },
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Standalone evaluation helper (no dependency on OpenClaw port)
 // ---------------------------------------------------------------------------
@@ -371,6 +553,7 @@ mod tests {
     };
     use crate::domain::search::{CandidateShortageReason, SearchOutcome};
     use crate::quality::candidate::mechanical::CandidateBlockingReason;
+    use std::cell::RefCell;
 
     // -----------------------------------------------------------------------
     // Test helpers
@@ -426,6 +609,211 @@ mod tests {
             shortage_reason: None,
             readiness_summary: vec![],
         }
+    }
+
+    struct CapturingCandidateEvaluator {
+        requests: RefCell<Vec<CandidateEvaluationRequest>>,
+    }
+
+    impl CapturingCandidateEvaluator {
+        fn new() -> Self {
+            Self {
+                requests: RefCell::new(Vec::new()),
+            }
+        }
+    }
+
+    struct FixedCandidateEvaluator {
+        decisions: Vec<CandidateDecision>,
+    }
+
+    impl FixedCandidateEvaluator {
+        fn new(decisions: Vec<CandidateDecision>) -> Self {
+            Self { decisions }
+        }
+    }
+
+    impl OpenClawEvaluationPort for FixedCandidateEvaluator {
+        fn readiness(&self) -> Result<()> {
+            Ok(())
+        }
+
+        fn evaluate_candidates(
+            &self,
+            _candidates: &[CandidateRecord],
+            _description: &str,
+        ) -> Result<Vec<CandidateDecision>> {
+            Ok(self.decisions.clone())
+        }
+
+        fn evaluate_images(
+            &self,
+            _images: &[crate::domain::image::ImageRecord],
+            _description: &str,
+        ) -> Result<Vec<crate::domain::image::ImageAcceptanceDecision>> {
+            Ok(vec![])
+        }
+    }
+
+    impl OpenClawEvaluationPort for CapturingCandidateEvaluator {
+        fn readiness(&self) -> Result<()> {
+            Ok(())
+        }
+
+        fn evaluate_candidates(
+            &self,
+            _candidates: &[CandidateRecord],
+            _description: &str,
+        ) -> Result<Vec<CandidateDecision>> {
+            panic!("candidate gate must call evaluate_candidate_requests");
+        }
+
+        fn evaluate_candidate_requests(
+            &self,
+            requests: &[CandidateEvaluationRequest],
+        ) -> Result<Vec<CandidateDecision>> {
+            self.requests.borrow_mut().extend_from_slice(requests);
+            Ok(requests
+                .iter()
+                .map(|request| CandidateDecision::Accepted {
+                    candidate: request.candidate.clone(),
+                    priority: 9,
+                    vlm_evidence: Some(crate::domain::candidate::VlmDecisionEvidence::new(
+                        "approve",
+                        "capturing_vlm",
+                        "unit-test",
+                        "candidate_request_capture",
+                    )),
+                })
+                .collect())
+        }
+
+        fn evaluate_images(
+            &self,
+            _images: &[crate::domain::image::ImageRecord],
+            _description: &str,
+        ) -> Result<Vec<crate::domain::image::ImageAcceptanceDecision>> {
+            Ok(vec![])
+        }
+    }
+
+    #[test]
+    fn gate_passes_candidate_reference_metrics_to_evaluator_and_quality_decisions() {
+        let evaluator = CapturingCandidateEvaluator::new();
+        let plan = make_test_query_plan();
+        let mut candidate = make_candidate(
+            "cand-reference",
+            "https://example.com/reference.jpg",
+            Some("Sunset mountains"),
+        );
+        candidate.width = Some(1920);
+        candidate.height = Some(1080);
+        candidate.source_page_url = Some("https://example.com/reference-page".into());
+        candidate.license_hint = Some("cc-by".into());
+        let outcome = make_search_outcome(vec![candidate.clone()]);
+
+        let gate = CandidateQualityGate::new(&evaluator, plan);
+        let result = gate.evaluate(&outcome).unwrap();
+
+        let requests = evaluator.requests.borrow();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].candidate.candidate_id, candidate.candidate_id);
+        assert!(
+            !requests[0].mechanical_evidence.reference_signals.is_empty(),
+            "candidate VLM request must include mechanical reference signals"
+        );
+        assert_eq!(result.quality_decisions.len(), 1);
+        assert!(
+            !result.quality_decisions[0].reference_metrics.is_empty(),
+            "candidate quality decision must preserve mechanical reference metrics"
+        );
+        assert!(result.quality_decisions[0].vlm_decision.is_some());
+    }
+
+    #[test]
+    fn gate_uses_v11_mechanical_assessment_as_blocking_authority() {
+        let evaluator = CapturingCandidateEvaluator::new();
+        let plan = make_test_query_plan();
+        let mut candidate = make_candidate(
+            "cand-wrong-owner",
+            "https://example.com/wrong-owner.jpg",
+            Some("Sunset mountains"),
+        );
+        candidate.query_plan_id = "qp-other".into();
+        candidate.provider_kind = "serpapi_google_images".into();
+        let outcome = make_search_outcome(vec![candidate]);
+
+        let gate = CandidateQualityGate::new_with_context(
+            &evaluator,
+            plan,
+            "qp-active",
+            Vec::new(),
+            false,
+        );
+        let result = gate.evaluate(&outcome).unwrap();
+
+        assert!(evaluator.requests.borrow().is_empty());
+        assert!(result.retrievable_sequence.is_empty());
+        assert_eq!(result.quality_decisions.len(), 1);
+        assert!(!result.quality_decisions[0].mechanical_passed);
+        assert!(result.quality_decisions[0]
+            .blocking_metrics
+            .iter()
+            .any(|metric| metric.code
+                == crate::domain::metrics::QualityMetricCode::CandidateQueryOwnershipMismatch));
+    }
+
+    #[test]
+    fn gate_rejects_vlm_candidate_response_cardinality_mismatch() {
+        let evaluator = FixedCandidateEvaluator::new(vec![]);
+        let plan = make_test_query_plan();
+        let mut candidate = make_candidate(
+            "cand-one",
+            "https://example.com/one.jpg",
+            Some("Sunset mountains"),
+        );
+        candidate.provider_kind = "serpapi_google_images".into();
+        let outcome = make_search_outcome(vec![candidate]);
+
+        let gate =
+            CandidateQualityGate::new_with_context(&evaluator, plan, "qp-test", Vec::new(), false);
+        let err = gate.evaluate(&outcome).unwrap_err();
+
+        assert!(err.to_string().contains("cardinality"));
+    }
+
+    #[test]
+    fn gate_rejects_vlm_candidate_response_subject_id_mismatch() {
+        let mut returned_candidate = make_candidate(
+            "cand-extra",
+            "https://example.com/extra.jpg",
+            Some("Unvalidated image"),
+        );
+        returned_candidate.provider_kind = "serpapi_google_images".into();
+        let evaluator = FixedCandidateEvaluator::new(vec![CandidateDecision::Accepted {
+            candidate: returned_candidate,
+            priority: 1,
+            vlm_evidence: Some(crate::domain::candidate::VlmDecisionEvidence::new(
+                "approve",
+                "fixture_vlm",
+                "unit-test",
+                "mismatch",
+            )),
+        }]);
+        let plan = make_test_query_plan();
+        let mut candidate = make_candidate(
+            "cand-requested",
+            "https://example.com/requested.jpg",
+            Some("Sunset mountains"),
+        );
+        candidate.provider_kind = "serpapi_google_images".into();
+        let outcome = make_search_outcome(vec![candidate]);
+
+        let gate =
+            CandidateQualityGate::new_with_context(&evaluator, plan, "qp-test", Vec::new(), false);
+        let err = gate.evaluate(&outcome).unwrap_err();
+
+        assert!(err.to_string().contains("subject id"));
     }
 
     // -----------------------------------------------------------------------
@@ -678,6 +1066,7 @@ mod tests {
             CandidateDecision::Accepted {
                 candidate: make_candidate("a", "https://a.com/1.jpg", None),
                 priority: 1,
+                vlm_evidence: None,
             },
             CandidateDecision::Rejected {
                 candidate: make_candidate("b", "https://b.com/2.jpg", None),
@@ -809,6 +1198,7 @@ mod tests {
         let result = CandidateQualityGateResult {
             retrievable_sequence: RetrievableCandidateSequence::empty(),
             all_decisions: vec![],
+            quality_decisions: vec![],
             execution_blocking_facts: vec![],
             summary,
         };

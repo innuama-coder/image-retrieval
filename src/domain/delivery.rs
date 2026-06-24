@@ -477,6 +477,56 @@ pub struct DeliveredImageRecord {
     pub candidate_quality_decision_ref: String,
     pub image_acceptance_decision_ref: String,
     pub manifest_entry_ref: String,
+    #[serde(default)]
+    pub evidence: DeliveredImageEvidence,
+}
+
+/// Evidence snapshot preserved for a delivered image.
+///
+/// This keeps the package builder honest: it serializes evidence captured from
+/// the retrieval and quality gates instead of inventing pass/trace fields while
+/// writing package JSON.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct DeliveredImageEvidence {
+    pub provider_id: String,
+    pub channel_id: String,
+    pub channel_tier: String,
+    pub retrieval_status: String,
+    pub media_type_match: bool,
+    #[serde(default)]
+    pub fetch_trace: Vec<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub failure_reason: Option<serde_json::Value>,
+    pub candidate_decision: DeliveredCandidateQualityEvidence,
+    pub image_decision: DeliveredImageAcceptanceEvidence,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct DeliveredCandidateQualityEvidence {
+    pub mechanical_passed: bool,
+    pub vlm_passed: bool,
+    pub final_status: String,
+    pub priority: u32,
+    #[serde(default)]
+    pub blocking_metrics: Vec<serde_json::Value>,
+    #[serde(default)]
+    pub reference_metrics: Vec<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vlm_decision: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct DeliveredImageAcceptanceEvidence {
+    pub mechanical_passed: bool,
+    pub vlm_passed: bool,
+    pub artifact_complete: bool,
+    pub final_status: String,
+    #[serde(default)]
+    pub blocking_reasons: Vec<String>,
+    #[serde(default)]
+    pub reference_metrics: Vec<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vlm_decision: Option<serde_json::Value>,
 }
 
 // ---------------------------------------------------------------------------
@@ -794,8 +844,10 @@ mod tests {
                     width: 800,
                     height: 600,
                 }),
+                reference_metrics: vec![],
             },
             notes: "good".into(),
+            vlm_evidence: None,
         }
     }
 
@@ -890,6 +942,7 @@ mod tests {
             candidate_quality_decision_ref: "qd-1".into(),
             image_acceptance_decision_ref: "ia-1".into(),
             manifest_entry_ref: "m-1".into(),
+            evidence: Default::default(),
         };
         state.accepted_images.push(img.clone());
         state.accepted_images.push(img);
@@ -922,6 +975,7 @@ mod tests {
             candidate_quality_decision_ref: "qd-1".into(),
             image_acceptance_decision_ref: "ia-1".into(),
             manifest_entry_ref: "m-1".into(),
+            evidence: Default::default(),
         };
         state.accepted_images.push(img);
         state.update_status();

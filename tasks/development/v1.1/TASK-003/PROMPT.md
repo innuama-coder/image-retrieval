@@ -27,7 +27,7 @@ Allowed scope:
 
 - Implement typed mechanical blocking/reference metric facts for candidates and retrieved images.
 - Upgrade VlmEvaluationPort with readiness, evaluate_candidates, and evaluate_images structured DTOs.
-- Implement direct qwen_3_5_vlm adapter boundary using QWEN_API_TOKEN by default, runtime endpoint/base URL, model, timeout, and prompt templates.
+- Implement direct qwen_3_5_vlm adapter boundary using QWEN_API_KEY by default, runtime endpoint/base URL, model, timeout, and prompt templates.
 - Implement candidate decisions so only mechanical pass plus Qwen approve enters RetrievableCandidateBatch.
 - Implement the post-retrieval image acceptance API and decision logic over a stable artifact-evidence input DTO; TASK-005 invokes it after TASK-004 produces RetrievalBatchResult.
 - Keep fixture evaluator explicitly test-only and blocked in production.
@@ -84,7 +84,7 @@ Acceptance is met only when the expected outputs are produced within the allowed
 
 - Stop if Qwen API contract cannot be represented by the VlmEvaluationPort without inventing unsupported fields.
 - Stop if TASK-002 candidate fields or TASK-001 VLM config are missing.
-- Stop if implementation would require serializing QWEN_API_TOKEN or other resolved secrets.
+- Stop if implementation would require serializing QWEN_API_KEY or other resolved secrets.
 
 ## Handoff
 

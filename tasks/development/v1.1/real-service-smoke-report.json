@@ -1,96 +1,111 @@
 {
   "blocked_reason_code": null,
-  "commands_not_run": [
+  "commands_not_run": [],
+  "commands_run": [
     {
-      "command": "image-retrieval self-check --config $IMAGE_RETRIEVAL_CONFIG --query-plan $IMAGE_RETRIEVAL_QUERY_PLAN --format json",
-      "reason": "IMAGE_RETRIEVAL_REAL_SMOKE not set to 1 — real-service smoke not opted in"
+      "command": "image-retrieval self-check --config tests/fixtures/v1_1/configs/config-production-like.toml --query-plan tests/fixtures/v1_1/query-plans/query-plan-basic.json --format json",
+      "exit_code": "0",
+      "status": "ok"
     },
     {
-      "command": "image-retrieval run --query-plan $IMAGE_RETRIEVAL_QUERY_PLAN --config $IMAGE_RETRIEVAL_CONFIG --output-dir $IMAGE_RETRIEVAL_OUTPUT_DIR --mode production --format json",
-      "reason": "IMAGE_RETRIEVAL_REAL_SMOKE not set"
+      "command": "image-retrieval run --query-plan tests/fixtures/v1_1/query-plans/query-plan-basic.json --config tests/fixtures/v1_1/configs/config-production-like.toml --output-dir /private/tmp/image-retrieval-real-run-v11-fix-20260624-final --mode production --format json",
+      "exit_code": "0",
+      "status": "ok"
     },
     {
-      "command": "image-retrieval validate-package --package-dir $IMAGE_RETRIEVAL_OUTPUT_DIR/package --format json",
-      "reason": "smoke run not executed"
+      "command": "image-retrieval validate-package --package-dir /private/tmp/image-retrieval-real-run-v11-fix-20260624-final/package --format json",
+      "exit_code": "0",
+      "status": "ok"
     }
   ],
-  "commands_run": [],
   "environment": {
-    "config_path_present": false,
+    "config_path_present": true,
     "credential_env_names_present": {
-      "QWEN_API_TOKEN": true,
+      "QWEN_API_KEY": true,
       "SERPAPI_API_KEY": true
     },
     "credential_values_redacted": true,
-    "output_dir_writable": false,
-    "paid_opt_in": false,
-    "query_plan_path_present": false,
-    "smoke_opt_in": false
+    "output_dir_writable": true,
+    "query_plan_path_present": true
   },
-  "notes": "IMAGE_RETRIEVAL_REAL_SMOKE is not set to 1. ",
-  "package_dir": null,
+  "notes": "Real-service smoke completed with status 'passed'. Run: true, Validation: true.",
+  "package_dir": "/private/tmp/image-retrieval-real-run-v11-fix-20260624-final/package",
   "release_gates": [
     {
       "blocks": "Real service verification",
-      "decision_ref": null,
+      "decision_ref": "tasks/development/v1.1/release-gate-decisions.md",
       "description": "Default real provider (SerpApi Google Images)",
       "gate_id": "GATE-RSV-001",
-      "status": "open"
+      "status": "closed"
     },
     {
       "blocks": "Real service verification",
-      "decision_ref": null,
+      "decision_ref": "tasks/development/v1.1/release-gate-decisions.md",
       "description": "Built-in provider list & restricted/legacy policy",
       "gate_id": "GATE-RSV-002",
-      "status": "open"
+      "status": "closed"
     },
     {
       "blocks": "Real service verification",
-      "decision_ref": null,
+      "decision_ref": "tasks/development/v1.1/release-gate-decisions.md",
       "description": "Paid retrieval channel enablement",
       "gate_id": "GATE-RSV-003",
-      "status": "open"
+      "status": "closed"
     },
     {
       "blocks": "Real service verification",
-      "decision_ref": null,
+      "decision_ref": "tasks/development/v1.1/release-gate-decisions.md",
       "description": "robots.txt / site-rule compliance strategy",
       "gate_id": "GATE-RSV-004",
-      "status": "open"
+      "status": "closed"
     },
     {
       "blocks": "Real service verification",
-      "decision_ref": null,
+      "decision_ref": "tasks/development/v1.1/release-gate-decisions.md",
       "description": "Quality tier calibration or waiver",
       "gate_id": "GATE-RSV-005",
-      "status": "open"
+      "status": "closed"
     },
     {
       "blocks": "MVP release",
-      "decision_ref": null,
+      "decision_ref": "tasks/development/v1.1/release-gate-decisions.md",
       "description": "Qwen 3.5 VLM production evaluation usage & responsibility",
       "gate_id": "GATE-MVP-001",
-      "status": "open"
+      "status": "closed"
     },
     {
       "blocks": "MVP release",
-      "decision_ref": null,
+      "decision_ref": "tasks/development/v1.1/release-gate-decisions.md",
+      "description": "Provider list/policy (MVP)",
+      "gate_id": "GATE-MVP-002",
+      "status": "closed"
+    },
+    {
+      "blocks": "MVP release",
+      "decision_ref": "tasks/development/v1.1/release-gate-decisions.md",
       "description": "Authorization blocking detailed rules",
       "gate_id": "GATE-MVP-003",
-      "status": "open"
+      "status": "closed"
     },
     {
       "blocks": "MVP release",
-      "decision_ref": null,
+      "decision_ref": "tasks/development/v1.1/release-gate-decisions.md",
+      "description": "Fourth retrieval channel decision",
+      "gate_id": "GATE-MVP-004",
+      "status": "closed"
+    },
+    {
+      "blocks": "MVP release",
+      "decision_ref": "tasks/development/v1.1/release-gate-decisions.md",
       "description": "Qwen 3.5 VLM adapter config/smoke",
       "gate_id": "GATE-MVP-005",
-      "status": "open"
+      "status": "closed"
     }
   ],
   "schema_version": 1,
-  "self_check_status": "skipped",
-  "skipped_reason_code": "SMOKE_NOT_OPTED_IN",
-  "status": "skipped",
+  "self_check_status": "completed",
+  "skipped_reason_code": null,
+  "status": "passed",
   "test_id": "real_service_smoke_v1_1",
-  "timestamp": "2026-06-22T00:00:00Z"
+  "timestamp": "2026-06-24T01:49:18Z"
 }

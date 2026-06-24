@@ -907,7 +907,7 @@ mod tests {
             "Qwen VLM is not available in production",
         )
         .with_subject("cand-1")
-        .with_remediation("Configure QWEN_API_TOKEN and enable VLM evaluation.");
+        .with_remediation("Configure QWEN_API_KEY and enable VLM evaluation.");
 
         assert_eq!(
             diag.code,
@@ -952,7 +952,7 @@ mod tests {
     fn execution_block_vlm_unavailable() {
         let block = QualityExecutionBlock::vlm_unavailable(
             QualityPhase::Candidate,
-            "QWEN_API_TOKEN not set",
+            "QWEN_API_KEY not set",
             5,
         );
         assert_eq!(block.phase, QualityPhase::Candidate);

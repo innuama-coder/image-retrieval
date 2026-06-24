@@ -231,7 +231,7 @@ impl SearchScheduler {
             // Determine request count
             let remaining_needed = candidate_target.saturating_sub(total_unique);
             let request_count = clamp_max_results(
-                std::cmp::max(10, remaining_needed.saturating_mul(3)),
+                remaining_needed,
                 selected.capabilities.max_results_per_request,
             );
 
@@ -558,6 +558,7 @@ mod tests {
         /// Pre-configured response batches.
         responses: Mutex<Vec<Vec<CandidateRecord>>>,
         call_count: Mutex<usize>,
+        request_max_results: Mutex<Vec<u32>>,
     }
 
     impl StubSearchProvider {
@@ -570,6 +571,7 @@ mod tests {
                 credential_present,
                 responses: Mutex::new(Vec::new()),
                 call_count: Mutex::new(0),
+                request_max_results: Mutex::new(Vec::new()),
             }
         }
 
@@ -627,6 +629,10 @@ mod tests {
             &self,
             request: &SearchRequest,
         ) -> std::result::Result<SearchResponse, crate::domain::search::SearchError> {
+            self.request_max_results
+                .lock()
+                .unwrap()
+                .push(request.max_results);
             let mut count = self.call_count.lock().unwrap();
             let idx = *count;
             *count += 1;
@@ -822,6 +828,37 @@ mod tests {
         assert!(outcome.candidates.len() as u32 >= 60);
         assert_eq!(outcome.usage_events.len(), 1);
         assert!(outcome.shortage_reason.is_none());
+    }
+
+    #[test]
+    fn scheduler_requests_remaining_candidate_target_without_overfetch() {
+        let mut registry = ProviderRegistry::new();
+        let provider = Arc::new(
+            StubSearchProvider::new("p1", "P1", true, true).with_responses(vec![(0..20)
+                .map(|i| {
+                    make_candidate(
+                        &format!("c{}", i),
+                        "p1",
+                        &format!("https://ex.com/{}", i),
+                        "qp-test",
+                        1,
+                        i + 1,
+                    )
+                })
+                .collect()]),
+        );
+        registry.register_adapter(ProviderId::new("p1"), provider.clone());
+
+        let query_plan = make_query_plan(1); // target = 20
+        let scheduler = SearchScheduler::new();
+        let mut rng = TestRandom::new(vec![0]);
+
+        let outcome = scheduler.run(&query_plan, &registry, &mut rng);
+        assert!(outcome.target_met);
+        assert_eq!(
+            provider.request_max_results.lock().unwrap().as_slice(),
+            &[20]
+        );
     }
 
     #[test]

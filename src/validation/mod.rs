@@ -383,33 +383,29 @@ impl PackageValidator {
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
             match status {
-                "passed" => {
-                    if accepted < required {
-                        issues.push(PackageValidationIssue {
-                            issue_id: next_issue_id(),
-                            code: codes::COVERAGE_COUNT_MISMATCH.into(),
-                            severity: "error".into(),
-                            subject: "status".into(),
-                            message: "package is 'passed' but accepted < required".into(),
-                            artifact_path: None,
-                            expected: Some("accepted >= required".into()),
-                            actual: Some(format!("accepted={}, required={}", accepted, required)),
-                        });
-                    }
+                "passed" if accepted < required => {
+                    issues.push(PackageValidationIssue {
+                        issue_id: next_issue_id(),
+                        code: codes::COVERAGE_COUNT_MISMATCH.into(),
+                        severity: "error".into(),
+                        subject: "status".into(),
+                        message: "package is 'passed' but accepted < required".into(),
+                        artifact_path: None,
+                        expected: Some("accepted >= required".into()),
+                        actual: Some(format!("accepted={}, required={}", accepted, required)),
+                    });
                 }
-                "partial" => {
-                    if accepted == 0 {
-                        issues.push(PackageValidationIssue {
-                            issue_id: next_issue_id(),
-                            code: codes::COVERAGE_COUNT_MISMATCH.into(),
-                            severity: "error".into(),
-                            subject: "status".into(),
-                            message: "package is 'partial' but has zero accepted images".into(),
-                            artifact_path: None,
-                            expected: None,
-                            actual: None,
-                        });
-                    }
+                "partial" if accepted == 0 => {
+                    issues.push(PackageValidationIssue {
+                        issue_id: next_issue_id(),
+                        code: codes::COVERAGE_COUNT_MISMATCH.into(),
+                        severity: "error".into(),
+                        subject: "status".into(),
+                        message: "package is 'partial' but has zero accepted images".into(),
+                        artifact_path: None,
+                        expected: None,
+                        actual: None,
+                    });
                 }
                 _ => {}
             }
@@ -417,6 +413,17 @@ impl PackageValidator {
 
         // ---- 6. Check delivered images for artifacts ----
         if let Some(retrieved) = canonical_data.get("retrieved-images.json") {
+            let retrieval_results = retrieved
+                .get("retrieval_results")
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default();
+            let image_acceptance_decisions = retrieved
+                .get("image_acceptance_decisions")
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default();
+
             if let Some(delivered) = retrieved.get("delivered_images").and_then(|v| v.as_array()) {
                 for img in delivered {
                     let candidate_id = img
@@ -467,12 +474,6 @@ impl PackageValidator {
                     // Check required artifact paths
                     for (field, label) in REQUIRED_ARTIFACT_FIELDS {
                         let path_str = img.get(*field).and_then(|v| v.as_str()).unwrap_or("");
-                        let full_path: String = if path_str.is_empty() {
-                            String::new()
-                        } else {
-                            package_dir.join(path_str).display().to_string()
-                        };
-
                         if path_str.is_empty() {
                             issues.push(PackageValidationIssue {
                                 issue_id: next_issue_id(),
@@ -487,7 +488,26 @@ impl PackageValidator {
                                 expected: None,
                                 actual: None,
                             });
+                        } else if let Err(reason) =
+                            resolve_package_artifact_path(package_dir, path_str)
+                        {
+                            issues.push(PackageValidationIssue {
+                                issue_id: next_issue_id(),
+                                code: codes::DELIVERED_IMAGE_ARTIFACT_MISSING.into(),
+                                severity: "error".into(),
+                                subject: candidate_id.to_string(),
+                                message: format!(
+                                    "required artifact '{}' path '{}' is outside package root: {}",
+                                    label, path_str, reason
+                                ),
+                                artifact_path: Some(path_str.to_string()),
+                                expected: Some("package-relative path inside package root".into()),
+                                actual: Some(path_str.to_string()),
+                            });
                         } else {
+                            let resolved_path =
+                                resolve_package_artifact_path(package_dir, path_str).unwrap();
+                            let full_path = resolved_path.display().to_string();
                             let exists = Path::new(&full_path).exists();
                             let non_empty = if exists {
                                 std::fs::metadata(&full_path)
@@ -559,6 +579,355 @@ impl PackageValidator {
                             actual: None,
                         });
                     }
+
+                    let retrieval_job_id = img
+                        .get("retrieval_job_id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    let matching_retrieval_result = retrieval_results.iter().find(|result| {
+                        result.get("candidate_id").and_then(|v| v.as_str()) == Some(candidate_id)
+                            && result.get("retrieval_job_id").and_then(|v| v.as_str())
+                                == Some(retrieval_job_id)
+                            && result.get("retrieval_status").and_then(|v| v.as_str())
+                                == Some("complete")
+                    });
+                    if matching_retrieval_result.is_none() {
+                        issues.push(PackageValidationIssue {
+                            issue_id: next_issue_id(),
+                            code: codes::RETRIEVAL_TRACE_MISSING.into(),
+                            severity: "error".into(),
+                            subject: candidate_id.to_string(),
+                            message: format!(
+                                "delivered image '{}' is missing retrieval decision evidence",
+                                candidate_id
+                            ),
+                            artifact_path: None,
+                            expected: Some(
+                                "matching retrieved-images.json retrieval_results entry".into(),
+                            ),
+                            actual: None,
+                        });
+                    } else if let Some(result) = matching_retrieval_result {
+                        let channel_id = result
+                            .get("channel_id")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("");
+                        let channel_tier = result
+                            .get("channel_tier")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("");
+                        let fetch_trace_len = result
+                            .get("fetch_trace")
+                            .and_then(|v| v.as_array())
+                            .map(|v| v.len())
+                            .unwrap_or(0);
+                        if channel_id.is_empty()
+                            || channel_id == "unknown"
+                            || channel_tier.is_empty()
+                            || channel_tier == "unknown"
+                            || fetch_trace_len == 0
+                        {
+                            issues.push(PackageValidationIssue {
+                                issue_id: next_issue_id(),
+                                code: codes::RETRIEVAL_TRACE_MISSING.into(),
+                                severity: "error".into(),
+                                subject: candidate_id.to_string(),
+                                message: format!(
+                                    "delivered image '{}' has incomplete retrieval trace evidence: channel_id='{}', channel_tier='{}', fetch_trace entries={}",
+                                    candidate_id, channel_id, channel_tier, fetch_trace_len
+                                ),
+                                artifact_path: Some("retrieved-images.json".into()),
+                                expected: Some(
+                                    "non-unknown channel_id/channel_tier and non-empty fetch_trace"
+                                        .into(),
+                                ),
+                                actual: Some(format!(
+                                    "channel_id='{}', channel_tier='{}', fetch_trace={}",
+                                    channel_id, channel_tier, fetch_trace_len
+                                )),
+                            });
+                        }
+                        if result.get("media_type_match").and_then(|v| v.as_bool()) != Some(true) {
+                            issues.push(PackageValidationIssue {
+                                issue_id: next_issue_id(),
+                                code: codes::MEDIA_TYPE_MISMATCH.into(),
+                                severity: "error".into(),
+                                subject: candidate_id.to_string(),
+                                message: format!(
+                                    "delivered image '{}' retrieval evidence does not confirm media_type_match",
+                                    candidate_id
+                                ),
+                                artifact_path: Some("retrieved-images.json".into()),
+                                expected: Some("media_type_match=true".into()),
+                                actual: result
+                                    .get("media_type_match")
+                                    .map(|v| v.to_string()),
+                            });
+                        }
+                    }
+
+                    let matching_image_decision =
+                        image_acceptance_decisions.iter().find(|decision| {
+                            decision.get("candidate_id").and_then(|v| v.as_str())
+                                == Some(candidate_id)
+                                && decision.get("retrieval_job_id").and_then(|v| v.as_str())
+                                    == Some(retrieval_job_id)
+                                && decision.get("final_status").and_then(|v| v.as_str())
+                                    == Some("accepted")
+                        });
+                    if matching_image_decision.is_none() {
+                        issues.push(PackageValidationIssue {
+                            issue_id: next_issue_id(),
+                            code: codes::VLM_EVALUATION_DECISION_MISSING.into(),
+                            severity: "error".into(),
+                            subject: candidate_id.to_string(),
+                            message: format!(
+                                "delivered image '{}' is missing image decision evidence",
+                                candidate_id
+                            ),
+                            artifact_path: None,
+                            expected: Some(
+                                "matching retrieved-images.json image_acceptance_decisions entry"
+                                    .into(),
+                            ),
+                            actual: None,
+                        });
+                    } else if let Some(decision) = matching_image_decision {
+                        let decision_ok = decision
+                            .get("mechanical_passed")
+                            .and_then(|v| v.as_bool())
+                            == Some(true)
+                            && decision.get("vlm_passed").and_then(|v| v.as_bool()) == Some(true)
+                            && decision.get("artifact_complete").and_then(|v| v.as_bool())
+                                == Some(true);
+                        let vlm_decision = decision.get("vlm_decision");
+                        let provider_id = vlm_decision
+                            .and_then(|v| v.as_object())
+                            .and_then(|obj| obj.get("provider_id"))
+                            .and_then(|v| v.as_str());
+                        let vlm_ok = vlm_decision
+                            .and_then(|v| v.as_object())
+                            .and_then(|obj| obj.get("decision"))
+                            .and_then(|v| v.as_str())
+                            == Some("approve")
+                            && provider_id.is_some_and(|provider| {
+                                !provider.is_empty() && provider != "openclaw_legacy"
+                            });
+                        if !decision_ok || !vlm_ok {
+                            issues.push(PackageValidationIssue {
+                                issue_id: next_issue_id(),
+                                code: codes::VLM_EVALUATION_DECISION_MISSING.into(),
+                                severity: "error".into(),
+                                subject: candidate_id.to_string(),
+                                message: format!(
+                                    "delivered image '{}' image acceptance evidence lacks truthful pass flags or vlm_decision",
+                                    candidate_id
+                                ),
+                                artifact_path: Some("retrieved-images.json".into()),
+                                expected: Some(
+                                    "mechanical_passed=true, vlm_passed=true, artifact_complete=true, vlm_decision.decision=approve"
+                                        .into(),
+                                ),
+                                actual: Some(decision.to_string()),
+                            });
+                        }
+                        for (path, reason) in invalid_reference_metric_paths(package_dir, decision)
+                        {
+                            issues.push(PackageValidationIssue {
+                                issue_id: next_issue_id(),
+                                code: codes::DELIVERED_IMAGE_ARTIFACT_MISSING.into(),
+                                severity: "error".into(),
+                                subject: candidate_id.to_string(),
+                                message: format!(
+                                    "delivered image '{}' has reference metric path outside package root or missing: {} ({})",
+                                    candidate_id, path, reason
+                                ),
+                                artifact_path: Some("retrieved-images.json".into()),
+                                expected: Some(
+                                    "reference metric path is package-relative, inside package root, and exists"
+                                        .into(),
+                                ),
+                                actual: Some(path),
+                            });
+                        }
+                    }
+
+                    for (field, label) in [
+                        (
+                            "candidate_quality_decision_ref",
+                            "candidate decision evidence",
+                        ),
+                        ("image_acceptance_decision_ref", "image decision evidence"),
+                    ] {
+                        let ref_str = img.get(field).and_then(|v| v.as_str()).unwrap_or("");
+                        if ref_str.is_empty()
+                            || !package_reference_exists(package_dir, &canonical_data, ref_str)
+                        {
+                            issues.push(PackageValidationIssue {
+                                issue_id: next_issue_id(),
+                                code: codes::VLM_EVALUATION_DECISION_MISSING.into(),
+                                severity: "error".into(),
+                                subject: candidate_id.to_string(),
+                                message: format!(
+                                    "delivered image '{}' is missing {} ({})",
+                                    candidate_id, label, field
+                                ),
+                                artifact_path: if ref_str.is_empty() {
+                                    None
+                                } else {
+                                    Some(ref_str.to_string())
+                                },
+                                expected: Some("resolvable package evidence reference".into()),
+                                actual: if ref_str.is_empty() {
+                                    None
+                                } else {
+                                    Some(ref_str.to_string())
+                                },
+                            });
+                        } else if field == "candidate_quality_decision_ref" {
+                            if let Some(decision) = resolve_package_reference_value(
+                                package_dir,
+                                &canonical_data,
+                                ref_str,
+                            ) {
+                                let candidate_decision_ok = decision
+                                    .get("candidate_id")
+                                    .and_then(|v| v.as_str())
+                                    == Some(candidate_id)
+                                    && decision.get("mechanical_passed").and_then(|v| v.as_bool())
+                                        == Some(true)
+                                    && decision.get("vlm_passed").and_then(|v| v.as_bool())
+                                        == Some(true)
+                                    && decision.get("final_status").and_then(|v| v.as_str())
+                                        == Some("retrievable");
+                                let vlm_decision = decision.get("vlm_decision");
+                                let provider_id = vlm_decision
+                                    .and_then(|v| v.as_object())
+                                    .and_then(|obj| obj.get("provider_id"))
+                                    .and_then(|v| v.as_str());
+                                let vlm_ok = vlm_decision
+                                    .and_then(|v| v.as_object())
+                                    .and_then(|obj| obj.get("decision"))
+                                    .and_then(|v| v.as_str())
+                                    == Some("approve")
+                                    && provider_id.is_some_and(|provider| {
+                                        !provider.is_empty() && provider != "openclaw_legacy"
+                                    });
+                                if !candidate_decision_ok || !vlm_ok {
+                                    issues.push(PackageValidationIssue {
+                                        issue_id: next_issue_id(),
+                                        code: codes::VLM_EVALUATION_DECISION_MISSING.into(),
+                                        severity: "error".into(),
+                                        subject: candidate_id.to_string(),
+                                        message: format!(
+                                            "delivered image '{}' candidate quality evidence lacks truthful pass flags or vlm_decision",
+                                            candidate_id
+                                        ),
+                                        artifact_path: Some(ref_str.to_string()),
+                                        expected: Some(
+                                            "candidate quality mechanical_passed=true, vlm_passed=true, final_status=retrievable, vlm_decision.decision=approve"
+                                                .into(),
+                                        ),
+                                        actual: Some(decision.to_string()),
+                                    });
+                                }
+                                for (path, reason) in
+                                    invalid_reference_metric_paths(package_dir, &decision)
+                                {
+                                    issues.push(PackageValidationIssue {
+                                        issue_id: next_issue_id(),
+                                        code: codes::DELIVERED_IMAGE_ARTIFACT_MISSING.into(),
+                                        severity: "error".into(),
+                                        subject: candidate_id.to_string(),
+                                        message: format!(
+                                            "delivered image '{}' candidate quality reference metric path outside package root or missing: {} ({})",
+                                            candidate_id, path, reason
+                                        ),
+                                        artifact_path: Some(ref_str.to_string()),
+                                        expected: Some(
+                                            "candidate quality reference metric path is package-relative, inside package root, and exists"
+                                                .into(),
+                                        ),
+                                        actual: Some(path),
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if let Some(delivery) = canonical_data.get("delivery-report.json") {
+            if let Some(items) = delivery.get("items").and_then(|v| v.as_array()) {
+                for item in items {
+                    let candidate_id = item
+                        .get("candidate_id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("delivery-item");
+                    for (path, reason) in invalid_reference_metric_paths(package_dir, item) {
+                        issues.push(PackageValidationIssue {
+                            issue_id: next_issue_id(),
+                            code: codes::DELIVERED_IMAGE_ARTIFACT_MISSING.into(),
+                            severity: "error".into(),
+                            subject: candidate_id.to_string(),
+                            message: format!(
+                                "delivery item '{}' has reference metric path outside package root or missing: {} ({})",
+                                candidate_id, path, reason
+                            ),
+                            artifact_path: Some("delivery-report.json".into()),
+                            expected: Some(
+                                "reference metric path is package-relative, inside package root, and exists"
+                                    .into(),
+                            ),
+                            actual: Some(path),
+                        });
+                    }
+                }
+            }
+        }
+
+        if let Some(manifest) = canonical_data.get("retrieval-manifest.json") {
+            if let Some(entries) = manifest.get("entries").and_then(|v| v.as_array()) {
+                for entry in entries {
+                    let subject = entry
+                        .get("candidate_id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("manifest-entry");
+                    for field in [
+                        "search_ref",
+                        "candidate_quality_ref",
+                        "retrieval_result_ref",
+                        "image_acceptance_ref",
+                        "delivery_ref",
+                    ] {
+                        let ref_str = entry.get(field).and_then(|v| v.as_str()).unwrap_or("");
+                        if ref_str.is_empty()
+                            || !package_reference_exists(package_dir, &canonical_data, ref_str)
+                        {
+                            issues.push(PackageValidationIssue {
+                                issue_id: next_issue_id(),
+                                code: codes::MANIFEST_LINK_BROKEN.into(),
+                                severity: "error".into(),
+                                subject: subject.to_string(),
+                                message: format!(
+                                    "manifest field '{}' points to missing package reference '{}'",
+                                    field, ref_str
+                                ),
+                                artifact_path: if ref_str.is_empty() {
+                                    None
+                                } else {
+                                    Some(ref_str.to_string())
+                                },
+                                expected: Some("resolvable package reference".into()),
+                                actual: if ref_str.is_empty() {
+                                    None
+                                } else {
+                                    Some(ref_str.to_string())
+                                },
+                            });
+                        }
+                    }
                 }
             }
         }
@@ -573,14 +942,7 @@ impl PackageValidator {
             for subdir in &["evidence", "diagnostics"] {
                 let dir = package_dir.join(subdir);
                 if dir.exists() {
-                    if let Ok(entries) = std::fs::read_dir(&dir) {
-                        for entry in entries.flatten() {
-                            let path = entry.path();
-                            if path.is_file() {
-                                files.push(path);
-                            }
-                        }
-                    }
+                    collect_files_recursive(&dir, &mut files);
                 }
             }
             files
@@ -674,15 +1036,12 @@ impl PackageValidator {
             ValidationStatus::Pass
         };
 
-        // Build timestamp
-        let now = "2026-06-22T00:00:00Z"; // deterministic for fixture tests
-
         Ok(PackageValidationReport {
             schema_version: 1,
             validator_version: "v1.1".into(),
             package_dir: package_dir.display().to_string(),
             status,
-            validated_at: now.to_string(),
+            validated_at: utc_now_rfc3339_seconds(),
             issues,
             file_checks,
             artifact_checks,
@@ -691,6 +1050,19 @@ impl PackageValidator {
             coverage_checks,
         })
     }
+}
+
+fn utc_now_rfc3339_seconds() -> String {
+    let now = time::OffsetDateTime::now_utc();
+    format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
+        now.year(),
+        u8::from(now.month()),
+        now.day(),
+        now.hour(),
+        now.minute(),
+        now.second()
+    )
 }
 
 impl Default for PackageValidator {
@@ -706,13 +1078,155 @@ impl Default for PackageValidator {
 /// Validate a package directory with fixture mode. Returns the report or an
 /// error if the directory cannot be read.
 pub fn validate_package_dir(package_dir: &Path) -> Result<PackageValidationReport> {
+    validate_package_dir_with_mode(package_dir, crate::domain::delivery::ExecutionMode::Fixture)
+}
+
+/// Validate a package directory with an explicit execution mode.
+pub fn validate_package_dir_with_mode(
+    package_dir: &Path,
+    execution_mode: crate::domain::delivery::ExecutionMode,
+) -> Result<PackageValidationReport> {
     let validator = PackageValidator::new();
     let request = PackageValidationRequest {
         package_dir: package_dir.to_path_buf(),
-        execution_mode: crate::domain::delivery::ExecutionMode::Fixture,
+        execution_mode,
         expected_query_plan_id: None,
     };
     validator.validate(&request)
+}
+
+fn resolve_package_artifact_path(
+    package_dir: &Path,
+    path_str: &str,
+) -> std::result::Result<PathBuf, String> {
+    let path = Path::new(path_str);
+    if path.is_absolute() {
+        return Err("absolute paths are not allowed".into());
+    }
+    if path
+        .components()
+        .any(|component| matches!(component, std::path::Component::ParentDir))
+    {
+        return Err("parent-directory components are not allowed".into());
+    }
+    Ok(package_dir.join(path))
+}
+
+fn package_reference_exists(
+    package_dir: &Path,
+    canonical_data: &std::collections::HashMap<String, serde_json::Value>,
+    ref_str: &str,
+) -> bool {
+    if ref_str.is_empty() {
+        return false;
+    }
+    if let Some((file, pointer)) = ref_str.split_once("#") {
+        let Some(value) = canonical_data.get(file) else {
+            return false;
+        };
+        if pointer.is_empty() {
+            return true;
+        }
+        return pointer
+            .strip_prefix('/')
+            .map(|p| value.pointer(&format!("/{}", p)).is_some())
+            .unwrap_or(false);
+    }
+    resolve_package_artifact_path(package_dir, ref_str)
+        .map(|path| path.exists() && path.is_file())
+        .unwrap_or(false)
+}
+
+fn resolve_package_reference_value(
+    package_dir: &Path,
+    canonical_data: &std::collections::HashMap<String, serde_json::Value>,
+    ref_str: &str,
+) -> Option<serde_json::Value> {
+    if ref_str.is_empty() {
+        return None;
+    }
+
+    if let Some((file, pointer)) = ref_str.split_once("#") {
+        let value = canonical_data
+            .get(file)
+            .cloned()
+            .or_else(|| read_package_json(package_dir, file))?;
+        if pointer.is_empty() {
+            return Some(value);
+        }
+        let pointer = if pointer.starts_with('/') {
+            pointer.to_string()
+        } else {
+            format!("/{}", pointer)
+        };
+        return value.pointer(&pointer).cloned();
+    }
+
+    read_package_json(package_dir, ref_str)
+}
+
+fn read_package_json(package_dir: &Path, path_str: &str) -> Option<serde_json::Value> {
+    let path = resolve_package_artifact_path(package_dir, path_str).ok()?;
+    let bytes = std::fs::read(path).ok()?;
+    serde_json::from_slice(&bytes).ok()
+}
+
+fn invalid_reference_metric_paths(
+    package_dir: &Path,
+    value: &serde_json::Value,
+) -> Vec<(String, String)> {
+    let mut invalid = Vec::new();
+    if let Some(metrics) = value.get("reference_metrics").and_then(|v| v.as_array()) {
+        for metric in metrics {
+            collect_invalid_reference_paths(package_dir, metric, &mut invalid);
+        }
+    }
+    invalid
+}
+
+fn collect_invalid_reference_paths(
+    package_dir: &Path,
+    value: &serde_json::Value,
+    invalid: &mut Vec<(String, String)>,
+) {
+    match value {
+        serde_json::Value::Array(values) => {
+            for value in values {
+                collect_invalid_reference_paths(package_dir, value, invalid);
+            }
+        }
+        serde_json::Value::Object(map) => {
+            for (key, value) in map {
+                if key == "path" {
+                    if let Some(path_str) = value.as_str() {
+                        match resolve_package_artifact_path(package_dir, path_str) {
+                            Ok(path) if path.exists() && path.is_file() => {}
+                            Ok(_) => invalid.push((
+                                path_str.to_string(),
+                                "path does not exist inside package".into(),
+                            )),
+                            Err(reason) => invalid.push((path_str.to_string(), reason)),
+                        }
+                    }
+                }
+                collect_invalid_reference_paths(package_dir, value, invalid);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn collect_files_recursive(dir: &Path, files: &mut Vec<PathBuf>) {
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                collect_files_recursive(&path, files);
+            } else if path.is_file() {
+                files.push(path);
+            }
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -757,7 +1271,18 @@ mod tests {
                 "run_id": run_id,
                 "query_plan_id": qp_id,
                 "candidate_target": 20,
-                "attempts": []
+                "attempts": [{
+                    "full_attempt_count": 1,
+                    "retry_count": 0,
+                    "candidate_count": 1,
+                    "target_met": false,
+                    "candidates": [{
+                        "candidate_id": "cand-1",
+                        "query_plan_id": qp_id,
+                        "provider_id": "fixture_search",
+                        "candidate_quality_ref": "evidence/candidate-quality/cand-1.json"
+                    }]
+                }]
             }),
         );
 
@@ -863,6 +1388,131 @@ mod tests {
         );
     }
 
+    fn write_required_artifacts(dir: &Path) {
+        for path in [
+            "images/image.jpg",
+            "evidence/source.html",
+            "evidence/sidecar.json",
+            "evidence/summary.txt",
+            "evidence/task-report.json",
+            "evidence/visual-description.txt",
+        ] {
+            let full = dir.join(path);
+            if let Some(parent) = full.parent() {
+                fs::create_dir_all(parent).unwrap();
+            }
+            fs::write(full, "not empty").unwrap();
+        }
+        fs::create_dir_all(dir.join("evidence/candidate-quality")).unwrap();
+        write_json(
+            dir,
+            "evidence/candidate-quality/cand-1.json",
+            &serde_json::json!({
+                "schema_version": 1,
+                "candidate_id": "cand-1",
+                "query_plan_id": "qp-test-1",
+                "mechanical_passed": true,
+                "vlm_passed": true,
+                "final_status": "retrievable",
+                "priority": 5,
+                "blocking_metrics": [],
+                "reference_metrics": [{"kind": "provider_confidence", "value": "fixture"}],
+                "vlm_decision": {"decision": "approve", "provider_id": "fixture_vlm"},
+                "redaction_applied": true
+            }),
+        );
+    }
+
+    fn write_package_with_single_delivered_image(
+        dir: &Path,
+        retrieval_result: serde_json::Value,
+        image_decision: serde_json::Value,
+    ) {
+        write_required_artifacts(dir);
+        write_json(
+            dir,
+            "retrieved-images.json",
+            &serde_json::json!({
+                "schema_version": 1,
+                "run_id": "run-test-1",
+                "query_plan_id": "qp-test-1",
+                "retrieval_batch_target": 2,
+                "retrieval_results": [retrieval_result],
+                "image_acceptance_decisions": [image_decision],
+                "delivered_images": [{
+                    "delivered_image_id": "delivered-1",
+                    "query_plan_id": "qp-test-1",
+                    "candidate_id": "cand-1",
+                    "retrieval_job_id": "job-1",
+                    "package_image_path": "images/image.jpg",
+                    "local_artifact_path": "images/image.jpg",
+                    "source_artifact_path": "evidence/source.html",
+                    "source_sidecar_path": "evidence/sidecar.json",
+                    "content_summary_path": "evidence/summary.txt",
+                    "task_report_path": "evidence/task-report.json",
+                    "visual_description_path": "evidence/visual-description.txt",
+                    "checksum_sha256": "sha256-ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+                    "content_type": "image/jpeg",
+                    "file_size_bytes": 9,
+                    "width": 1,
+                    "height": 1,
+                    "candidate_quality_decision_ref": "evidence/candidate-quality/cand-1.json",
+                    "image_acceptance_decision_ref": "retrieved-images.json#/image_acceptance_decisions/0",
+                    "manifest_entry_ref": "manifest-0001"
+                }]
+            }),
+        );
+        write_json(
+            dir,
+            "retrieval-manifest.json",
+            &serde_json::json!({
+                "schema_version": 1,
+                "run_id": "run-test-1",
+                "query_plan_id": "qp-test-1",
+                "entries": [{
+                    "manifest_entry_id": "manifest-0001",
+                    "candidate_id": "cand-1",
+                    "provider_id": "fixture_search",
+                    "candidate_status": "delivered",
+                    "retrieval_job_id": "job-1",
+                    "search_ref": "image-recalls.json#/attempts/0/candidates/0",
+                    "candidate_quality_ref": "evidence/candidate-quality/cand-1.json",
+                    "retrieval_result_ref": "retrieved-images.json#/retrieval_results/0",
+                    "image_acceptance_ref": "retrieved-images.json#/image_acceptance_decisions/0",
+                    "delivery_ref": "delivery-report.json#/items/0",
+                    "artifact_refs": [
+                        "images/image.jpg",
+                        "evidence/source.html",
+                        "evidence/sidecar.json",
+                        "evidence/summary.txt",
+                        "evidence/task-report.json",
+                        "evidence/visual-description.txt"
+                    ]
+                }]
+            }),
+        );
+        write_json(
+            dir,
+            "delivery-report.json",
+            &serde_json::json!({
+                "schema_version": 1,
+                "items": [{
+                    "candidate_id": "cand-1",
+                    "retrieval_job_id": "job-1",
+                    "delivery_status": "delivered",
+                    "mechanical_passed": true,
+                    "vlm_passed": true,
+                    "artifact_complete": true,
+                    "blocking_reasons": [],
+                    "reference_metrics": [{"kind": "file_size", "value": 9}],
+                    "package_image_path": "images/image.jpg"
+                }],
+                "rejected_items": [],
+                "policy_notes": []
+            }),
+        );
+    }
+
     #[test]
     fn validator_missing_package_dir() {
         let validator = PackageValidator::new();
@@ -888,6 +1538,9 @@ mod tests {
         };
         let report = validator.validate(&request).unwrap();
         assert_eq!(report.status, ValidationStatus::Pass);
+        assert_ne!(report.validated_at, "2026-06-22T00:00:00Z");
+        assert!(report.validated_at.contains('T'));
+        assert!(report.validated_at.ends_with('Z'));
         assert!(report.issues.is_empty());
         assert_eq!(report.file_checks.len(), 12); // 9 files + 3 dirs
         assert!(report.file_checks.iter().all(|fc| fc.exists));
@@ -1008,6 +1661,30 @@ mod tests {
     }
 
     #[test]
+    fn validator_detects_secret_in_nested_evidence_file() {
+        let dir = temp_dir("nested-secret-leak");
+        make_minimal_package(&dir, "passed");
+        let nested = dir.join("evidence/candidate-quality");
+        fs::create_dir_all(&nested).unwrap();
+        fs::write(
+            nested.join("cand-1.json"),
+            r#"{"Authorization":"Bearer sk-nested-secret-token"}"#,
+        )
+        .unwrap();
+
+        let validator = PackageValidator::new();
+        let request = PackageValidationRequest {
+            package_dir: dir.clone(),
+            execution_mode: crate::domain::delivery::ExecutionMode::Fixture,
+            expected_query_plan_id: None,
+        };
+        let report = validator.validate(&request).unwrap();
+        assert!(report.issues.iter().any(|i| i.code == codes::SECRET_LEAK));
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn validator_detects_query_plan_id_mismatch() {
         let dir = temp_dir("qp-mismatch");
         make_minimal_package(&dir, "passed");
@@ -1023,6 +1700,663 @@ mod tests {
             .issues
             .iter()
             .any(|i| i.code == codes::QUERY_PLAN_MISMATCH));
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn validator_rejects_delivered_artifact_paths_outside_package_root() {
+        let dir = temp_dir("outside-artifact");
+        make_minimal_package(&dir, "passed");
+
+        let external = temp_dir("outside-artifact-source");
+        for name in [
+            "image.jpg",
+            "source.html",
+            "sidecar.json",
+            "summary.txt",
+            "task-report.json",
+            "visual-description.txt",
+        ] {
+            fs::write(external.join(name), "not empty").unwrap();
+        }
+
+        write_json(
+            &dir,
+            "retrieved-images.json",
+            &serde_json::json!({
+                "schema_version": 1,
+                "run_id": "run-test-1",
+                "query_plan_id": "qp-test-1",
+                "retrieval_batch_target": 2,
+                "retrieval_results": [],
+                "image_acceptance_decisions": [],
+                "delivered_images": [{
+                    "delivered_image_id": "delivered-1",
+                    "query_plan_id": "qp-test-1",
+                    "candidate_id": "cand-1",
+                    "retrieval_job_id": "job-1",
+                    "package_image_path": external.join("image.jpg").display().to_string(),
+                    "local_artifact_path": external.join("image.jpg").display().to_string(),
+                    "source_artifact_path": external.join("source.html").display().to_string(),
+                    "source_sidecar_path": external.join("sidecar.json").display().to_string(),
+                    "content_summary_path": external.join("summary.txt").display().to_string(),
+                    "task_report_path": external.join("task-report.json").display().to_string(),
+                    "visual_description_path": external.join("visual-description.txt").display().to_string(),
+                    "checksum_sha256": "sha256-ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+                    "content_type": "image/jpeg",
+                    "file_size_bytes": 9,
+                    "width": 1,
+                    "height": 1,
+                    "candidate_quality_decision_ref": "candidate-quality-decision-cand-1",
+                    "image_acceptance_decision_ref": "accepted",
+                    "manifest_entry_ref": "manifest-0001"
+                }]
+            }),
+        );
+
+        let validator = PackageValidator::new();
+        let request = PackageValidationRequest {
+            package_dir: dir.clone(),
+            execution_mode: crate::domain::delivery::ExecutionMode::Fixture,
+            expected_query_plan_id: None,
+        };
+        let report = validator.validate(&request).unwrap();
+
+        assert_eq!(report.status, ValidationStatus::Fail);
+        assert!(report
+            .issues
+            .iter()
+            .any(|i| i.code == codes::DELIVERED_IMAGE_ARTIFACT_MISSING
+                && i.message.contains("outside package root")));
+
+        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(&external);
+    }
+
+    #[test]
+    fn validator_rejects_reference_metric_paths_outside_package_root() {
+        let dir = temp_dir("outside-reference-metric");
+        make_minimal_package(&dir, "passed");
+        let external = temp_dir("outside-reference-metric-source");
+        fs::write(external.join("sidecar.json"), "not empty").unwrap();
+
+        write_package_with_single_delivered_image(
+            &dir,
+            serde_json::json!({
+                "retrieval_job_id": "job-1",
+                "candidate_id": "cand-1",
+                "query_plan_id": "qp-test-1",
+                "channel_id": "fixture_channel",
+                "channel_tier": "normal_web_fetch",
+                "retrieval_status": "complete",
+                "local_artifact_path": "images/image.jpg",
+                "source_artifact_path": "evidence/source.html",
+                "source_sidecar_path": "evidence/sidecar.json",
+                "content_summary_path": "evidence/summary.txt",
+                "task_report_path": "evidence/task-report.json",
+                "visual_description_path": "evidence/visual-description.txt",
+                "checksum_sha256": "sha256-ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+                "content_type": "image/jpeg",
+                "file_size_bytes": 9,
+                "image_dimensions": {"width": 1, "height": 1},
+                "media_type_match": true,
+                "fetch_trace": [{"url": "https://example.com/image.jpg", "status": "complete"}],
+                "failure_reason": null
+            }),
+            serde_json::json!({
+                "decision_id": "retrieved-images.json#/image_acceptance_decisions/0",
+                "candidate_id": "cand-1",
+                "retrieval_job_id": "job-1",
+                "query_plan_id": "qp-test-1",
+                "mechanical_passed": true,
+                "vlm_passed": true,
+                "artifact_complete": true,
+                "final_status": "accepted",
+                "blocking_reasons": [],
+                "reference_metrics": [{
+                    "kind": "source_sidecar_path",
+                    "path": external.join("sidecar.json").display().to_string()
+                }],
+                "vlm_decision": {"decision": "approve", "provider_id": "fixture_vlm"}
+            }),
+        );
+
+        let validator = PackageValidator::new();
+        let request = PackageValidationRequest {
+            package_dir: dir.clone(),
+            execution_mode: crate::domain::delivery::ExecutionMode::Fixture,
+            expected_query_plan_id: None,
+        };
+        let report = validator.validate(&request).unwrap();
+
+        assert_eq!(report.status, ValidationStatus::Fail);
+        assert!(report
+            .issues
+            .iter()
+            .any(|i| i.code == codes::DELIVERED_IMAGE_ARTIFACT_MISSING
+                && i.message.contains("reference metric path")));
+
+        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(&external);
+    }
+
+    #[test]
+    fn validator_rejects_candidate_quality_reference_metric_paths_outside_package_root() {
+        let dir = temp_dir("outside-candidate-quality-reference-metric");
+        make_minimal_package(&dir, "passed");
+        let external = temp_dir("outside-candidate-quality-reference-metric-source");
+        fs::write(external.join("candidate-sidecar.json"), "not empty").unwrap();
+
+        write_package_with_single_delivered_image(
+            &dir,
+            serde_json::json!({
+                "retrieval_job_id": "job-1",
+                "candidate_id": "cand-1",
+                "query_plan_id": "qp-test-1",
+                "channel_id": "fixture_channel",
+                "channel_tier": "normal_web_fetch",
+                "retrieval_status": "complete",
+                "local_artifact_path": "images/image.jpg",
+                "source_artifact_path": "evidence/source.html",
+                "source_sidecar_path": "evidence/sidecar.json",
+                "content_summary_path": "evidence/summary.txt",
+                "task_report_path": "evidence/task-report.json",
+                "visual_description_path": "evidence/visual-description.txt",
+                "checksum_sha256": "sha256-ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+                "content_type": "image/jpeg",
+                "file_size_bytes": 9,
+                "image_dimensions": {"width": 1, "height": 1},
+                "media_type_match": true,
+                "fetch_trace": [{"url": "https://example.com/image.jpg", "status": "complete"}],
+                "failure_reason": null
+            }),
+            serde_json::json!({
+                "decision_id": "retrieved-images.json#/image_acceptance_decisions/0",
+                "candidate_id": "cand-1",
+                "retrieval_job_id": "job-1",
+                "query_plan_id": "qp-test-1",
+                "mechanical_passed": true,
+                "vlm_passed": true,
+                "artifact_complete": true,
+                "final_status": "accepted",
+                "blocking_reasons": [],
+                "reference_metrics": [{"kind": "file_size", "value": 9}],
+                "vlm_decision": {"decision": "approve", "provider_id": "fixture_vlm"}
+            }),
+        );
+        write_json(
+            &dir,
+            "evidence/candidate-quality/cand-1.json",
+            &serde_json::json!({
+                "schema_version": 1,
+                "candidate_id": "cand-1",
+                "query_plan_id": "qp-test-1",
+                "mechanical_passed": true,
+                "vlm_passed": true,
+                "final_status": "retrievable",
+                "priority": 5,
+                "blocking_metrics": [],
+                "reference_metrics": [{
+                    "kind": "source_sidecar_path",
+                    "path": external.join("candidate-sidecar.json").display().to_string()
+                }],
+                "vlm_decision": {"decision": "approve", "provider_id": "fixture_vlm"},
+                "redaction_applied": true
+            }),
+        );
+
+        let validator = PackageValidator::new();
+        let request = PackageValidationRequest {
+            package_dir: dir.clone(),
+            execution_mode: crate::domain::delivery::ExecutionMode::Fixture,
+            expected_query_plan_id: None,
+        };
+        let report = validator.validate(&request).unwrap();
+
+        assert_eq!(report.status, ValidationStatus::Fail);
+        assert!(report
+            .issues
+            .iter()
+            .any(|i| i.code == codes::DELIVERED_IMAGE_ARTIFACT_MISSING
+                && i.message
+                    .contains("candidate quality reference metric path")));
+
+        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(&external);
+    }
+
+    #[test]
+    fn validator_rejects_delivered_image_without_decision_evidence() {
+        let dir = temp_dir("missing-decision-evidence");
+        make_minimal_package(&dir, "passed");
+
+        for path in [
+            "images/image.jpg",
+            "evidence/source.html",
+            "evidence/sidecar.json",
+            "evidence/summary.txt",
+            "evidence/task-report.json",
+            "evidence/visual-description.txt",
+        ] {
+            fs::write(dir.join(path), "not empty").unwrap();
+        }
+
+        write_json(
+            &dir,
+            "retrieved-images.json",
+            &serde_json::json!({
+                "schema_version": 1,
+                "run_id": "run-test-1",
+                "query_plan_id": "qp-test-1",
+                "retrieval_batch_target": 2,
+                "retrieval_results": [],
+                "image_acceptance_decisions": [],
+                "delivered_images": [{
+                    "delivered_image_id": "delivered-1",
+                    "query_plan_id": "qp-test-1",
+                    "candidate_id": "cand-1",
+                    "retrieval_job_id": "job-1",
+                    "package_image_path": "images/image.jpg",
+                    "local_artifact_path": "images/image.jpg",
+                    "source_artifact_path": "evidence/source.html",
+                    "source_sidecar_path": "evidence/sidecar.json",
+                    "content_summary_path": "evidence/summary.txt",
+                    "task_report_path": "evidence/task-report.json",
+                    "visual_description_path": "evidence/visual-description.txt",
+                    "checksum_sha256": "sha256-ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+                    "content_type": "image/jpeg",
+                    "file_size_bytes": 9,
+                    "width": 1,
+                    "height": 1,
+                    "candidate_quality_decision_ref": "evidence/candidate-quality/cand-1.json",
+                    "image_acceptance_decision_ref": "retrieved-images.json#/image_acceptance_decisions/0",
+                    "manifest_entry_ref": "manifest-0001"
+                }]
+            }),
+        );
+        write_json(
+            &dir,
+            "retrieval-manifest.json",
+            &serde_json::json!({
+                "schema_version": 1,
+                "run_id": "run-test-1",
+                "query_plan_id": "qp-test-1",
+                "entries": [{
+                    "manifest_entry_id": "manifest-0001",
+                    "candidate_id": "cand-1",
+                    "retrieval_job_id": "job-1",
+                    "retrieval_result_ref": "retrieved-images.json#/retrieval_results/0",
+                    "image_acceptance_ref": "retrieved-images.json#/image_acceptance_decisions/0",
+                    "candidate_quality_ref": "evidence/candidate-quality/cand-1.json",
+                    "artifact_refs": [
+                        "images/image.jpg",
+                        "evidence/source.html",
+                        "evidence/sidecar.json",
+                        "evidence/summary.txt",
+                        "evidence/task-report.json",
+                        "evidence/visual-description.txt"
+                    ]
+                }]
+            }),
+        );
+
+        let validator = PackageValidator::new();
+        let request = PackageValidationRequest {
+            package_dir: dir.clone(),
+            execution_mode: crate::domain::delivery::ExecutionMode::Fixture,
+            expected_query_plan_id: None,
+        };
+        let report = validator.validate(&request).unwrap();
+
+        assert_eq!(report.status, ValidationStatus::Fail);
+        assert!(report
+            .issues
+            .iter()
+            .any(|i| i.code == codes::VLM_EVALUATION_DECISION_MISSING
+                && i.message.contains("decision evidence")));
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn validator_rejects_unknown_retrieval_channel_and_empty_fetch_trace() {
+        let dir = temp_dir("unknown-retrieval-evidence");
+        make_minimal_package(&dir, "passed");
+        write_package_with_single_delivered_image(
+            &dir,
+            serde_json::json!({
+                "retrieval_job_id": "job-1",
+                "candidate_id": "cand-1",
+                "query_plan_id": "qp-test-1",
+                "channel_id": "unknown",
+                "channel_tier": "unknown",
+                "retrieval_status": "complete",
+                "local_artifact_path": "images/image.jpg",
+                "source_artifact_path": "evidence/source.html",
+                "source_sidecar_path": "evidence/sidecar.json",
+                "content_summary_path": "evidence/summary.txt",
+                "task_report_path": "evidence/task-report.json",
+                "visual_description_path": "evidence/visual-description.txt",
+                "checksum_sha256": "sha256-ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+                "content_type": "image/jpeg",
+                "file_size_bytes": 9,
+                "image_dimensions": {"width": 1, "height": 1},
+                "media_type_match": true,
+                "fetch_trace": [],
+                "failure_reason": null
+            }),
+            serde_json::json!({
+                "decision_id": "retrieved-images.json#/image_acceptance_decisions/0",
+                "candidate_id": "cand-1",
+                "retrieval_job_id": "job-1",
+                "query_plan_id": "qp-test-1",
+                "mechanical_passed": true,
+                "vlm_passed": true,
+                "artifact_complete": true,
+                "final_status": "accepted",
+                "blocking_reasons": [],
+                "reference_metrics": [{"kind": "file_size", "value": 9}],
+                "vlm_decision": {"decision": "approve", "provider_id": "fixture_vlm"}
+            }),
+        );
+
+        let validator = PackageValidator::new();
+        let request = PackageValidationRequest {
+            package_dir: dir.clone(),
+            execution_mode: crate::domain::delivery::ExecutionMode::Fixture,
+            expected_query_plan_id: None,
+        };
+        let report = validator.validate(&request).unwrap();
+
+        assert_eq!(report.status, ValidationStatus::Fail);
+        assert!(
+            report
+                .issues
+                .iter()
+                .any(|i| i.code == codes::RETRIEVAL_TRACE_MISSING
+                    && i.message.contains("fetch_trace"))
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn validator_rejects_broken_manifest_search_ref() {
+        let dir = temp_dir("broken-search-ref");
+        make_minimal_package(&dir, "passed");
+        write_package_with_single_delivered_image(
+            &dir,
+            serde_json::json!({
+                "retrieval_job_id": "job-1",
+                "candidate_id": "cand-1",
+                "query_plan_id": "qp-test-1",
+                "channel_id": "fixture_channel",
+                "channel_tier": "normal_web_fetch",
+                "retrieval_status": "complete",
+                "local_artifact_path": "images/image.jpg",
+                "source_artifact_path": "evidence/source.html",
+                "source_sidecar_path": "evidence/sidecar.json",
+                "content_summary_path": "evidence/summary.txt",
+                "task_report_path": "evidence/task-report.json",
+                "visual_description_path": "evidence/visual-description.txt",
+                "checksum_sha256": "sha256-ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+                "content_type": "image/jpeg",
+                "file_size_bytes": 9,
+                "image_dimensions": {"width": 1, "height": 1},
+                "media_type_match": true,
+                "fetch_trace": [{"url": "https://example.com/image.jpg", "status": "complete"}],
+                "failure_reason": null
+            }),
+            serde_json::json!({
+                "decision_id": "retrieved-images.json#/image_acceptance_decisions/0",
+                "candidate_id": "cand-1",
+                "retrieval_job_id": "job-1",
+                "query_plan_id": "qp-test-1",
+                "mechanical_passed": true,
+                "vlm_passed": true,
+                "artifact_complete": true,
+                "final_status": "accepted",
+                "blocking_reasons": [],
+                "reference_metrics": [{"kind": "file_size", "value": 9}],
+                "vlm_decision": {"decision": "approve", "provider_id": "fixture_vlm"}
+            }),
+        );
+
+        let mut manifest: serde_json::Value =
+            serde_json::from_slice(&fs::read(dir.join("retrieval-manifest.json")).unwrap())
+                .unwrap();
+        manifest["entries"][0]["search_ref"] =
+            serde_json::Value::String("image-recalls.json#/attempts/0/candidates/999".into());
+        write_json(&dir, "retrieval-manifest.json", &manifest);
+
+        let report = PackageValidator::new()
+            .validate(&PackageValidationRequest {
+                package_dir: dir.clone(),
+                execution_mode: crate::domain::delivery::ExecutionMode::Fixture,
+                expected_query_plan_id: None,
+            })
+            .unwrap();
+
+        assert_eq!(report.status, ValidationStatus::Fail);
+        assert!(report.issues.iter().any(|issue| {
+            issue.code == codes::MANIFEST_LINK_BROKEN
+                && issue.message.contains("search_ref")
+                && issue.message.contains("candidates/999")
+        }));
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn validator_rejects_synthetic_image_acceptance_without_vlm_decision() {
+        let dir = temp_dir("synthetic-image-decision");
+        make_minimal_package(&dir, "passed");
+        write_package_with_single_delivered_image(
+            &dir,
+            serde_json::json!({
+                "retrieval_job_id": "job-1",
+                "candidate_id": "cand-1",
+                "query_plan_id": "qp-test-1",
+                "channel_id": "fixture_channel",
+                "channel_tier": "normal_web_fetch",
+                "retrieval_status": "complete",
+                "local_artifact_path": "images/image.jpg",
+                "source_artifact_path": "evidence/source.html",
+                "source_sidecar_path": "evidence/sidecar.json",
+                "content_summary_path": "evidence/summary.txt",
+                "task_report_path": "evidence/task-report.json",
+                "visual_description_path": "evidence/visual-description.txt",
+                "checksum_sha256": "sha256-ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+                "content_type": "image/jpeg",
+                "file_size_bytes": 9,
+                "image_dimensions": {"width": 1, "height": 1},
+                "media_type_match": true,
+                "fetch_trace": [{"url": "https://example.com/image.jpg", "status": "complete"}],
+                "failure_reason": null
+            }),
+            serde_json::json!({
+                "decision_id": "retrieved-images.json#/image_acceptance_decisions/0",
+                "candidate_id": "cand-1",
+                "retrieval_job_id": "job-1",
+                "query_plan_id": "qp-test-1",
+                "mechanical_passed": true,
+                "vlm_passed": true,
+                "artifact_complete": true,
+                "final_status": "accepted",
+                "blocking_reasons": [],
+                "reference_metrics": [],
+                "vlm_decision": null
+            }),
+        );
+
+        let validator = PackageValidator::new();
+        let request = PackageValidationRequest {
+            package_dir: dir.clone(),
+            execution_mode: crate::domain::delivery::ExecutionMode::Fixture,
+            expected_query_plan_id: None,
+        };
+        let report = validator.validate(&request).unwrap();
+
+        assert_eq!(report.status, ValidationStatus::Fail);
+        assert!(report
+            .issues
+            .iter()
+            .any(|i| i.code == codes::VLM_EVALUATION_DECISION_MISSING
+                && i.message.contains("vlm_decision")));
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn validator_rejects_synthetic_candidate_quality_without_vlm_decision() {
+        let dir = temp_dir("synthetic-candidate-decision");
+        make_minimal_package(&dir, "passed");
+        write_package_with_single_delivered_image(
+            &dir,
+            serde_json::json!({
+                "retrieval_job_id": "job-1",
+                "candidate_id": "cand-1",
+                "query_plan_id": "qp-test-1",
+                "channel_id": "fixture_channel",
+                "channel_tier": "normal_web_fetch",
+                "retrieval_status": "complete",
+                "local_artifact_path": "images/image.jpg",
+                "source_artifact_path": "evidence/source.html",
+                "source_sidecar_path": "evidence/sidecar.json",
+                "content_summary_path": "evidence/summary.txt",
+                "task_report_path": "evidence/task-report.json",
+                "visual_description_path": "evidence/visual-description.txt",
+                "checksum_sha256": "sha256-ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+                "content_type": "image/jpeg",
+                "file_size_bytes": 9,
+                "image_dimensions": {"width": 1, "height": 1},
+                "media_type_match": true,
+                "fetch_trace": [{"url": "https://example.com/image.jpg", "status": "complete"}],
+                "failure_reason": null
+            }),
+            serde_json::json!({
+                "decision_id": "retrieved-images.json#/image_acceptance_decisions/0",
+                "candidate_id": "cand-1",
+                "retrieval_job_id": "job-1",
+                "query_plan_id": "qp-test-1",
+                "mechanical_passed": true,
+                "vlm_passed": true,
+                "artifact_complete": true,
+                "final_status": "accepted",
+                "blocking_reasons": [],
+                "reference_metrics": [{"kind": "file_size", "value": 9}],
+                "vlm_decision": {"decision": "approve", "provider_id": "fixture_vlm"}
+            }),
+        );
+        write_json(
+            &dir,
+            "evidence/candidate-quality/cand-1.json",
+            &serde_json::json!({
+                "schema_version": 1,
+                "candidate_id": "cand-1",
+                "query_plan_id": "qp-test-1",
+                "mechanical_passed": true,
+                "vlm_passed": true,
+                "final_status": "retrievable",
+                "priority": 5,
+                "blocking_metrics": [],
+                "reference_metrics": [],
+                "vlm_decision": null,
+                "redaction_applied": true
+            }),
+        );
+
+        let validator = PackageValidator::new();
+        let request = PackageValidationRequest {
+            package_dir: dir.clone(),
+            execution_mode: crate::domain::delivery::ExecutionMode::Fixture,
+            expected_query_plan_id: None,
+        };
+        let report = validator.validate(&request).unwrap();
+
+        assert_eq!(report.status, ValidationStatus::Fail);
+        assert!(report
+            .issues
+            .iter()
+            .any(|i| i.code == codes::VLM_EVALUATION_DECISION_MISSING
+                && i.message.contains("candidate quality")));
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn validator_rejects_legacy_openclaw_vlm_evidence() {
+        let dir = temp_dir("legacy-openclaw-vlm");
+        make_minimal_package(&dir, "passed");
+        write_package_with_single_delivered_image(
+            &dir,
+            serde_json::json!({
+                "retrieval_job_id": "job-1",
+                "candidate_id": "cand-1",
+                "query_plan_id": "qp-test-1",
+                "channel_id": "fixture_channel",
+                "channel_tier": "normal_web_fetch",
+                "retrieval_status": "complete",
+                "local_artifact_path": "images/image.jpg",
+                "source_artifact_path": "evidence/source.html",
+                "source_sidecar_path": "evidence/sidecar.json",
+                "content_summary_path": "evidence/summary.txt",
+                "task_report_path": "evidence/task-report.json",
+                "visual_description_path": "evidence/visual-description.txt",
+                "checksum_sha256": "sha256-ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+                "content_type": "image/jpeg",
+                "file_size_bytes": 9,
+                "image_dimensions": {"width": 1, "height": 1},
+                "media_type_match": true,
+                "fetch_trace": [{"url": "https://example.com/image.jpg", "status": "complete"}],
+                "failure_reason": null
+            }),
+            serde_json::json!({
+                "decision_id": "retrieved-images.json#/image_acceptance_decisions/0",
+                "candidate_id": "cand-1",
+                "retrieval_job_id": "job-1",
+                "query_plan_id": "qp-test-1",
+                "mechanical_passed": true,
+                "vlm_passed": true,
+                "artifact_complete": true,
+                "final_status": "accepted",
+                "blocking_reasons": [],
+                "reference_metrics": [{"kind": "file_size", "value": 9}],
+                "vlm_decision": {"decision": "approve", "provider_id": "openclaw_legacy"}
+            }),
+        );
+        write_json(
+            &dir,
+            "evidence/candidate-quality/cand-1.json",
+            &serde_json::json!({
+                "schema_version": 1,
+                "candidate_id": "cand-1",
+                "query_plan_id": "qp-test-1",
+                "mechanical_passed": true,
+                "vlm_passed": true,
+                "final_status": "retrievable",
+                "priority": 5,
+                "blocking_metrics": [],
+                "reference_metrics": [],
+                "vlm_decision": {"decision": "approve", "provider_id": "openclaw_legacy"},
+                "redaction_applied": true
+            }),
+        );
+
+        let validator = PackageValidator::new();
+        let request = PackageValidationRequest {
+            package_dir: dir.clone(),
+            execution_mode: crate::domain::delivery::ExecutionMode::Fixture,
+            expected_query_plan_id: None,
+        };
+        let report = validator.validate(&request).unwrap();
+
+        assert_eq!(report.status, ValidationStatus::Fail);
+        assert!(report
+            .issues
+            .iter()
+            .any(|i| i.code == codes::VLM_EVALUATION_DECISION_MISSING));
 
         let _ = fs::remove_dir_all(&dir);
     }

@@ -32,6 +32,9 @@ pub struct ProviderRegistration {
     pub provider_kind: SearchProviderKind,
     pub enabled: bool,
     pub configured_weight: u32,
+    pub endpoint: Option<String>,
+    pub credential_env: Option<String>,
+    pub default_query_params: BTreeMap<String, String>,
     pub config_fingerprint: String,
     pub fixture_only: bool,
 }
@@ -81,6 +84,9 @@ impl ProviderRegistry {
                 provider_kind: SearchProviderKind::Custom("unknown".into()),
                 enabled: true,
                 configured_weight: 1,
+                endpoint: None,
+                credential_env: None,
+                default_query_params: BTreeMap::new(),
                 config_fingerprint: String::new(),
                 fixture_only: false,
             });
@@ -106,6 +112,9 @@ impl ProviderRegistry {
                 provider_kind: provider_config.provider_kind.clone(),
                 enabled: provider_config.enabled,
                 configured_weight: provider_config.weight,
+                endpoint: provider_config.endpoint.clone(),
+                credential_env: provider_config.credential_env.clone(),
+                default_query_params: provider_config.default_query_params.clone(),
                 config_fingerprint: String::new(),
                 fixture_only,
             };
@@ -139,9 +148,9 @@ impl ProviderRegistry {
                     provider_kind: registration.provider_kind.clone(),
                     enabled: registration.enabled,
                     weight: registration.configured_weight,
-                    endpoint: None,
-                    credential_env: None,
-                    default_query_params: BTreeMap::new(),
+                    endpoint: registration.endpoint.clone(),
+                    credential_env: registration.credential_env.clone(),
+                    default_query_params: registration.default_query_params.clone(),
                 };
                 let mut report = adapter.readiness(&config);
                 // Override with registration metadata
@@ -306,6 +315,9 @@ impl ProviderRegistry {
                 provider_kind: SearchProviderKind::Custom("legacy".into()),
                 enabled: registration.enabled,
                 configured_weight: registration.weight.max(0) as u32,
+                endpoint: None,
+                credential_env: None,
+                default_query_params: BTreeMap::new(),
                 config_fingerprint: String::new(),
                 fixture_only: false,
             },

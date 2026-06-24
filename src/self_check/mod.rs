@@ -2122,6 +2122,7 @@ pub struct SelfCheckRequestV11 {
     pub query_plan_input: QueryPlanInput,
     pub providers: Vec<ProviderReadinessEntry>,
     pub channels: Vec<ChannelReadinessEntry>,
+    pub vlm_provider_id: String,
     pub vlm_available: bool,
     pub vlm_credential_configured: bool,
     pub vlm_endpoint_configured: bool,
@@ -2285,7 +2286,7 @@ pub fn run_self_check_v11(request: SelfCheckRequestV11) -> SelfCheckReportV11 {
 
     // --- VLM readiness ---
     let vlm_readiness = VlmEvaluationReadinessReport {
-        provider_id: "qwen_3_5_vlm".into(),
+        provider_id: request.vlm_provider_id.clone(),
         available: request.vlm_available,
         credential_configured: request.vlm_credential_configured,
         endpoint_configured: request.vlm_endpoint_configured,
@@ -2515,6 +2516,7 @@ mod v11_tests {
                 readiness: RetrievalChannelReadiness::Ready,
                 reason: Some("normal web fetch available".into()),
             }],
+            vlm_provider_id: "qwen_3_5_vlm".into(),
             vlm_available: true,
             vlm_credential_configured: true,
             vlm_endpoint_configured: true,

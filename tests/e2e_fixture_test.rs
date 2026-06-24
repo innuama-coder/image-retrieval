@@ -165,6 +165,7 @@ fn make_image(id: &str) -> ImageRecord {
         content_type: Some("image/jpeg".into()),
         file_size_bytes: 4096,
         dimensions: None,
+        reference_metrics: vec![],
     }
 }
 
@@ -457,6 +458,7 @@ fn e2e_limited_delivery_zero_with_mechanical_rejections() {
         content_type: None,
         file_size_bytes: 0,
         dimensions: None,
+        reference_metrics: vec![],
     };
 
     let state = orchestrator.accept_images(&[bad_image]).unwrap();

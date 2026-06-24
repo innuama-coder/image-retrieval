@@ -143,8 +143,8 @@ Default v1.1 subjective evaluation provider:
 
 - `provider_id = "qwen_3_5_vlm"`
 - `provider_kind = "qwen_3_5_vlm"`
-- `model = "qwen-3.5"`
-- `credential_env = "QWEN_API_TOKEN"`
+- `model = "qwen3-vl-plus"`
+- `credential_env = "QWEN_API_KEY"`
 
 The endpoint/base URL is externalized in runtime config. The resolved token
 must never be serialized. Production VLM unavailable means
@@ -306,7 +306,7 @@ produce blocked evidence when required runtime prerequisites are unavailable:
   `image_results[]` normalization, `SERPAPI_API_KEY` or configured credential
   env readiness, redaction, and real-service smoke evidence.
 - Qwen 3.5 VLM evaluation adapter, including endpoint/base URL and model config,
-  `QWEN_API_TOKEN` or configured credential env readiness, prompt templates,
+  `QWEN_API_KEY` or configured credential env readiness, prompt templates,
   response validation, fail-closed production behavior, and real-service smoke
   evidence.
 - Artifact-capable normal web retrieval channel and package validation evidence

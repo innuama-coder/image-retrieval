@@ -127,10 +127,10 @@ impl RetrievalBatchPlanner {
             retry_count,
             target_size,
             jobs,
-            shortage,
+            shortage.clone(),
         );
 
-        (batch, None)
+        (batch, shortage)
     }
 
     /// Determine the effective batch target.

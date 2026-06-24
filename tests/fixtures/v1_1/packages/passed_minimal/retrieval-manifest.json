@@ -1,8 +1,40 @@
 {
   "schema_version": 1,
+  "run_id": "run-fixture-passed-001",
   "query_plan_id": "qp-fixture-passed-001",
   "full_attempt_count": 1,
   "retry_count": 0,
+  "entries": [
+    {
+      "manifest_entry_id": "manifest-0001",
+      "candidate_id": "cand-001",
+      "provider_id": "fixture_search",
+      "candidate_status": "delivered",
+      "status_progression": [
+        "recalled",
+        "candidate_quality_passed",
+        "selected_for_fetch",
+        "fetched",
+        "image_quality_passed",
+        "delivered"
+      ],
+      "search_ref": "image-recalls.json#/accepted_images/0",
+      "candidate_quality_ref": "evidence/candidate-quality/cand-001.json",
+      "retrieval_job_id": "ret-job-001",
+      "retrieval_result_ref": "retrieved-images.json#/retrieval_results/0",
+      "artifact_refs": [
+        "images/sunset-mountains-1920x1080.jpg",
+        "evidence/source-sunset-mountains-1920x1080.jpg",
+        "evidence/sidecar-cand-001.json",
+        "evidence/summary-cand-001.json",
+        "evidence/report-cand-001.json",
+        "evidence/vd-cand-001.txt"
+      ],
+      "image_acceptance_ref": "retrieved-images.json#/image_acceptance_decisions/0",
+      "delivery_ref": "delivery-report.json#/items/0",
+      "validation_refs": []
+    }
+  ],
   "candidates": {
     "cand-001": {
       "candidate_id": "cand-001",
@@ -14,19 +46,7 @@
       "summary": "evidence/summary-cand-001.json",
       "task_report": "evidence/report-cand-001.json",
       "visual_description": "evidence/vd-cand-001.txt",
-      "checksum": "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2"
-    },
-    "cand-002": {
-      "candidate_id": "cand-002",
-      "status": "vlm_rejected",
-      "retrieval_job_id": "ret-job-002",
-      "local_artifact": "images/orange-sky-1600x900.jpg",
-      "source_artifact": "evidence/source-orange-sky-1600x900.jpg",
-      "sidecar": "evidence/sidecar-cand-002.json",
-      "summary": "evidence/summary-cand-002.json",
-      "task_report": "evidence/report-cand-002.json",
-      "visual_description": "evidence/vd-cand-002.txt",
-      "checksum": "b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3"
+      "checksum": "sha256-a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2"
     }
   }
 }

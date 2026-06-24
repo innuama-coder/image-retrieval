@@ -117,7 +117,16 @@ impl<'a> ImageAcceptanceGate<'a> {
             let evidence = validate_image_mechanical(&image, self.query_plan.quality_tier);
 
             if evidence.passed_mechanical() {
-                mechanically_passed.push((image, evidence));
+                let mut image_with_reference_metrics = image;
+                image_with_reference_metrics.reference_metrics.extend(
+                    evidence.reference_findings.iter().map(|finding| {
+                        serde_json::json!({
+                            "kind": "mechanical_reference",
+                            "value": finding,
+                        })
+                    }),
+                );
+                mechanically_passed.push((image_with_reference_metrics, evidence));
             } else {
                 mechanically_blocked
                     .push(ImageAcceptanceDecision::MechanicallyRejected { image, evidence });
@@ -314,6 +323,7 @@ mod tests {
             content_type: content_type.map(|s| s.into()),
             file_size_bytes: 4096,
             dimensions: Some(ImageDimensions { width, height }),
+            reference_metrics: vec![],
         }
     }
 
@@ -326,6 +336,7 @@ mod tests {
             content_type: None,
             file_size_bytes: 0,
             dimensions: None,
+            reference_metrics: vec![],
         };
         let good = make_image("good-1", Some("image/jpeg"), 800, 600);
 

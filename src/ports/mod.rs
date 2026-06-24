@@ -312,6 +312,27 @@ pub trait OpenClawEvaluationPort {
         description: &str,
     ) -> Result<Vec<crate::domain::candidate::CandidateDecision>>;
 
+    /// Evaluate structured candidate requests that include mechanical evidence
+    /// and redacted QueryPlan context.
+    ///
+    /// Default implementation preserves legacy implementors by projecting the
+    /// request back to the old candidate-record interface. Production adapters
+    /// should override this method so reference metrics reach the VLM prompt.
+    fn evaluate_candidate_requests(
+        &self,
+        requests: &[crate::quality::candidate::CandidateEvaluationRequest],
+    ) -> Result<Vec<crate::domain::candidate::CandidateDecision>> {
+        let candidates: Vec<CandidateRecord> = requests
+            .iter()
+            .map(|request| request.candidate.clone())
+            .collect();
+        let description = requests
+            .first()
+            .map(|request| request.query_description.as_str())
+            .unwrap_or("");
+        self.evaluate_candidates(&candidates, description)
+    }
+
     /// Evaluate a batch of actually-retrieved images and return an
     /// acceptance decision for each.
     ///
@@ -451,7 +472,7 @@ impl VlmEvaluationReadinessReport {
             candidate_prompt_configured: false,
             image_prompt_configured: false,
             credential_status: CredentialStatus::Missing {
-                env_var: "QWEN_API_TOKEN".into(),
+                env_var: "QWEN_API_KEY".into(),
             },
             failure_code: Some(failure_code),
             checked_at: String::new(),
@@ -823,7 +844,7 @@ mod tests {
         let report = VlmEvaluationReadinessReport::not_available(
             VlmEvaluationFailureCode::VlmEvaluationCredentialMissing,
             false,
-            vec!["QWEN_API_TOKEN not set".into()],
+            vec!["QWEN_API_KEY not set".into()],
         );
         assert!(!report.enabled);
         assert!(!report.available);
@@ -855,7 +876,7 @@ mod tests {
         );
         assert_eq!(
             VlmEvaluationError::CredentialMissing {
-                env_var: "QWEN_API_TOKEN".into()
+                env_var: "QWEN_API_KEY".into()
             }
             .to_failure_code(),
             VlmEvaluationFailureCode::VlmEvaluationCredentialMissing
@@ -876,9 +897,9 @@ mod tests {
     #[test]
     fn vlm_evaluation_error_display() {
         let err = VlmEvaluationError::CredentialMissing {
-            env_var: "QWEN_API_TOKEN".into(),
+            env_var: "QWEN_API_KEY".into(),
         };
-        assert!(err.to_string().contains("QWEN_API_TOKEN"));
+        assert!(err.to_string().contains("QWEN_API_KEY"));
 
         let err = VlmEvaluationError::FixtureNotProduction;
         assert!(err.to_string().contains("Fixture"));
@@ -955,7 +976,7 @@ mod tests {
                 fixture_mode: true,
                 ..Default::default()
             },
-            model: "qwen-3.5".into(),
+            model: "qwen3-vl-plus".into(),
             evaluator_provider_id: "fixture_vlm".into(),
             fixture_mode: true,
         };
@@ -991,7 +1012,7 @@ mod tests {
                 fixture_mode: false,
                 ..Default::default()
             },
-            model: "qwen-3.5".into(),
+            model: "qwen3-vl-plus".into(),
             evaluator_provider_id: "fixture_vlm".into(),
             fixture_mode: false,
         };
@@ -1026,7 +1047,7 @@ mod tests {
                 fixture_mode: true,
                 ..Default::default()
             },
-            model: "qwen-3.5".into(),
+            model: "qwen3-vl-plus".into(),
             evaluator_provider_id: "fixture_vlm".into(),
             fixture_mode: true,
         };

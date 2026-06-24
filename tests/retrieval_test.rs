@@ -178,11 +178,18 @@ fn batch_planner_short_batch_when_fewer() {
 
     let qp_id = QueryPlanId::new("qp-test");
     let policy = QueryRetrievalPolicy::default();
-    let (batch, _shortage) =
+    let (batch, shortage) =
         RetrievalBatchPlanner::plan_from_batch(&rb, &qp_id, &policy, "warn", &[], false);
 
     assert!(batch.is_short_batch);
     assert_eq!(batch.actual_size, 2);
+    let shortage = shortage.expect("short batch must return shortage evidence");
+    assert_eq!(
+        shortage.shortage_code,
+        RetrievalShortageCode::InsufficientRetrievableCandidates
+    );
+    assert_eq!(shortage.target_size, 8);
+    assert_eq!(shortage.actual_size, 2);
 }
 
 #[test]
@@ -194,11 +201,18 @@ fn batch_planner_empty_returns_shortage() {
 
     let qp_id = QueryPlanId::new("qp-test");
     let policy = QueryRetrievalPolicy::default();
-    let (batch, _shortage) =
+    let (batch, shortage) =
         RetrievalBatchPlanner::plan_from_batch(&rb, &qp_id, &policy, "warn", &[], false);
 
     assert_eq!(batch.actual_size, 0);
     assert!(batch.is_short_batch);
+    let shortage = shortage.expect("empty batch must return shortage evidence");
+    assert_eq!(
+        shortage.shortage_code,
+        RetrievalShortageCode::NoRetrievableCandidates
+    );
+    assert_eq!(shortage.target_size, 4);
+    assert_eq!(shortage.actual_size, 0);
 }
 
 // =============================================================================

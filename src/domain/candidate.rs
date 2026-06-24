@@ -70,22 +70,17 @@ pub struct ImageDimensions {
 // ---------------------------------------------------------------------------
 
 /// What evidence was found about the candidate's license.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub enum LicenseEvidence {
     /// License explicitly identified (e.g. "CC BY 2.0").
     Identified { label: String, source: String },
     /// License hint from provider but not verified.
     Hinted { label: String },
     /// No license information available.
+    #[default]
     Unknown,
     /// License is explicitly marked as "all rights reserved" or similar.
     Restricted { label: Option<String> },
-}
-
-impl Default for LicenseEvidence {
-    fn default() -> Self {
-        Self::Unknown
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -457,6 +452,61 @@ pub struct CandidateSource {
 // Candidate decision — output of the Candidate Quality Gate
 // ---------------------------------------------------------------------------
 
+/// Package-safe evidence for a single VLM subject decision.
+///
+/// This is the bridge between the legacy `OpenClawEvaluationPort` decisions and
+/// the v1.1 package contract. It records who made the subjective decision and
+/// what verdict was returned, without serializing credentials or raw prompts.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct VlmDecisionEvidence {
+    /// VLM decision label, such as `approve`, `reject`, `uncertain`, or
+    /// `unexecutable`.
+    pub decision: String,
+    /// Runtime evaluator/provider id, for example `qwen_3_5_vlm`.
+    pub provider_id: String,
+    /// Runtime model id, for example `qwen3-vl-plus`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    /// Where this evidence came from, e.g. `qwen_candidate_evaluation`.
+    pub evidence_source: String,
+    /// Redacted rationale or notes from the evaluator.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rationale_summary: Option<String>,
+    /// Redacted raw verdict text, when available.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub raw_verdict: Option<String>,
+    /// Optional confidence score.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confidence: Option<f32>,
+    /// Machine-readable reason codes.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub reason_codes: Vec<String>,
+}
+
+impl VlmDecisionEvidence {
+    pub fn new(
+        decision: impl Into<String>,
+        provider_id: impl Into<String>,
+        model: impl Into<String>,
+        evidence_source: impl Into<String>,
+    ) -> Self {
+        Self {
+            decision: decision.into(),
+            provider_id: provider_id.into(),
+            model: Some(model.into()),
+            evidence_source: evidence_source.into(),
+            rationale_summary: None,
+            raw_verdict: None,
+            confidence: None,
+            reason_codes: Vec::new(),
+        }
+    }
+
+    pub fn to_json_value(&self) -> serde_json::Value {
+        serde_json::to_value(self).unwrap_or(serde_json::Value::Null)
+    }
+}
+
 /// The outcome of candidate mechanical validation + VLM subjective
 /// evaluation, normalised into an executable status.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -467,6 +517,9 @@ pub enum CandidateDecision {
         candidate: CandidateRecord,
         /// Priority within the retrievable sequence (higher = fetched sooner).
         priority: u32,
+        /// Subjective VLM evidence that approved this candidate.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        vlm_evidence: Option<VlmDecisionEvidence>,
     },
 
     /// Candidate was mechanically blocked (e.g. unreachable, duplicate,
@@ -655,7 +708,7 @@ pub struct VlmCandidateEvaluationRequest {
     pub candidates: Vec<CandidateEvaluationSubject>,
     /// Policy context for the evaluator.
     pub policy_context: QualityPolicyContext,
-    /// Model identifier (e.g. "qwen-3.5").
+    /// Model identifier (e.g. "qwen3-vl-plus").
     pub model: String,
     /// Evaluator provider identifier (e.g. "qwen_3_5_vlm").
     pub evaluator_provider_id: String,
@@ -1040,6 +1093,7 @@ mod tests {
         let d = CandidateDecision::Accepted {
             candidate: c,
             priority: 5,
+            vlm_evidence: None,
         };
         assert!(d.is_accepted());
     }
@@ -1074,6 +1128,7 @@ mod tests {
             CandidateDecision::Accepted {
                 candidate: c1,
                 priority: 3,
+                vlm_evidence: None,
             },
             CandidateDecision::Rejected {
                 candidate: c2,
@@ -1082,6 +1137,7 @@ mod tests {
             CandidateDecision::Accepted {
                 candidate: c3,
                 priority: 7,
+                vlm_evidence: None,
             },
         ];
 

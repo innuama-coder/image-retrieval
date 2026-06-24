@@ -207,6 +207,7 @@ pub fn normalize_conclusion(
                 // Default priority; callers may override based on provider
                 // confidence, source quality signals, etc.
                 priority: 0,
+                vlm_evidence: None,
             }
         }
         CandidateEvaluationConclusion::Reject { reason } => {

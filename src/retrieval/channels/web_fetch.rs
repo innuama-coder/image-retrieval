@@ -14,6 +14,7 @@
 
 #![allow(clippy::type_complexity, clippy::too_many_arguments)]
 
+use crate::domain::candidate::ImageDimensions;
 use crate::domain::config::RetrievalChannelConfig;
 use crate::domain::retrieval::{
     ArtifactWriteRecord, AuthorizationRisk, ContentSummary, CredentialStatus, DependencyStatus,
@@ -137,14 +138,9 @@ impl WebFetchChannel {
 
     /// Compute SHA-256 checksum of bytes.
     fn sha256_hex(data: &[u8]) -> String {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
-        // In production, use a real SHA-256 implementation. For now, use a
-        // length-prefixed hash of the data as a deterministic fingerprint.
-        let mut hasher = DefaultHasher::new();
-        data.len().hash(&mut hasher);
-        data.hash(&mut hasher);
-        format!("sha256-{:016x}", hasher.finish())
+        use sha2::{Digest, Sha256};
+        let digest = Sha256::digest(data);
+        format!("sha256-{:x}", digest)
     }
 
     /// Sniff content type from the first bytes of data.
@@ -181,6 +177,84 @@ impl WebFetchChannel {
         if data[0] == 0x42 && data[1] == 0x4D {
             return Some("image/bmp".into());
         }
+        None
+    }
+
+    /// Sniff image dimensions from common binary headers.
+    fn sniff_image_dimensions(data: &[u8]) -> Option<ImageDimensions> {
+        // PNG: signature + IHDR length/type + 4-byte width + 4-byte height.
+        if data.len() >= 24
+            && data[0] == 0x89
+            && data[1] == b'P'
+            && data[2] == b'N'
+            && data[3] == b'G'
+            && data[4] == 0x0D
+            && data[5] == 0x0A
+            && data[6] == 0x1A
+            && data[7] == 0x0A
+            && &data[12..16] == b"IHDR"
+        {
+            let width = u32::from_be_bytes([data[16], data[17], data[18], data[19]]);
+            let height = u32::from_be_bytes([data[20], data[21], data[22], data[23]]);
+            if width > 0 && height > 0 {
+                return Some(ImageDimensions { width, height });
+            }
+        }
+
+        // JPEG: walk marker segments until a Start Of Frame marker.
+        if data.len() >= 4 && data[0] == 0xFF && data[1] == 0xD8 {
+            let mut i = 2usize;
+            while i + 3 < data.len() {
+                while i < data.len() && data[i] == 0xFF {
+                    i += 1;
+                }
+                if i >= data.len() {
+                    break;
+                }
+                let marker = data[i];
+                i += 1;
+
+                if marker == 0xD9 || marker == 0xDA {
+                    break;
+                }
+                if matches!(marker, 0x01 | 0xD0..=0xD7) {
+                    continue;
+                }
+                if i + 1 >= data.len() {
+                    break;
+                }
+                let segment_len = u16::from_be_bytes([data[i], data[i + 1]]) as usize;
+                if segment_len < 2 || i + segment_len > data.len() {
+                    break;
+                }
+
+                let is_sof = matches!(
+                    marker,
+                    0xC0 | 0xC1
+                        | 0xC2
+                        | 0xC3
+                        | 0xC5
+                        | 0xC6
+                        | 0xC7
+                        | 0xC9
+                        | 0xCA
+                        | 0xCB
+                        | 0xCD
+                        | 0xCE
+                        | 0xCF
+                );
+                if is_sof && segment_len >= 7 {
+                    let height = u16::from_be_bytes([data[i + 3], data[i + 4]]) as u32;
+                    let width = u16::from_be_bytes([data[i + 5], data[i + 6]]) as u32;
+                    if width > 0 && height > 0 {
+                        return Some(ImageDimensions { width, height });
+                    }
+                }
+
+                i += segment_len;
+            }
+        }
+
         None
     }
 
@@ -371,6 +445,7 @@ impl WebFetchChannel {
                         let mut final_result = result;
                         final_result.retrieval_batch_id = batch_id.to_string();
                         final_result.fetch_trace = vec![trace.clone()];
+                        self.rewrite_task_report_attempts(&final_result, &[trace.clone()]);
                         final_result.job_ownership_valid = final_result.candidate_id
                             == job.candidate_id
                             && final_result.query_plan_id == job.query_plan_id;
@@ -443,6 +518,25 @@ impl WebFetchChannel {
         content_type_reported: Option<String>,
         content_type_sniffed: Option<String>,
     ) -> std::result::Result<RetrievalArtifactResult, RetrievalError> {
+        self.write_artifacts_for_attempt(
+            job,
+            data,
+            content_type_reported,
+            content_type_sniffed,
+            RetrievalAttemptMode::DirectImageFetch,
+            Vec::new(),
+        )
+    }
+
+    fn write_artifacts_for_attempt(
+        &self,
+        job: &RetrievalJob,
+        data: &[u8],
+        content_type_reported: Option<String>,
+        content_type_sniffed: Option<String>,
+        attempt_mode: RetrievalAttemptMode,
+        attempt_traces: Vec<RetrievalAttemptTrace>,
+    ) -> std::result::Result<RetrievalArtifactResult, RetrievalError> {
         let job_dir = self.job_dir(job);
         fs::create_dir_all(&job_dir).map_err(|e| RetrievalError::ArtifactWriteFailed {
             path: job_dir.to_string_lossy().to_string(),
@@ -455,6 +549,7 @@ impl WebFetchChannel {
             .unwrap_or_else(|| "application/octet-stream".into());
         let ext = Self::extension_from_content_type(&resolved_ct).to_string();
         let file_size = data.len() as u64;
+        let image_dimensions = Self::sniff_image_dimensions(data);
 
         // 1. Write local artifact
         let local_filename = format!("artifact.{}", ext);
@@ -483,7 +578,7 @@ impl WebFetchChannel {
             candidate_id: job.candidate_id.clone(),
             channel_id: self.channel_id.clone(),
             channel_tier: RetrievalChannelTier::NormalWebFetch,
-            attempt_mode: RetrievalAttemptMode::DirectImageFetch,
+            attempt_mode,
             primary_url_redacted: redact_url(&job.target.primary_image_url),
             source_page_url_redacted: job
                 .target
@@ -543,6 +638,17 @@ impl WebFetchChannel {
 
         // 6. Write task report
         let started_at = chrono_now();
+        let attempts = if attempt_traces.is_empty() {
+            vec![self.synthetic_success_trace(
+                job,
+                attempt_mode,
+                &started_at,
+                file_size,
+                local_path.to_string_lossy().to_string(),
+            )]
+        } else {
+            attempt_traces
+        };
         let task_report = RetrievalTaskReport {
             retrieval_job_id: job.retrieval_job_id.clone(),
             query_plan_id: job.query_plan_id.clone(),
@@ -550,7 +656,7 @@ impl WebFetchChannel {
             started_at,
             completed_at: chrono_now(),
             status: RetrievalStatus::Complete,
-            attempts: vec![],
+            attempts,
             artifacts_written: vec![
                 ArtifactWriteRecord {
                     artifact_type: "local_artifact".into(),
@@ -595,7 +701,7 @@ impl WebFetchChannel {
             ),
             method: VisualDescriptionMethod::MetadataAndFilename,
             confidence: Some(0.9),
-            image_dimensions: None,
+            image_dimensions,
             content_type: Some(resolved_ct.clone()),
             evidence_refs: vec![local_path.to_string_lossy().to_string()],
         };
@@ -625,7 +731,7 @@ impl WebFetchChannel {
             candidate_id: job.candidate_id.clone(),
             channel_id: self.channel_id.clone(),
             channel_tier: RetrievalChannelTier::NormalWebFetch,
-            attempt_mode: RetrievalAttemptMode::DirectImageFetch,
+            attempt_mode,
             retrieval_status: RetrievalStatus::Complete,
             local_artifact_path: Some(local_path),
             source_artifact_path: Some(source_path),
@@ -640,7 +746,7 @@ impl WebFetchChannel {
             content_type: Some(resolved_ct),
             file_extension: Some(ext.to_string()),
             file_size_bytes: Some(file_size),
-            image_dimensions: None,
+            image_dimensions,
             media_type_match,
             local_artifact_exists: true,
             source_artifact_exists: true,
@@ -656,6 +762,72 @@ impl WebFetchChannel {
             failure_reason: None,
             redaction_applied: true,
         })
+    }
+
+    fn synthetic_success_trace(
+        &self,
+        job: &RetrievalJob,
+        attempt_mode: RetrievalAttemptMode,
+        started_at: &str,
+        bytes_received: u64,
+        artifact_ref: String,
+    ) -> RetrievalAttemptTrace {
+        RetrievalAttemptTrace {
+            attempt_id: format!(
+                "attempt-{}-{}-{}",
+                job.retrieval_job_id, attempt_mode, started_at
+            ),
+            retrieval_job_id: job.retrieval_job_id.clone(),
+            query_plan_id: job.query_plan_id.clone(),
+            candidate_id: job.candidate_id.clone(),
+            channel_id: self.channel_id.clone(),
+            channel_tier: RetrievalChannelTier::NormalWebFetch,
+            attempt_mode,
+            started_at: started_at.to_string(),
+            completed_at: Some(chrono_now()),
+            target_url_redacted: Some(redact_url(&job.target.primary_image_url)),
+            source_page_url_redacted: job
+                .target
+                .alternate_source_page_url
+                .as_deref()
+                .map(redact_url),
+            final_url_redacted: None,
+            http_status: Some(200),
+            bytes_received: Some(bytes_received),
+            status: RetrievalAttemptStatus::Succeeded,
+            failure_code: None,
+            retryable: true,
+            fallback_allowed: true,
+            policy_reason: None,
+            artifact_refs: vec![artifact_ref],
+            redaction_applied: true,
+        }
+    }
+
+    fn rewrite_task_report_attempts(
+        &self,
+        result: &RetrievalArtifactResult,
+        attempts: &[RetrievalAttemptTrace],
+    ) {
+        let Some(path) = result.task_report_path.as_ref() else {
+            return;
+        };
+        let Ok(bytes) = fs::read(path) else {
+            return;
+        };
+        let Ok(mut report) = serde_json::from_slice::<RetrievalTaskReport>(&bytes) else {
+            return;
+        };
+        report.attempts = attempts.to_vec();
+        if let Some(first) = attempts.first() {
+            report.started_at = first.started_at.clone();
+        }
+        if let Some(last_completed) = attempts.last().and_then(|a| a.completed_at.clone()) {
+            report.completed_at = last_completed;
+        }
+        if let Ok(json) = serde_json::to_string_pretty(&report) {
+            let _ = fs::write(path, json);
+        }
     }
 
     /// Check pre-fetch policy: prohibit domains, etc.
@@ -922,12 +1094,20 @@ impl WebFetchChannel {
                         continue;
                     }
 
-                    match self.write_artifacts(job, &data, content_type_reported, ct_sniffed) {
+                    trace.status = RetrievalAttemptStatus::Succeeded;
+                    let completed_at = chrono_now();
+                    trace.completed_at = Some(completed_at);
+                    trace.final_url_redacted = Some(redact_url(img_url));
+
+                    match self.write_artifacts_for_attempt(
+                        job,
+                        &data,
+                        content_type_reported,
+                        ct_sniffed,
+                        RetrievalAttemptMode::SourcePageResolve,
+                        vec![trace.clone()],
+                    ) {
                         Ok(mut result) => {
-                            trace.status = RetrievalAttemptStatus::Succeeded;
-                            let completed_at = chrono_now();
-                            trace.completed_at = Some(completed_at);
-                            trace.final_url_redacted = Some(redact_url(img_url));
                             trace.artifact_refs = result
                                 .local_artifact_path
                                 .iter()
@@ -936,6 +1116,7 @@ impl WebFetchChannel {
 
                             result.retrieval_batch_id = batch_id.to_string();
                             result.fetch_trace = vec![trace.clone()];
+                            self.rewrite_task_report_attempts(&result, &[trace.clone()]);
                             result.job_ownership_valid = result.candidate_id == job.candidate_id
                                 && result.query_plan_id == job.query_plan_id;
                             result.retrieval_status = if result.has_all_required_paths()
@@ -1077,19 +1258,24 @@ fn redact_url(url: &str) -> String {
 
 /// Return the current time as an ISO 8601 string.
 fn chrono_now() -> String {
-    // Use a simple timestamp since we don't have chrono
-    use std::time::{SystemTime, UNIX_EPOCH};
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| format!("{}", d.as_secs()))
-        .unwrap_or_else(|_| "unknown".into())
+    let now = time::OffsetDateTime::now_utc();
+    format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
+        now.year(),
+        u8::from(now.month()),
+        now.day(),
+        now.hour(),
+        now.minute(),
+        now.second()
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::domain::retrieval::{
-        RetrievalJob, RetrievalJobId, RetrievalPolicyContext, RetrievalTarget, RetrievalTargetType,
+        RetrievalAttemptMode, RetrievalAttemptStatus, RetrievalAttemptTrace, RetrievalJob,
+        RetrievalJobId, RetrievalPolicyContext, RetrievalTarget, RetrievalTargetType,
     };
 
     #[allow(dead_code)]
@@ -1150,6 +1336,14 @@ mod tests {
     }
 
     #[test]
+    fn sha256_hex_matches_known_sha256_digest() {
+        assert_eq!(
+            WebFetchChannel::sha256_hex(b"abc"),
+            "sha256-ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+    }
+
+    #[test]
     fn web_fetch_channel_readiness_disabled() {
         let dir = std::env::temp_dir().join("test-wf-disabled");
         let channel = WebFetchChannel::new(&dir)
@@ -1190,6 +1384,28 @@ mod tests {
             WebFetchChannel::extension_from_content_type("application/octet-stream"),
             "bin"
         );
+    }
+
+    #[test]
+    fn sniff_image_dimensions_reads_jpeg_and_png_headers() {
+        let jpeg = [
+            0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x0C, b'J', b'F', b'I', b'F', 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0xFF, 0xC0, 0x00, 0x11, 0x08, 0x01, 0xC4, 0x03, 0x20, 0x03, 0x01, 0x22,
+            0x00, 0x02, 0x11, 0x01, 0x03, 0x11, 0x01,
+        ];
+        let png = [
+            0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, b'I', b'H',
+            b'D', b'R', 0x00, 0x00, 0x03, 0x20, 0x00, 0x00, 0x01, 0xC4, 0x08, 0x02, 0x00, 0x00,
+            0x00,
+        ];
+
+        let jpeg_dims = WebFetchChannel::sniff_image_dimensions(&jpeg).unwrap();
+        let png_dims = WebFetchChannel::sniff_image_dimensions(&png).unwrap();
+
+        assert_eq!(jpeg_dims.width, 800);
+        assert_eq!(jpeg_dims.height, 452);
+        assert_eq!(png_dims.width, 800);
+        assert_eq!(png_dims.height, 452);
     }
 
     #[test]
@@ -1254,6 +1470,95 @@ mod tests {
             resolve_url("photo.png", "https://example.com/dir/page.html"),
             "https://example.com/dir/photo.png"
         );
+    }
+
+    #[test]
+    fn write_artifacts_task_report_records_attempt_and_rfc3339_time() {
+        let dir = std::env::temp_dir().join(format!("test-wf-report-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let channel = WebFetchChannel::new(&dir).expect("create channel");
+        let job = make_job("job-1", "cand-1", "qp-1", "https://example.com/image.jpg");
+        let result = channel
+            .write_artifacts(
+                &job,
+                &[0xFF, 0xD8, 0xFF, 0xD9],
+                Some("image/jpeg".into()),
+                Some("image/jpeg".into()),
+            )
+            .expect("write artifacts");
+
+        let report_path = result.task_report_path.as_ref().unwrap();
+        let report: serde_json::Value =
+            serde_json::from_slice(&fs::read(report_path).unwrap()).unwrap();
+        let started_at = report["started_at"].as_str().unwrap();
+        let completed_at = report["completed_at"].as_str().unwrap();
+        assert!(
+            started_at.contains('T') && started_at.ends_with('Z'),
+            "started_at should be RFC3339 UTC, got {}",
+            started_at
+        );
+        assert!(
+            completed_at.contains('T') && completed_at.ends_with('Z'),
+            "completed_at should be RFC3339 UTC, got {}",
+            completed_at
+        );
+        assert!(
+            !report["attempts"].as_array().unwrap().is_empty(),
+            "task report must include retrieval attempt evidence"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn write_artifacts_preserves_source_page_attempt_mode() {
+        let dir = std::env::temp_dir().join(format!("test-wf-source-mode-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let channel = WebFetchChannel::new(&dir).expect("create channel");
+        let job = make_job("job-2", "cand-2", "qp-1", "https://example.com/page");
+        let trace = RetrievalAttemptTrace {
+            attempt_id: "attempt-source-page".into(),
+            retrieval_job_id: job.retrieval_job_id.clone(),
+            query_plan_id: job.query_plan_id.clone(),
+            candidate_id: job.candidate_id.clone(),
+            channel_id: channel.channel_id.clone(),
+            channel_tier: RetrievalChannelTier::NormalWebFetch,
+            attempt_mode: RetrievalAttemptMode::SourcePageResolve,
+            started_at: "2026-06-24T00:00:00Z".into(),
+            completed_at: Some("2026-06-24T00:00:01Z".into()),
+            target_url_redacted: Some("https://example.com/page".into()),
+            source_page_url_redacted: Some("https://example.com/page".into()),
+            final_url_redacted: Some("https://example.com/image.jpg".into()),
+            http_status: Some(200),
+            bytes_received: Some(4),
+            status: RetrievalAttemptStatus::Succeeded,
+            failure_code: None,
+            retryable: true,
+            fallback_allowed: true,
+            policy_reason: None,
+            artifact_refs: vec![],
+            redaction_applied: true,
+        };
+
+        let result = channel
+            .write_artifacts_for_attempt(
+                &job,
+                &[0xFF, 0xD8, 0xFF, 0xD9],
+                Some("image/jpeg".into()),
+                Some("image/jpeg".into()),
+                RetrievalAttemptMode::SourcePageResolve,
+                vec![trace],
+            )
+            .expect("write artifacts");
+
+        assert_eq!(result.attempt_mode, RetrievalAttemptMode::SourcePageResolve);
+        let sidecar: serde_json::Value = serde_json::from_slice(
+            &fs::read(result.source_sidecar_path.as_ref().unwrap()).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(sidecar["attempt_mode"], "source_page_resolve");
+
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

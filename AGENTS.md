@@ -63,7 +63,9 @@ Mechanical validation has two metric classes:
 - Blocking metrics: decide accept or discard.
 - Reference metrics: provide evidence for subjective evaluation.
 
-Subjective evaluation must call an OpenClaw agent to execute the relevant skill.
+Subjective evaluation must call the configured production subjective evaluator.
+For v1.1, the production evaluator is the direct Qwen 3.5 VLM adapter; fixture
+evaluators are test-only and must not count as production evidence.
 
 ## Retrieval Channels
 
@@ -91,7 +93,9 @@ Mechanical acceptance has two metric classes:
 - Blocking metrics: decide accept or discard.
 - Reference metrics: provide evidence for subjective evaluation.
 
-Subjective evaluation must call an OpenClaw agent to execute the relevant skill.
+Subjective evaluation must call the configured production subjective evaluator.
+For v1.1, the production evaluator is the direct Qwen 3.5 VLM adapter; fixture
+evaluators are test-only and must not count as production evidence.
 An image counts as accepted only when both checks pass.
 
 ## Completion Rules

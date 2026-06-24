@@ -719,7 +719,7 @@ mod vlm_evaluation_port {
         let report = VlmEvaluationReadinessReport::not_available(
             VlmEvaluationFailureCode::VlmEvaluationCredentialMissing,
             false,
-            vec!["QWEN_API_TOKEN not set".into()],
+            vec!["QWEN_API_KEY not set".into()],
         );
         assert!(!report.available);
     }
@@ -761,7 +761,7 @@ mod vlm_evaluation_port {
                 fixture_mode: false,
                 ..Default::default()
             },
-            model: "qwen-3.5".into(),
+            model: "qwen3-vl-plus".into(),
             evaluator_provider_id: "fixture_vlm".into(),
             fixture_mode: false,
         };
@@ -782,7 +782,7 @@ mod vlm_evaluation_port {
     fn vlm_unavailable_produces_execution_block() {
         let block = QualityExecutionBlock::vlm_unavailable(
             QualityPhase::Candidate,
-            "QWEN_API_TOKEN not set",
+            "QWEN_API_KEY not set",
             3,
         );
         assert_eq!(block.dependency, "Qwen 3.5 VLM");
@@ -813,7 +813,7 @@ mod vlm_evaluation_port {
 
         // Credential missing
         let err = VlmEvaluationError::CredentialMissing {
-            env_var: "QWEN_API_TOKEN".into(),
+            env_var: "QWEN_API_KEY".into(),
         };
         assert_eq!(
             err.to_failure_code(),
@@ -948,7 +948,7 @@ mod vlm_evaluation_port {
                 fixture_mode: true,
                 ..Default::default()
             },
-            model: "qwen-3.5".into(),
+            model: "qwen3-vl-plus".into(),
             evaluator_provider_id: "fixture_vlm".into(),
             fixture_mode: true,
         };

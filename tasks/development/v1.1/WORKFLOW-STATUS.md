@@ -15,24 +15,19 @@ PRD -> HLD -> LLD tasks -> LLD -> development tasks -> development -> testing ->
 | LLD tasks | `tasks/design/v1.1-lld/design-planning.json` | Complete | Created with `design-planning`; `docs/v1.1/LLD-TASKS.md` is now an index. |
 | LLD | `docs/design/v1.1-TASK-001..007-*.md` | Complete | Formal detailed design tasks executed and accepted by TASK-007. |
 | Development tasks | `tasks/development/v1.1/` | Complete | Defines TASK-001 through TASK-007. |
-| Development | Product source changes | Not started | Must execute TASK-001 through TASK-005. |
-| Testing | `tasks/development/v1.1/testing-report.md` | Not started | Must execute TASK-006 after development. |
-| Acceptance | `tasks/development/v1.1/acceptance-report.md` | Not started | Must execute TASK-007 after testing. |
+| Development | Product source changes | Complete | TASK-001 through TASK-005 implementation is complete. |
+| Testing | `tasks/development/v1.1/testing-report.md` | Complete | TASK-006 deterministic and real-service smoke evidence is recorded. |
+| Acceptance | `tasks/development/v1.1/acceptance-report.md` | Complete | TASK-007 accepts v1.1 as a release candidate. |
 
-## Blocking Decisions Before Final v1.1 Acceptance
+## v1.1 Release Status
 
-- SerpApi Google Images adapter implementation, `SERPAPI_API_KEY` readiness,
-  and real-service smoke evidence for the default ImageSearch provider.
-- Qwen 3.5 VLM adapter implementation, `QWEN_API_TOKEN` readiness,
-  externalized endpoint/model configuration, and real-service smoke evidence.
-- Paid retrieval channel enablement and budget boundary.
-- robots.txt / site-rule behavior.
-- Authorization blocking rules.
-- Quality threshold calibration or explicit waiver.
+v1.1 is accepted for release as `1.1.0`.
 
-## Execution Rule
+Release evidence:
 
-The project may proceed through local implementation and fixture testing before
-all external decisions are closed. Final v1.1 acceptance must remain blocked if
-any required real-service, Qwen 3.5 VLM implementation evidence, paid-channel,
-or compliance decision is still unresolved.
+- All 10 non-deferred release gates are closed in
+  `tasks/development/v1.1/release-gate-decisions.md`.
+- Real-service smoke passed and is recorded in
+  `tasks/development/v1.1/real-service-smoke-report.json`.
+- Final acceptance is recorded in
+  `tasks/development/v1.1/acceptance-report.md`.

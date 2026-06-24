@@ -780,8 +780,8 @@ fn vlm_evaluation_defaults() {
     let config = VlmEvaluationConfig::default();
     assert_eq!(config.provider_id, "qwen_3_5_vlm");
     assert_eq!(config.provider_kind, VlmEvaluatorKind::Qwen35Vlm);
-    assert_eq!(config.model, "qwen-3.5");
-    assert_eq!(config.credential_env, Some("QWEN_API_TOKEN".into()));
+    assert_eq!(config.model, "qwen3-vl-plus");
+    assert_eq!(config.credential_env, Some("QWEN_API_KEY".into()));
     assert!(!config.enabled);
     assert!(!config.fixture_mode);
 }
@@ -854,7 +854,7 @@ fn readiness_report_all_ready() {
 fn readiness_report_with_blockers() {
     let items = vec![
         ConfigReadiness::ready("serpapi"),
-        ConfigReadiness::not_ready("qwen", "QWEN_API_TOKEN not set", "MISSING"),
+        ConfigReadiness::not_ready("qwen", "QWEN_API_KEY not set", "MISSING"),
     ];
     let report = ConfigReadinessReport::new(items);
     assert!(!report.all_ready);
@@ -888,7 +888,7 @@ fn full_runtime_config_from_json() {
         "vlm_evaluation": {
             "enabled": true,
             "base_url": "https://api.example.com/v1",
-            "credential_env": "QWEN_API_TOKEN"
+            "credential_env": "QWEN_API_KEY"
         },
         "policy": {
             "allow_paid_channels": false,

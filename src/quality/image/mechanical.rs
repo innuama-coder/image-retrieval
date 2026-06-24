@@ -524,6 +524,7 @@ mod tests {
             content_type: content_type.map(|s| s.into()),
             file_size_bytes: file_size,
             dimensions: Some(ImageDimensions { width, height }),
+            reference_metrics: vec![],
         }
     }
 
@@ -534,6 +535,7 @@ mod tests {
             content_type: content_type.map(|s| s.into()),
             file_size_bytes: file_size,
             dimensions: None,
+            reference_metrics: vec![],
         }
     }
 
@@ -633,6 +635,7 @@ mod tests {
             content_type: None,
             file_size_bytes: 0,
             dimensions: None,
+            reference_metrics: vec![],
         };
         let evidence = validate_image_mechanical(&img, QualityTier::General);
         assert!(!evidence.passed_mechanical());

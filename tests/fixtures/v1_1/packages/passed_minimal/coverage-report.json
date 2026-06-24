@@ -1,10 +1,27 @@
 {
   "schema_version": 1,
+  "run_id": "run-fixture-passed-001",
   "query_plan_id": "qp-fixture-passed-001",
+  "required_image_count": 1,
+  "accepted_image_count": 1,
+  "gap_count": 0,
+  "full_attempt_count": 1,
+  "retry_count": 0,
+  "status": "passed",
+  "gaps": [],
+  "attempt_summaries": [
+    {
+      "full_attempt_count": 1,
+      "retry_count": 0,
+      "accepted_delta": 1
+    }
+  ],
+  "source_diversity": {
+    "required": 1,
+    "actual": 1,
+    "met": true
+  },
   "required_count": 1,
   "accepted_count": 1,
-  "coverage_gap": 0,
-  "source_diversity": {"unique_sources": 1, "target": null},
-  "gaps": [],
-  "status": "covered"
+  "coverage_gap": 0
 }

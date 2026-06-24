@@ -1,6 +1,118 @@
 {
   "schema_version": 1,
+  "run_id": "run-fixture-passed-001",
   "query_plan_id": "qp-fixture-passed-001",
+  "retrieval_batch_target": 2,
+  "retrieval_results": [
+    {
+      "retrieval_job_id": "ret-job-001",
+      "candidate_id": "cand-001",
+      "query_plan_id": "qp-fixture-passed-001",
+      "channel_id": "fixture_channel",
+      "channel_tier": "fixture",
+      "retrieval_status": "complete",
+      "local_artifact_path": "images/sunset-mountains-1920x1080.jpg",
+      "source_artifact_path": "evidence/source-sunset-mountains-1920x1080.jpg",
+      "source_sidecar_path": "evidence/sidecar-cand-001.json",
+      "content_summary_path": "evidence/summary-cand-001.json",
+      "task_report_path": "evidence/report-cand-001.json",
+      "visual_description_path": "evidence/vd-cand-001.txt",
+      "checksum_sha256": "sha256-a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2",
+      "content_type": "image/jpeg",
+      "file_size_bytes": 245760,
+      "image_dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "media_type_match": true,
+      "fetch_trace": [
+        "direct_fetch"
+      ],
+      "failure_reason": null
+    }
+  ],
+  "image_acceptance_decisions": [
+    {
+      "decision_id": "retrieved-images.json#/image_acceptance_decisions/0",
+      "candidate_id": "cand-001",
+      "retrieval_job_id": "ret-job-001",
+      "query_plan_id": "qp-fixture-passed-001",
+      "mechanical_passed": true,
+      "vlm_passed": true,
+      "artifact_complete": true,
+      "final_status": "accepted",
+      "blocking_reasons": [],
+      "reference_metrics": [
+        {
+          "kind": "retrieval_channel",
+          "channel_id": "fixture_channel",
+          "channel_tier": "fixture",
+          "retrieval_status": "complete"
+        },
+        {
+          "kind": "source_sidecar_path",
+          "path": "evidence/sidecar-cand-001.json"
+        },
+        {
+          "kind": "content_summary_path",
+          "path": "evidence/summary-cand-001.json"
+        },
+        {
+          "kind": "visual_description_path",
+          "path": "evidence/vd-cand-001.txt"
+        },
+        {
+          "kind": "fetch_trace_count",
+          "value": 1
+        },
+        {
+          "kind": "media_type_match",
+          "value": true
+        },
+        {
+          "kind": "mechanical_reference",
+          "value": "fixture image artifacts, checksum, media type, dimensions, sidecar, summary, task report, and visual description passed mechanical acceptance"
+        },
+        {
+          "kind": "file_size_bytes",
+          "value": 245760
+        },
+        {
+          "kind": "image_dimensions",
+          "width": 1920,
+          "height": 1080
+        }
+      ],
+      "vlm_decision": {
+        "decision": "approve",
+        "provider_id": "fixture_vlm",
+        "notes": "fixture VLM approved"
+      }
+    }
+  ],
+  "delivered_images": [
+    {
+      "delivered_image_id": "delivered-cand-001",
+      "query_plan_id": "qp-fixture-passed-001",
+      "candidate_id": "cand-001",
+      "retrieval_job_id": "ret-job-001",
+      "package_image_path": "images/sunset-mountains-1920x1080.jpg",
+      "local_artifact_path": "images/sunset-mountains-1920x1080.jpg",
+      "source_artifact_path": "evidence/source-sunset-mountains-1920x1080.jpg",
+      "source_sidecar_path": "evidence/sidecar-cand-001.json",
+      "content_summary_path": "evidence/summary-cand-001.json",
+      "task_report_path": "evidence/report-cand-001.json",
+      "visual_description_path": "evidence/vd-cand-001.txt",
+      "checksum_sha256": "sha256-a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2",
+      "content_type": "image/jpeg",
+      "file_size_bytes": 245760,
+      "width": 1920,
+      "height": 1080,
+      "candidate_quality_decision_ref": "evidence/candidate-quality/cand-001.json",
+      "image_acceptance_decision_ref": "retrieved-images.json#/image_acceptance_decisions/0",
+      "manifest_entry_ref": "manifest-0001"
+    }
+  ],
   "processed_candidates": [
     {
       "candidate_id": "cand-001",
@@ -13,36 +125,10 @@
       "content_summary_path": "evidence/summary-cand-001.json",
       "task_report_path": "evidence/report-cand-001.json",
       "visual_description_path": "evidence/vd-cand-001.txt",
-      "checksum_sha256": "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2",
+      "checksum_sha256": "sha256-a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2",
       "content_type": "image/jpeg",
       "media_type_match": true,
       "delivered_qualified": true
-    },
-    {
-      "candidate_id": "cand-002",
-      "retrieval_job_id": "ret-job-002",
-      "image_url": "https://photos.example.com/images/orange-sky-1600x900.jpg",
-      "retrieval_status": "complete",
-      "local_artifact_path": "images/orange-sky-1600x900.jpg",
-      "source_artifact_path": "evidence/source-orange-sky-1600x900.jpg",
-      "source_sidecar_path": "evidence/sidecar-cand-002.json",
-      "content_summary_path": "evidence/summary-cand-002.json",
-      "task_report_path": "evidence/report-cand-002.json",
-      "visual_description_path": "evidence/vd-cand-002.txt",
-      "checksum_sha256": "b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3",
-      "content_type": "image/jpeg",
-      "media_type_match": true,
-      "delivered_qualified": false,
-      "rejection_reason": "VLM image evaluation rejected"
-    }
-  ],
-  "delivered_images": [
-    {
-      "candidate_id": "cand-001",
-      "retrieval_job_id": "ret-job-001",
-      "image_url": "https://example.com/images/sunset-mountains-1920x1080.jpg",
-      "local_artifact_path": "images/sunset-mountains-1920x1080.jpg",
-      "checksum_sha256": "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2"
     }
   ]
 }

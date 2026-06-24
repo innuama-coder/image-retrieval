@@ -152,11 +152,23 @@ impl BaseRetrievalChannel for SelfHostedChannel {
             };
         }
 
-        RetrievalChannelReadinessReport::ready(
-            self.channel_id.clone(),
-            self.display_name(),
-            self.tier(),
-        )
+        RetrievalChannelReadinessReport {
+            channel_id: self.channel_id.clone(),
+            display_name: self.display_name().into(),
+            tier: self.tier(),
+            enabled: true,
+            available: false,
+            included_in_fallback_order: false,
+            credential_status,
+            dependency_status: DependencyStatus::Missing {
+                detail: "self-hosted retrieval service adapter is not implemented".into(),
+            },
+            policy_status: RetrievalPolicyStatus::Allowed,
+            failure_code: Some(RetrievalFailureCode::RetrievalChannelMisconfigured),
+            checked_at: String::new(),
+            evidence: vec![],
+            redaction_applied: false,
+        }
     }
 
     fn retrieve_batch(
@@ -276,5 +288,35 @@ mod tests {
         };
         let report = channel.readiness(&config);
         assert!(!report.available);
+    }
+
+    #[test]
+    fn self_hosted_channel_with_endpoint_is_not_ready_without_adapter() {
+        let channel = SelfHostedChannel::from_config(&RetrievalChannelConfig {
+            channel_id: "sh-1".into(),
+            channel_kind: crate::domain::config::RetrievalChannelKind::SelfHostedService,
+            tier: RetrievalChannelTier::SelfHostedService,
+            enabled: true,
+            endpoint: Some("https://self-hosted.example.test".into()),
+            credential_env: None,
+            max_batch_size: None,
+        });
+        let config = RetrievalChannelConfig {
+            channel_id: "sh-1".into(),
+            channel_kind: crate::domain::config::RetrievalChannelKind::SelfHostedService,
+            tier: RetrievalChannelTier::SelfHostedService,
+            enabled: true,
+            endpoint: Some("https://self-hosted.example.test".into()),
+            credential_env: None,
+            max_batch_size: None,
+        };
+
+        let report = channel.readiness(&config);
+
+        assert!(!report.available);
+        assert_eq!(
+            report.failure_code,
+            Some(RetrievalFailureCode::RetrievalChannelMisconfigured)
+        );
     }
 }

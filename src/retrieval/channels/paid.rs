@@ -163,20 +163,22 @@ impl BaseRetrievalChannel for PaidChannel {
             };
         }
 
-        // If everything is configured but paid is not explicitly confirmed
-        // via runtime + QueryPlan policy, still mark as paid_unconfirmed.
-        // The executor must check QueryRetrievalPolicy.allow_paid at runtime.
         RetrievalChannelReadinessReport {
             channel_id: self.channel_id.clone(),
             display_name: self.display_name().into(),
             tier: self.tier(),
             enabled: true,
-            available: true,
-            included_in_fallback_order: true,
+            available: false,
+            included_in_fallback_order: false,
             credential_status,
-            dependency_status: DependencyStatus::Available,
-            policy_status: RetrievalPolicyStatus::Allowed,
-            failure_code: None,
+            dependency_status: DependencyStatus::Missing {
+                detail: "paid retrieval service adapter is not implemented".into(),
+            },
+            policy_status: RetrievalPolicyStatus::Blocked {
+                reason: "Paid channel cannot be confirmed until a real adapter is implemented."
+                    .into(),
+            },
+            failure_code: Some(RetrievalFailureCode::RetrievalPaidUnconfirmed),
             checked_at: String::new(),
             evidence: vec![],
             redaction_applied: false,
@@ -293,6 +295,31 @@ mod tests {
             report.failure_code,
             Some(RetrievalFailureCode::RetrievalPaidUnconfirmed)
         );
+    }
+
+    #[test]
+    fn paid_channel_with_endpoint_and_credential_is_not_ready_without_adapter() {
+        let env_name = format!("IMAGE_RETRIEVAL_PAID_TEST_{}", std::process::id());
+        std::env::set_var(&env_name, "dummy");
+        let config = RetrievalChannelConfig {
+            channel_id: "paid-1".into(),
+            channel_kind: crate::domain::config::RetrievalChannelKind::PaidOnlineService,
+            tier: RetrievalChannelTier::PaidOnlineService,
+            enabled: true,
+            endpoint: Some("https://paid.example.test".into()),
+            credential_env: Some(env_name.clone()),
+            max_batch_size: None,
+        };
+        let channel = PaidChannel::from_config(&config);
+
+        let report = channel.readiness(&config);
+
+        assert!(!report.available);
+        assert_eq!(
+            report.failure_code,
+            Some(RetrievalFailureCode::RetrievalPaidUnconfirmed)
+        );
+        std::env::remove_var(env_name);
     }
 
     #[test]

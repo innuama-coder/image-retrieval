@@ -79,6 +79,27 @@ pub struct SearchScheduler {
     max_invocations: u32,
 }
 
+/// Attempt metadata attached to search requests, usage, and candidate
+/// provenance.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SearchExecutionContext {
+    pub full_attempt_count: u8,
+    pub retry_count: u8,
+}
+
+impl SearchExecutionContext {
+    pub fn new(full_attempt_count: u8, retry_count: u8) -> Self {
+        Self {
+            full_attempt_count,
+            retry_count,
+        }
+    }
+
+    pub fn first_attempt() -> Self {
+        Self::new(1, 0)
+    }
+}
+
 impl Default for SearchScheduler {
     fn default() -> Self {
         Self {
@@ -110,10 +131,26 @@ impl SearchScheduler {
         registry: &ProviderRegistry,
         rng: &mut dyn RandomSource,
     ) -> SearchSessionOutcome {
+        self.run_with_context(
+            query_plan,
+            registry,
+            rng,
+            SearchExecutionContext::first_attempt(),
+        )
+    }
+
+    /// Execute a search session with explicit attempt metadata.
+    pub fn run_with_context(
+        &self,
+        query_plan: &NormalizedQueryPlan,
+        registry: &ProviderRegistry,
+        rng: &mut dyn RandomSource,
+        context: SearchExecutionContext,
+    ) -> SearchSessionOutcome {
         let candidate_target = query_plan.candidate_target;
         let query_plan_id = query_plan.query_plan_id.clone();
-        let full_attempt_count = 1u8; // default for first attempt
-        let retry_count = 0u8;
+        let full_attempt_count = context.full_attempt_count;
+        let retry_count = context.retry_count;
 
         // Step 1: Evaluate provider readiness
         let readiness_reports = registry.evaluate_readiness();
@@ -828,6 +865,42 @@ mod tests {
         assert!(outcome.candidates.len() as u32 >= 60);
         assert_eq!(outcome.usage_events.len(), 1);
         assert!(outcome.shortage_reason.is_none());
+    }
+
+    #[test]
+    fn scheduler_run_with_context_preserves_retry_attempt_metadata() {
+        let mut registry = ProviderRegistry::new();
+        let provider = Arc::new(
+            StubSearchProvider::new("p1", "P1", true, true).with_responses(vec![(0..20)
+                .map(|i| {
+                    make_candidate(
+                        &format!("c{}", i),
+                        "p1",
+                        &format!("https://ex.com/retry/{}", i),
+                        "qp-test",
+                        2,
+                        i + 1,
+                    )
+                })
+                .collect()]),
+        );
+        registry.register_adapter(ProviderId::new("p1"), provider);
+
+        let query_plan = make_query_plan(1);
+        let scheduler = SearchScheduler::new();
+        let mut rng = TestRandom::new(vec![0]);
+
+        let outcome = scheduler.run_with_context(
+            &query_plan,
+            &registry,
+            &mut rng,
+            SearchExecutionContext::new(2, 1),
+        );
+
+        assert_eq!(outcome.full_attempt_count, 2);
+        assert_eq!(outcome.retry_count, 1);
+        assert_eq!(outcome.usage_events[0].full_attempt_count, 2);
+        assert_eq!(outcome.usage_events[0].retry_count, 1);
     }
 
     #[test]

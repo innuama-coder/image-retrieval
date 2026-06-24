@@ -48,7 +48,7 @@ use crate::retrieval::channels::{
 };
 use crate::search::fixture::FixtureSearchProvider;
 use crate::search::registry::{ProviderRegistration, ProviderRegistry};
-use crate::search::scheduler::{SearchScheduler, StdRandom};
+use crate::search::scheduler::{SearchExecutionContext, SearchScheduler, StdRandom};
 use crate::search::serpapi::SerpApiGoogleImagesAdapter;
 
 /// A compact summary of what a single production attempt produced.
@@ -101,7 +101,15 @@ pub fn execute_production_attempt(
     );
     let scheduler = SearchScheduler::new();
     let mut rng = StdRandom;
-    let session = scheduler.run(&normalized, &registry, &mut rng);
+    let session = scheduler.run_with_context(
+        &normalized,
+        &registry,
+        &mut rng,
+        SearchExecutionContext::new(
+            orchestrator.state.full_attempt_count,
+            orchestrator.state.retry_count,
+        ),
+    );
     summary.search_candidate_count = session.candidates.len();
 
     if session.candidates.is_empty() {
@@ -356,7 +364,21 @@ fn retrieve_with_configured_channels(
             continue;
         }
 
-        match configured.channel.retrieve_batch(batch) {
+        let pending_jobs = pending_fallback_jobs(batch, &best_results);
+        if pending_jobs.is_empty() {
+            break;
+        }
+        let pending_batch = crate::domain::retrieval::RetrievalBatch::new(
+            batch.retrieval_batch_id.clone(),
+            batch.query_plan_id.clone(),
+            batch.full_attempt_count,
+            batch.retry_count,
+            batch.target_size,
+            pending_jobs,
+            batch.shortage.clone(),
+        );
+
+        match configured.channel.retrieve_batch(&pending_batch) {
             Ok(result) => {
                 attempt_trace.extend(result.attempt_trace.clone());
                 fallback_decisions.extend(result.fallback_decisions.clone());
@@ -370,11 +392,7 @@ fn retrieve_with_configured_channels(
                         *entry = item;
                     }
                 }
-                if batch.jobs.iter().all(|job| {
-                    best_results
-                        .get(&job.retrieval_job_id.to_string())
-                        .is_some_and(|r| r.is_fully_complete())
-                }) {
+                if pending_fallback_jobs(batch, &best_results).is_empty() {
                     break;
                 }
             }
@@ -412,6 +430,28 @@ fn retrieve_with_configured_channels(
         execution_blocks,
         diagnostics,
     ))
+}
+
+fn pending_fallback_jobs(
+    batch: &crate::domain::retrieval::RetrievalBatch,
+    best_results: &HashMap<String, crate::domain::retrieval::RetrievalArtifactResult>,
+) -> Vec<crate::domain::retrieval::RetrievalJob> {
+    batch
+        .jobs
+        .iter()
+        .filter(|job| {
+            best_results
+                .get(&job.retrieval_job_id.to_string())
+                .is_none_or(|result| {
+                    !result.is_fully_complete()
+                        && result
+                            .fetch_trace
+                            .last()
+                            .is_none_or(|trace| trace.fallback_allowed)
+                })
+        })
+        .cloned()
+        .collect()
 }
 
 struct ConfiguredRetrievalChannel {
@@ -1087,8 +1127,10 @@ mod tests {
     };
     use crate::domain::metrics::{MetricFact, QualityMetricCode};
     use crate::domain::retrieval::{
-        RetrievalArtifactResult, RetrievalAttemptMode, RetrievalChannelId, RetrievalChannelTier,
-        RetrievalJobId, RetrievalStatus,
+        RetrievalArtifactResult, RetrievalAttemptMode, RetrievalAttemptStatus,
+        RetrievalAttemptTrace, RetrievalChannelId, RetrievalChannelTier, RetrievalJob,
+        RetrievalJobId, RetrievalPolicyContext, RetrievalStatus, RetrievalTarget,
+        RetrievalTargetType,
     };
     use crate::domain::search::ProviderReadinessStatus;
     use std::path::PathBuf;
@@ -1640,5 +1682,153 @@ mod tests {
         assert_eq!(channels[1].config.channel_id, "paid");
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn make_job(id: &str) -> RetrievalJob {
+        RetrievalJob {
+            retrieval_job_id: RetrievalJobId::new(format!("job-{}", id)),
+            query_plan_id: "qp-1".into(),
+            candidate_id: id.into(),
+            full_attempt_count: 1,
+            retry_count: 0,
+            retrieval_priority: 1,
+            target: RetrievalTarget {
+                target_type: RetrievalTargetType::Image,
+                primary_image_url: format!("https://example.com/{}.jpg", id),
+                alternate_source_page_url: None,
+                thumbnail_url: None,
+                expected_mime_type: None,
+                license_hint: None,
+                provider_id: "provider".into(),
+                candidate_provenance_refs: vec![],
+            },
+            candidate_quality_decision_ref: format!("quality-{}", id),
+            requested_outputs: vec![],
+            policy_context: RetrievalPolicyContext::default(),
+        }
+    }
+
+    fn complete_artifact_for_job(job: &RetrievalJob) -> RetrievalArtifactResult {
+        let mut artifact = complete_artifact();
+        artifact.retrieval_job_id = job.retrieval_job_id.clone();
+        artifact.query_plan_id = job.query_plan_id.clone();
+        artifact.candidate_id = job.candidate_id.clone();
+        artifact.fetch_trace = vec![RetrievalAttemptTrace {
+            attempt_id: format!("attempt-{}", job.retrieval_job_id),
+            retrieval_job_id: job.retrieval_job_id.clone(),
+            query_plan_id: job.query_plan_id.clone(),
+            candidate_id: job.candidate_id.clone(),
+            channel_id: RetrievalChannelId::new("web"),
+            channel_tier: RetrievalChannelTier::NormalWebFetch,
+            attempt_mode: RetrievalAttemptMode::DirectImageFetch,
+            started_at: String::new(),
+            completed_at: Some(String::new()),
+            target_url_redacted: None,
+            source_page_url_redacted: None,
+            final_url_redacted: None,
+            http_status: Some(200),
+            bytes_received: Some(123),
+            status: RetrievalAttemptStatus::Succeeded,
+            failure_code: None,
+            retryable: false,
+            fallback_allowed: false,
+            policy_reason: None,
+            artifact_refs: vec![],
+            redaction_applied: true,
+        }];
+        artifact
+    }
+
+    fn failed_artifact_for_job(
+        job: &RetrievalJob,
+        fallback_allowed: bool,
+    ) -> RetrievalArtifactResult {
+        RetrievalArtifactResult::failed(
+            job,
+            "batch-1",
+            RetrievalChannelId::new("web"),
+            RetrievalChannelTier::NormalWebFetch,
+            RetrievalAttemptMode::DirectImageFetch,
+            "network failure",
+            crate::domain::retrieval::RetrievalFailureCode::RetrievalDirectFetchNetwork,
+            vec![RetrievalAttemptTrace {
+                attempt_id: format!("attempt-{}", job.retrieval_job_id),
+                retrieval_job_id: job.retrieval_job_id.clone(),
+                query_plan_id: job.query_plan_id.clone(),
+                candidate_id: job.candidate_id.clone(),
+                channel_id: RetrievalChannelId::new("web"),
+                channel_tier: RetrievalChannelTier::NormalWebFetch,
+                attempt_mode: RetrievalAttemptMode::DirectImageFetch,
+                started_at: String::new(),
+                completed_at: None,
+                target_url_redacted: None,
+                source_page_url_redacted: None,
+                final_url_redacted: None,
+                http_status: None,
+                bytes_received: None,
+                status: RetrievalAttemptStatus::Failed,
+                failure_code: Some(
+                    crate::domain::retrieval::RetrievalFailureCode::RetrievalDirectFetchNetwork,
+                ),
+                retryable: true,
+                fallback_allowed,
+                policy_reason: None,
+                artifact_refs: vec![],
+                redaction_applied: true,
+            }],
+            vec![],
+        )
+    }
+
+    #[test]
+    fn pending_fallback_jobs_excludes_completed_jobs() {
+        let job_a = make_job("a");
+        let job_b = make_job("b");
+        let batch = crate::domain::retrieval::RetrievalBatch::new(
+            "batch-1",
+            "qp-1",
+            1,
+            0,
+            2,
+            vec![job_a.clone(), job_b.clone()],
+            None,
+        );
+        let mut best_results = HashMap::new();
+        best_results.insert(
+            job_a.retrieval_job_id.to_string(),
+            complete_artifact_for_job(&job_a),
+        );
+        best_results.insert(
+            job_b.retrieval_job_id.to_string(),
+            failed_artifact_for_job(&job_b, true),
+        );
+
+        let pending = pending_fallback_jobs(&batch, &best_results);
+
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].retrieval_job_id, job_b.retrieval_job_id);
+    }
+
+    #[test]
+    fn pending_fallback_jobs_respects_non_fallbackable_failure() {
+        let job = make_job("a");
+        let batch = crate::domain::retrieval::RetrievalBatch::new(
+            "batch-1",
+            "qp-1",
+            1,
+            0,
+            1,
+            vec![job.clone()],
+            None,
+        );
+        let mut best_results = HashMap::new();
+        best_results.insert(
+            job.retrieval_job_id.to_string(),
+            failed_artifact_for_job(&job, false),
+        );
+
+        let pending = pending_fallback_jobs(&batch, &best_results);
+
+        assert!(pending.is_empty());
     }
 }

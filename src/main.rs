@@ -313,6 +313,7 @@ fn cmd_run(
     loop {
         let accepted_before = orchestrator.accepted_count();
         let gaps_before = orchestrator.gaps.len() as u32;
+        let diagnostics_before = orchestrator.diagnostics.len();
         let mut attempt = orchestrator.start_attempt();
 
         if let Some(config) = production_config.as_ref() {
@@ -343,6 +344,13 @@ fn cmd_run(
         orchestrator.finish_attempt(attempt);
 
         if orchestrator.target_met() {
+            break;
+        }
+        if attempt_has_non_retryable_blocker(
+            &orchestrator,
+            gaps_before as usize,
+            diagnostics_before,
+        ) {
             break;
         }
         if !orchestrator.advance_to_retry() {
@@ -428,22 +436,62 @@ fn cmd_run(
     print_output(&summary, &outcome, format);
 
     // 13. Determine exit code
-    if !validation_passed && outcome.status == PackageStatus::Passed {
-        // Package status claims passed but validation failed
-        return Err(exit_code::PACKAGE_VALIDATION_FAILED);
+    match run_exit_decision(outcome.status, validation_passed, fail_on_partial) {
+        RunExitDecision::Success => Ok(None),
+        RunExitDecision::SoftFailure(code) => Ok(Some(code)),
+        RunExitDecision::HardFailure(code) => Err(code),
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RunExitDecision {
+    Success,
+    SoftFailure(i32),
+    HardFailure(i32),
+}
+
+fn run_exit_decision(
+    status: PackageStatus,
+    validation_passed: bool,
+    fail_on_partial: bool,
+) -> RunExitDecision {
+    if !validation_passed && matches!(status, PackageStatus::Passed | PackageStatus::Partial) {
+        return RunExitDecision::HardFailure(exit_code::PACKAGE_VALIDATION_FAILED);
     }
 
-    match outcome.status {
-        PackageStatus::Passed => Ok(None),
+    match status {
+        PackageStatus::Passed => RunExitDecision::Success,
         PackageStatus::Partial => {
             if fail_on_partial {
-                Err(exit_code::DELIVERY_BLOCKED)
+                RunExitDecision::HardFailure(exit_code::DELIVERY_BLOCKED)
             } else {
-                Ok(Some(exit_code::PARTIAL_DELIVERY))
+                RunExitDecision::SoftFailure(exit_code::PARTIAL_DELIVERY)
             }
         }
-        PackageStatus::Blocked => Err(exit_code::DELIVERY_BLOCKED),
+        PackageStatus::Blocked => RunExitDecision::HardFailure(exit_code::DELIVERY_BLOCKED),
     }
+}
+
+fn attempt_has_non_retryable_blocker(
+    orchestrator: &RunOrchestrator,
+    gaps_before: usize,
+    diagnostics_before: usize,
+) -> bool {
+    let gap_blocked = orchestrator
+        .gaps
+        .iter()
+        .skip(gaps_before)
+        .any(|gap| !gap.retryable && gap.missing_count > 0);
+    let diagnostic_blocked = orchestrator
+        .diagnostics
+        .iter()
+        .skip(diagnostics_before)
+        .any(|diagnostic| {
+            !diagnostic.retryable
+                && diagnostic.severity
+                    == image_retrieval::domain::delivery::WorkflowSeverity::Blocker
+        });
+    gap_blocked || diagnostic_blocked
 }
 
 // ===========================================================================
@@ -920,5 +968,85 @@ fn print_output(summary: &str, payload: &impl serde::Serialize, format: &str) {
         _ => {
             println!("{}", summary);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use image_retrieval::domain::delivery::{CoverageGapType, PipelineStage, WorkflowFailureCode};
+
+    fn make_orchestrator() -> RunOrchestrator {
+        RunOrchestrator::new(RunRequest {
+            query_plan_id: "qp-test".into(),
+            description: "test image".into(),
+            required_image_count: 1,
+            retry_limit: 3,
+            candidate_target: 20,
+            retrieval_batch_target: 2,
+            execution_mode: ExecutionMode::Production,
+            output_dir: std::env::temp_dir().join("image-retrieval-main-test"),
+            run_id: "run-test".into(),
+        })
+    }
+
+    #[test]
+    fn non_retryable_gap_blocks_further_retry() {
+        let mut orchestrator = make_orchestrator();
+        orchestrator.record_gap(
+            CoverageGapType::CandidateQualityExecutionBlocked,
+            1,
+            WorkflowFailureCode::CandidateQualityBlocked,
+            PipelineStage::CandidateQuality,
+            "VLM unavailable",
+            false,
+        );
+
+        assert!(attempt_has_non_retryable_blocker(&orchestrator, 0, 0));
+    }
+
+    #[test]
+    fn retryable_gap_allows_retry() {
+        let mut orchestrator = make_orchestrator();
+        orchestrator.record_gap(
+            CoverageGapType::SearchRecallShortage,
+            1,
+            WorkflowFailureCode::SearchShortage,
+            PipelineStage::Search,
+            "Search returned no candidates.",
+            true,
+        );
+
+        assert!(!attempt_has_non_retryable_blocker(&orchestrator, 0, 0));
+    }
+
+    #[test]
+    fn non_retryable_blocker_diagnostic_blocks_retry() {
+        let mut orchestrator = make_orchestrator();
+        let mut diagnostic = image_retrieval::domain::delivery::WorkflowDiagnostic::blocker(
+            WorkflowFailureCode::CandidateQualityBlocked,
+            PipelineStage::CandidateQuality,
+            "VLM unavailable",
+        );
+        diagnostic.retryable = false;
+        orchestrator.record_diagnostic(diagnostic);
+
+        assert!(attempt_has_non_retryable_blocker(&orchestrator, 0, 0));
+    }
+
+    #[test]
+    fn partial_package_validation_failure_is_hard_failure() {
+        assert_eq!(
+            run_exit_decision(PackageStatus::Partial, false, false),
+            RunExitDecision::HardFailure(exit_code::PACKAGE_VALIDATION_FAILED)
+        );
+    }
+
+    #[test]
+    fn valid_partial_remains_soft_failure_when_allowed() {
+        assert_eq!(
+            run_exit_decision(PackageStatus::Partial, true, false),
+            RunExitDecision::SoftFailure(exit_code::PARTIAL_DELIVERY)
+        );
     }
 }

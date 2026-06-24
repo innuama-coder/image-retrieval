@@ -21,7 +21,7 @@
     {
       "case_id": "cr_simple_product_clean",
       "unit": "candidate_recall",
-      "supported_test_types": ["unit", "integration", "e2e_fixture", "e2e_real_service"],
+      "supported_test_types": ["unit", "scenario_fixture", "scenario_real_service"],
       "query_plan": {
         "description": "red apple on a plain white background",
         "query_texts": ["red apple white background", "single red apple isolated"],
@@ -67,7 +67,7 @@
     {
       "case_id": "cr_high_quality_landscape_noisy",
       "unit": "candidate_recall",
-      "supported_test_types": ["unit", "integration", "e2e_fixture", "e2e_real_service"],
+      "supported_test_types": ["unit", "scenario_fixture", "scenario_real_service"],
       "query_plan": {
         "description": "high resolution landscape photo of snowy mountains at sunrise",
         "query_texts": ["snowy mountains sunrise high resolution photo", "alpine sunrise landscape"],
@@ -113,7 +113,7 @@
     {
       "case_id": "cr_negative_scope_no_text_overlay",
       "unit": "candidate_recall",
-      "supported_test_types": ["unit", "integration", "e2e_fixture"],
+      "supported_test_types": ["unit", "scenario_fixture"],
       "query_plan": {
         "description": "clean photo of a modern office desk setup",
         "query_texts": ["modern office desk setup photo", "minimal workspace desk"],
@@ -154,7 +154,7 @@
     {
       "case_id": "cr_multi_image_source_diversity",
       "unit": "candidate_recall",
-      "supported_test_types": ["unit", "integration", "e2e_fixture", "e2e_real_service"],
+      "supported_test_types": ["unit", "scenario_fixture", "scenario_real_service"],
       "query_plan": {
         "description": "photos of hot air balloons over Cappadocia at dawn",
         "query_texts": ["Cappadocia hot air balloons dawn photo", "Goreme balloons sunrise landscape"],
@@ -205,7 +205,7 @@
     {
       "case_id": "cr_hard_niche_object",
       "unit": "candidate_recall",
-      "supported_test_types": ["unit", "integration", "e2e_fixture", "e2e_real_service"],
+      "supported_test_types": ["unit", "scenario_fixture", "scenario_real_service"],
       "query_plan": {
         "description": "close-up photo of a vintage brass microscope objective lens",
         "query_texts": ["vintage brass microscope objective lens close-up", "antique microscope objective lens macro photo"],
@@ -246,7 +246,7 @@
     {
       "case_id": "rt_direct_ok_batch",
       "unit": "candidate_retrieval",
-      "supported_test_types": ["unit", "integration", "e2e_fixture"],
+      "supported_test_types": ["unit", "scenario_fixture"],
       "difficulty_profile": {
         "search": "preselected_candidates",
         "retrieval": "direct_ok",
@@ -273,7 +273,7 @@
     {
       "case_id": "rt_source_page_fallback",
       "unit": "candidate_retrieval",
-      "supported_test_types": ["unit", "integration", "e2e_fixture"],
+      "supported_test_types": ["unit", "scenario_fixture"],
       "difficulty_profile": {
         "search": "preselected_candidates",
         "retrieval": "source_page_required",
@@ -303,7 +303,7 @@
     {
       "case_id": "rt_hotlink_and_policy_blocked",
       "unit": "candidate_retrieval",
-      "supported_test_types": ["unit", "integration", "e2e_fixture"],
+      "supported_test_types": ["unit", "scenario_fixture"],
       "difficulty_profile": {
         "search": "preselected_candidates",
         "retrieval": "hotlink_blocked_and_policy_blocked",
@@ -334,7 +334,7 @@
     {
       "case_id": "rt_metadata_only_and_corrupt",
       "unit": "candidate_retrieval",
-      "supported_test_types": ["unit", "integration", "e2e_fixture"],
+      "supported_test_types": ["unit", "scenario_fixture"],
       "difficulty_profile": {
         "search": "preselected_candidates",
         "retrieval": "metadata_only_and_corrupted",
@@ -364,7 +364,7 @@
     {
       "case_id": "rt_pending_only_fallback",
       "unit": "candidate_retrieval",
-      "supported_test_types": ["unit", "integration"],
+      "supported_test_types": ["unit", "scenario_fixture"],
       "difficulty_profile": {
         "search": "preselected_candidates",
         "retrieval": "mixed_batch_multi_channel",
@@ -395,7 +395,7 @@
     {
       "case_id": "dl_all_correct_full_delivery",
       "unit": "delivery",
-      "supported_test_types": ["unit", "integration", "e2e_fixture"],
+      "supported_test_types": ["unit", "scenario_fixture"],
       "query_plan": {
         "description": "two high quality photos of red apples on a white background",
         "required_image_count": 2,
@@ -434,7 +434,7 @@
     {
       "case_id": "dl_mixed_semantic_wrong_images",
       "unit": "delivery",
-      "supported_test_types": ["unit", "integration", "e2e_fixture"],
+      "supported_test_types": ["unit", "scenario_fixture"],
       "query_plan": {
         "description": "clean photo of a modern office desk setup without people",
         "required_image_count": 1,
@@ -468,7 +468,7 @@
     {
       "case_id": "dl_quality_requirement_blocks_low_res",
       "unit": "delivery",
-      "supported_test_types": ["unit", "integration", "e2e_fixture"],
+      "supported_test_types": ["unit", "scenario_fixture"],
       "query_plan": {
         "description": "high resolution photo of snowy mountains at sunrise",
         "required_image_count": 1,
@@ -507,7 +507,7 @@
     {
       "case_id": "dl_partial_delivery_with_accurate_gaps",
       "unit": "delivery",
-      "supported_test_types": ["unit", "integration", "e2e_fixture"],
+      "supported_test_types": ["unit", "scenario_fixture"],
       "query_plan": {
         "description": "three distinct photos of hot air balloons over Cappadocia at dawn",
         "required_image_count": 3,
@@ -544,7 +544,7 @@
     {
       "case_id": "dl_duplicate_metadata_policy_rejected",
       "unit": "delivery",
-      "supported_test_types": ["unit", "integration", "e2e_fixture"],
+      "supported_test_types": ["unit", "scenario_fixture"],
       "query_plan": {
         "description": "single clean photo of a vintage brass microscope objective lens",
         "required_image_count": 1,

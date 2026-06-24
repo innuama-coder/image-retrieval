@@ -68,15 +68,14 @@ Unit pass condition:
   evaluation.
 - Ranking and score error stay within the case threshold.
 
-Integration pass condition:
+Scenario pass condition:
 
 - The search scheduler, provider fixture, candidate gate, and retrievable batch
   produce the expected candidate ids in priority order.
-
-E2E pass condition:
-
-- The CLI run produces enough retrievable candidates for downstream retrieval,
-  and the baseline report attributes any shortage to a known reason.
+- The fixture scenario may call modules directly or run the CLI, but it must
+  emit the same baseline report shape.
+- The real-service scenario produces enough retrievable candidates for
+  downstream retrieval, or attributes any shortage to a known reason.
 
 ### 2. Candidate Retrieval
 
@@ -128,15 +127,13 @@ Unit pass condition:
 - Each retrieval result is classified with the expected status and failure code.
 - Complete artifacts have local image, sidecar, summary, and task report refs.
 
-Integration pass condition:
+Scenario pass condition:
 
 - Channel fallback only processes pending jobs.
 - Policy-blocked results do not proceed to higher fallback tiers.
-
-E2E pass condition:
-
-- The CLI can produce real local artifacts for the expected candidates, or a
-  partial result with accurate failure attribution.
+- The fixture scenario validates the channel chain without external services.
+- The real-service scenario produces real local artifacts, or a partial result
+  with accurate failure attribution.
 
 ### 3. Delivery
 
@@ -179,17 +176,16 @@ Unit pass condition:
 
 - Image mechanical and subjective decisions match gold labels.
 
-Integration pass condition:
+Scenario pass condition:
 
 - The orchestrator records accepted images and coverage gaps correctly.
-
-E2E pass condition:
-
-- The delivery package validates and contains the expected accepted image set.
+- The fixture scenario validates the accepted image set and package.
+- The real-service scenario validates the package and reports delivery quality
+  thresholds rather than exact public web ids.
 
 ## Test Types
 
-The same baseline cases can be consumed by three test types.
+The same baseline cases can be consumed by two test types.
 
 ### Unit Tests
 
@@ -214,41 +210,33 @@ cargo test --test baseline_candidate_retrieval_unit
 cargo test --test baseline_delivery_unit
 ```
 
-### Integration Tests
+### Scenario Tests
 
 Purpose:
 
-- Validate module call chains without real external services.
+- Validate the capability chain. This combines the previous integration and
+  end-to-end layers so the first baseline stays simple.
 
 Examples:
 
 - `QueryPlan -> fixture provider -> scheduler -> candidate gate`.
 - `RetrievableCandidateBatch -> retrieval planner -> fixture/web fetch channel`.
 - `Retrieved images -> image gate -> orchestrator -> package validator`.
+- CLI fixture runs that produce a delivery package and baseline report.
+
+Modes:
+
+- `scenario_fixture`: default mode, no external services required.
+- `scenario_real_service`: opt-in mode, uses live search/retrieval/VLM services.
+
+Real-service scenarios must be opt-in because they use network services,
+credentials, cost, and live provider state.
 
 Execution:
 
 ```bash
-cargo test --test baseline_candidate_recall_integration
-cargo test --test baseline_candidate_retrieval_integration
-cargo test --test baseline_delivery_integration
-```
-
-### End-to-End Tests
-
-Purpose:
-
-- Validate CLI behavior and produce baseline reports.
-
-Fixture E2E should run by default once implemented. Real-service E2E must be
-opt-in because it uses network services, credentials, cost, and live provider
-state.
-
-Execution:
-
-```bash
-cargo test --test baseline_e2e_fixture
-IMAGE_RETRIEVAL_REAL_BASELINE=1 cargo test --test baseline_e2e_real_service
+cargo test --test baseline_scenario_fixture
+IMAGE_RETRIEVAL_REAL_BASELINE=1 cargo test --test baseline_scenario_real_service
 ```
 
 Required real-service environment variables:
@@ -256,7 +244,7 @@ Required real-service environment variables:
 - `SERPAPI_API_KEY` or provider-specific search key.
 - `QWEN_API_KEY` or configured VLM credential env.
 
-Real-service tests must never assert exact candidate ids from the public web.
+Real-service scenarios must never assert exact candidate ids from the public web.
 They should assert thresholds and produce a report for trend comparison.
 
 ## Case Design
@@ -342,8 +330,8 @@ Recommended interpretation rules:
   parsing, dedupe, query propagation, or candidate scoring is the bottleneck.
 - High duplicate rate means provider diversity, dedupe keys, pagination, or
   retry feedback need work.
-- Good fixture E2E but poor real-service E2E means live provider/query strategy
-  or network retrieval is the bottleneck.
+- Good fixture scenarios but poor real-service scenarios mean live
+  provider/query strategy or network retrieval is the bottleneck.
 - High false accept rate in delivery is more severe than low recall because it
   risks delivering wrong images.
 
@@ -405,4 +393,3 @@ The baseline suite should drive these work items:
 6. Add VLM batching, partial failure isolation, retry/backoff, and structured
    score parsing.
 7. Add real-service trend reports for recall, precision, latency, and cost.
-

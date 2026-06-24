@@ -280,13 +280,22 @@ credentials, cost, and live provider state.
 Execution:
 
 ```bash
-IMAGE_RETRIEVAL_REAL_BASELINE=1 cargo test --test baseline_scenario_real_service
+IMAGE_RETRIEVAL_REAL_BASELINE=1 cargo test --test baseline_real_service_test
 ```
 
 Required real-service environment variables:
 
 - `SERPAPI_API_KEY` or provider-specific search key.
 - `QWEN_API_KEY` or configured VLM credential env.
+
+Optional runner environment variables:
+
+- `IMAGE_RETRIEVAL_BASELINE_CONFIG`: real-service runtime config path. Defaults
+  to `tests/fixtures/v1_1/configs/config-production-like.toml`.
+- `IMAGE_RETRIEVAL_BASELINE_CASES`: comma-separated case ids to run. Omit to
+  run all catalog cases.
+- `IMAGE_RETRIEVAL_BASELINE_REPORT_DIR`: report output directory. Defaults to
+  `target/baseline-reports`.
 
 Scenario tests must never assert exact candidate ids from the public web.
 They should assert thresholds and produce a report for trend comparison.

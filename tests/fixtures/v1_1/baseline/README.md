@@ -35,3 +35,22 @@ target/baseline-reports/
 
 Reports should include per-case metrics, stage-level failure attribution, and
 recommended next work.
+
+## Real Scenario Runner
+
+Run the real scenario suite with:
+
+```bash
+IMAGE_RETRIEVAL_REAL_BASELINE=1 cargo test --test baseline_real_service_test
+```
+
+Required environment:
+
+- `SERPAPI_API_KEY`
+- `QWEN_API_KEY`
+
+Optional environment:
+
+- `IMAGE_RETRIEVAL_BASELINE_CONFIG`
+- `IMAGE_RETRIEVAL_BASELINE_CASES`
+- `IMAGE_RETRIEVAL_BASELINE_REPORT_DIR`

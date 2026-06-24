@@ -267,6 +267,19 @@
       "case_id": "rt_direct_ok_batch",
       "unit": "candidate_retrieval",
       "supported_test_types": ["unit", "scenario_real_service"],
+      "query_plan": {
+        "description": "public domain style photo of a red apple isolated on white background",
+        "query_texts": ["red apple isolated white background public domain photo"],
+        "required_image_count": 1,
+        "quality": "general",
+        "quality_requirements": {
+          "minimum_width": 600,
+          "minimum_height": 600,
+          "allow_thumbnail_only": false
+        },
+        "visual_requirements": ["red apple", "plain background"],
+        "negative_scope": ["text overlay", "basket"]
+      },
       "difficulty_profile": {
         "search": "preselected_candidates",
         "retrieval": "direct_ok",
@@ -294,6 +307,19 @@
       "case_id": "rt_source_page_fallback",
       "unit": "candidate_retrieval",
       "supported_test_types": ["unit", "scenario_real_service"],
+      "query_plan": {
+        "description": "photo of a historic stone bridge over a river",
+        "query_texts": ["historic stone bridge over river photo", "old stone bridge river landscape"],
+        "required_image_count": 1,
+        "quality": "general",
+        "quality_requirements": {
+          "minimum_width": 900,
+          "minimum_height": 600,
+          "allow_thumbnail_only": false
+        },
+        "visual_requirements": ["stone bridge", "river", "outdoor photo"],
+        "negative_scope": ["illustration", "map", "text overlay"]
+      },
       "difficulty_profile": {
         "search": "preselected_candidates",
         "retrieval": "source_page_required",
@@ -324,6 +350,19 @@
       "case_id": "rt_hotlink_and_policy_blocked",
       "unit": "candidate_retrieval",
       "supported_test_types": ["unit", "scenario_real_service"],
+      "query_plan": {
+        "description": "clean photo of a museum artifact on a neutral background",
+        "query_texts": ["museum artifact neutral background photo", "antique artifact object photo"],
+        "required_image_count": 1,
+        "quality": "general",
+        "quality_requirements": {
+          "minimum_width": 800,
+          "minimum_height": 600,
+          "allow_thumbnail_only": false
+        },
+        "visual_requirements": ["museum artifact", "neutral background", "object photo"],
+        "negative_scope": ["screenshot", "text overlay", "diagram"]
+      },
       "difficulty_profile": {
         "search": "preselected_candidates",
         "retrieval": "hotlink_blocked_and_policy_blocked",
@@ -355,6 +394,19 @@
       "case_id": "rt_metadata_only_and_corrupt",
       "unit": "candidate_retrieval",
       "supported_test_types": ["unit", "scenario_real_service"],
+      "query_plan": {
+        "description": "high quality macro photo of a green leaf with visible veins",
+        "query_texts": ["macro photo green leaf visible veins", "green leaf close up high quality"],
+        "required_image_count": 1,
+        "quality": "high",
+        "quality_requirements": {
+          "minimum_width": 1000,
+          "minimum_height": 800,
+          "allow_thumbnail_only": false
+        },
+        "visual_requirements": ["green leaf", "visible veins", "macro photo"],
+        "negative_scope": ["illustration", "text overlay", "logo"]
+      },
       "difficulty_profile": {
         "search": "preselected_candidates",
         "retrieval": "metadata_only_and_corrupted",
@@ -385,6 +437,19 @@
       "case_id": "rt_pending_only_fallback",
       "unit": "candidate_retrieval",
       "supported_test_types": ["unit", "scenario_real_service"],
+      "query_plan": {
+        "description": "photo of a ceramic coffee cup on a wooden table",
+        "query_texts": ["ceramic coffee cup wooden table photo", "coffee cup on wood table"],
+        "required_image_count": 1,
+        "quality": "general",
+        "quality_requirements": {
+          "minimum_width": 800,
+          "minimum_height": 600,
+          "allow_thumbnail_only": false
+        },
+        "visual_requirements": ["ceramic coffee cup", "wooden table", "photo"],
+        "negative_scope": ["logo", "text overlay", "person"]
+      },
       "difficulty_profile": {
         "search": "preselected_candidates",
         "retrieval": "mixed_batch_multi_channel",

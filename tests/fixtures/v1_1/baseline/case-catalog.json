@@ -7,6 +7,26 @@
     "candidate_retrieval",
     "delivery"
   ],
+  "execution_policy": {
+    "unit": {
+      "fixtures_allowed": true,
+      "description": "Unit tests may use provider responses, local artifacts, fixture scorers, and deterministic classifiers."
+    },
+    "scenario_real_service": {
+      "fixtures_allowed": false,
+      "mocks_allowed": false,
+      "fakes_allowed": false,
+      "requires_real_search_provider": true,
+      "requires_real_retrieval_channels": true,
+      "requires_real_vlm_evaluator": true,
+      "requires_cli_execution": true,
+      "allows_controlled_real_baseline_endpoints": true,
+      "forbids_in_process_mock_servers": true,
+      "forbids_local_fixture_substitutes": true,
+      "opt_in_env": "IMAGE_RETRIEVAL_REAL_BASELINE",
+      "description": "Scenario tests must execute the real CLI against configured real services and must assert thresholds rather than exact public web ids."
+    }
+  },
   "default_report_dir": "target/baseline-reports",
   "metric_definitions": {
     "expected_candidate_recall": "must_recall candidates found after provider parsing, dedupe, and candidate evaluation.",
@@ -21,7 +41,7 @@
     {
       "case_id": "cr_simple_product_clean",
       "unit": "candidate_recall",
-      "supported_test_types": ["unit", "scenario_fixture", "scenario_real_service"],
+      "supported_test_types": ["unit", "scenario_real_service"],
       "query_plan": {
         "description": "red apple on a plain white background",
         "query_texts": ["red apple white background", "single red apple isolated"],
@@ -40,7 +60,7 @@
         "retrieval": "direct_ok",
         "evaluation": "low_ambiguity"
       },
-      "fixtures": {
+      "unit_fixtures": {
         "provider_response": "provider-responses/baseline/candidate_recall/simple_product_clean_serpapi.json",
         "scorer": "fixture_candidate_scorer"
       },
@@ -67,7 +87,7 @@
     {
       "case_id": "cr_high_quality_landscape_noisy",
       "unit": "candidate_recall",
-      "supported_test_types": ["unit", "scenario_fixture", "scenario_real_service"],
+      "supported_test_types": ["unit", "scenario_real_service"],
       "query_plan": {
         "description": "high resolution landscape photo of snowy mountains at sunrise",
         "query_texts": ["snowy mountains sunrise high resolution photo", "alpine sunrise landscape"],
@@ -86,7 +106,7 @@
         "retrieval": "direct_ok_plus_some_blocked",
         "evaluation": "quality_sensitive"
       },
-      "fixtures": {
+      "unit_fixtures": {
         "provider_response": "provider-responses/baseline/candidate_recall/high_quality_landscape_noisy_serpapi.json",
         "scorer": "fixture_candidate_scorer"
       },
@@ -113,7 +133,7 @@
     {
       "case_id": "cr_negative_scope_no_text_overlay",
       "unit": "candidate_recall",
-      "supported_test_types": ["unit", "scenario_fixture"],
+      "supported_test_types": ["unit", "scenario_real_service"],
       "query_plan": {
         "description": "clean photo of a modern office desk setup",
         "query_texts": ["modern office desk setup photo", "minimal workspace desk"],
@@ -132,7 +152,7 @@
         "retrieval": "direct_ok",
         "evaluation": "negative_scope_sensitive"
       },
-      "fixtures": {
+      "unit_fixtures": {
         "provider_response": "provider-responses/baseline/candidate_recall/office_negative_scope_serpapi.json",
         "scorer": "fixture_candidate_scorer"
       },
@@ -154,7 +174,7 @@
     {
       "case_id": "cr_multi_image_source_diversity",
       "unit": "candidate_recall",
-      "supported_test_types": ["unit", "scenario_fixture", "scenario_real_service"],
+      "supported_test_types": ["unit", "scenario_real_service"],
       "query_plan": {
         "description": "photos of hot air balloons over Cappadocia at dawn",
         "query_texts": ["Cappadocia hot air balloons dawn photo", "Goreme balloons sunrise landscape"],
@@ -174,7 +194,7 @@
         "retrieval": "mixed_direct_and_source_page",
         "evaluation": "source_diversity_sensitive"
       },
-      "fixtures": {
+      "unit_fixtures": {
         "provider_response": "provider-responses/baseline/candidate_recall/cappadocia_duplicate_heavy_serpapi.json",
         "scorer": "fixture_candidate_scorer"
       },
@@ -205,7 +225,7 @@
     {
       "case_id": "cr_hard_niche_object",
       "unit": "candidate_recall",
-      "supported_test_types": ["unit", "scenario_fixture", "scenario_real_service"],
+      "supported_test_types": ["unit", "scenario_real_service"],
       "query_plan": {
         "description": "close-up photo of a vintage brass microscope objective lens",
         "query_texts": ["vintage brass microscope objective lens close-up", "antique microscope objective lens macro photo"],
@@ -224,7 +244,7 @@
         "retrieval": "mixed_direct_blocked",
         "evaluation": "fine_grained_semantic"
       },
-      "fixtures": {
+      "unit_fixtures": {
         "provider_response": "provider-responses/baseline/candidate_recall/niche_microscope_sparse_serpapi.json",
         "scorer": "fixture_candidate_scorer"
       },
@@ -246,13 +266,13 @@
     {
       "case_id": "rt_direct_ok_batch",
       "unit": "candidate_retrieval",
-      "supported_test_types": ["unit", "scenario_fixture"],
+      "supported_test_types": ["unit", "scenario_real_service"],
       "difficulty_profile": {
         "search": "preselected_candidates",
         "retrieval": "direct_ok",
         "evaluation": "not_applicable"
       },
-      "fixtures": {
+      "unit_fixtures": {
         "candidates": "baseline/candidate_retrieval/candidates/direct_ok_batch.json",
         "channel_config": "baseline/candidate_retrieval/channel_configs/normal_web_fetch_only.toml",
         "retrieval_fixture": "baseline/candidate_retrieval/retrieval_cases/direct_ok/"
@@ -273,13 +293,13 @@
     {
       "case_id": "rt_source_page_fallback",
       "unit": "candidate_retrieval",
-      "supported_test_types": ["unit", "scenario_fixture"],
+      "supported_test_types": ["unit", "scenario_real_service"],
       "difficulty_profile": {
         "search": "preselected_candidates",
         "retrieval": "source_page_required",
         "evaluation": "not_applicable"
       },
-      "fixtures": {
+      "unit_fixtures": {
         "candidates": "baseline/candidate_retrieval/candidates/source_page_fallback.json",
         "channel_config": "baseline/candidate_retrieval/channel_configs/normal_web_fetch_source_page.toml",
         "retrieval_fixture": "baseline/candidate_retrieval/retrieval_cases/source_page_required/"
@@ -303,13 +323,13 @@
     {
       "case_id": "rt_hotlink_and_policy_blocked",
       "unit": "candidate_retrieval",
-      "supported_test_types": ["unit", "scenario_fixture"],
+      "supported_test_types": ["unit", "scenario_real_service"],
       "difficulty_profile": {
         "search": "preselected_candidates",
         "retrieval": "hotlink_blocked_and_policy_blocked",
         "evaluation": "not_applicable"
       },
-      "fixtures": {
+      "unit_fixtures": {
         "candidates": "baseline/candidate_retrieval/candidates/hotlink_policy.json",
         "channel_config": "baseline/candidate_retrieval/channel_configs/normal_with_policy.toml",
         "retrieval_fixture": "baseline/candidate_retrieval/retrieval_cases/hotlink_policy/"
@@ -334,13 +354,13 @@
     {
       "case_id": "rt_metadata_only_and_corrupt",
       "unit": "candidate_retrieval",
-      "supported_test_types": ["unit", "scenario_fixture"],
+      "supported_test_types": ["unit", "scenario_real_service"],
       "difficulty_profile": {
         "search": "preselected_candidates",
         "retrieval": "metadata_only_and_corrupted",
         "evaluation": "not_applicable"
       },
-      "fixtures": {
+      "unit_fixtures": {
         "candidates": "baseline/candidate_retrieval/candidates/metadata_corrupt.json",
         "channel_config": "baseline/candidate_retrieval/channel_configs/normal_web_fetch_only.toml",
         "retrieval_fixture": "baseline/candidate_retrieval/retrieval_cases/metadata_corrupt/"
@@ -364,13 +384,13 @@
     {
       "case_id": "rt_pending_only_fallback",
       "unit": "candidate_retrieval",
-      "supported_test_types": ["unit", "scenario_fixture"],
+      "supported_test_types": ["unit", "scenario_real_service"],
       "difficulty_profile": {
         "search": "preselected_candidates",
         "retrieval": "mixed_batch_multi_channel",
         "evaluation": "not_applicable"
       },
-      "fixtures": {
+      "unit_fixtures": {
         "candidates": "baseline/candidate_retrieval/candidates/pending_only_fallback.json",
         "channel_config": "baseline/candidate_retrieval/channel_configs/normal_self_hosted_paid.toml",
         "retrieval_fixture": "baseline/candidate_retrieval/retrieval_cases/pending_only_fallback/"
@@ -395,7 +415,7 @@
     {
       "case_id": "dl_all_correct_full_delivery",
       "unit": "delivery",
-      "supported_test_types": ["unit", "scenario_fixture"],
+      "supported_test_types": ["unit", "scenario_real_service"],
       "query_plan": {
         "description": "two high quality photos of red apples on a white background",
         "required_image_count": 2,
@@ -413,7 +433,7 @@
         "retrieval": "all_complete",
         "evaluation": "all_good"
       },
-      "fixtures": {
+      "unit_fixtures": {
         "retrieved_results": "baseline/delivery/retrieved_results/all_correct/",
         "image_scorer": "fixture_image_scorer"
       },
@@ -434,7 +454,7 @@
     {
       "case_id": "dl_mixed_semantic_wrong_images",
       "unit": "delivery",
-      "supported_test_types": ["unit", "scenario_fixture"],
+      "supported_test_types": ["unit", "scenario_real_service"],
       "query_plan": {
         "description": "clean photo of a modern office desk setup without people",
         "required_image_count": 1,
@@ -447,7 +467,7 @@
         "retrieval": "all_complete",
         "evaluation": "semantic_near_misses"
       },
-      "fixtures": {
+      "unit_fixtures": {
         "retrieved_results": "baseline/delivery/retrieved_results/mixed_semantic_wrong/",
         "image_scorer": "fixture_image_scorer"
       },
@@ -468,7 +488,7 @@
     {
       "case_id": "dl_quality_requirement_blocks_low_res",
       "unit": "delivery",
-      "supported_test_types": ["unit", "scenario_fixture"],
+      "supported_test_types": ["unit", "scenario_real_service"],
       "query_plan": {
         "description": "high resolution photo of snowy mountains at sunrise",
         "required_image_count": 1,
@@ -486,7 +506,7 @@
         "retrieval": "complete_mixed_dimensions",
         "evaluation": "quality_sensitive"
       },
-      "fixtures": {
+      "unit_fixtures": {
         "retrieved_results": "baseline/delivery/retrieved_results/quality_mixed_dimensions/",
         "image_scorer": "fixture_image_scorer"
       },
@@ -507,7 +527,7 @@
     {
       "case_id": "dl_partial_delivery_with_accurate_gaps",
       "unit": "delivery",
-      "supported_test_types": ["unit", "scenario_fixture"],
+      "supported_test_types": ["unit", "scenario_real_service"],
       "query_plan": {
         "description": "three distinct photos of hot air balloons over Cappadocia at dawn",
         "required_image_count": 3,
@@ -521,7 +541,7 @@
         "retrieval": "only_two_complete",
         "evaluation": "two_good_one_failed"
       },
-      "fixtures": {
+      "unit_fixtures": {
         "retrieved_results": "baseline/delivery/retrieved_results/partial_cappadocia/",
         "image_scorer": "fixture_image_scorer"
       },
@@ -544,7 +564,7 @@
     {
       "case_id": "dl_duplicate_metadata_policy_rejected",
       "unit": "delivery",
-      "supported_test_types": ["unit", "scenario_fixture"],
+      "supported_test_types": ["unit", "scenario_real_service"],
       "query_plan": {
         "description": "single clean photo of a vintage brass microscope objective lens",
         "required_image_count": 1,
@@ -562,7 +582,7 @@
         "retrieval": "mixed_bad_artifacts",
         "evaluation": "fine_grained_delivery"
       },
-      "fixtures": {
+      "unit_fixtures": {
         "retrieved_results": "baseline/delivery/retrieved_results/duplicate_metadata_policy/",
         "image_scorer": "fixture_image_scorer"
       },

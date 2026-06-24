@@ -16,13 +16,14 @@ The canonical case list is `case-catalog.json`.
 The same case metadata should drive:
 
 - unit tests for deterministic parsers, validators, classifiers, and scorers;
-- scenario fixture tests for capability chains using fixtures and/or the CLI;
 - opt-in real-service scenario tests that emit baseline reports.
 
 Scenario tests intentionally combine the previous integration and end-to-end
-layers for the first baseline. Real-service scenarios must be opt-in and must
-never assert exact public web result ids. They should assert thresholds and
-report trend metrics.
+layers for the first baseline. Except for unit tests, tests must be real
+execution: no mocked providers, fake channels, fixture evaluators, or synthetic
+delivery packages. Real-service scenarios must be opt-in and must never assert
+exact public web result ids. They should assert thresholds and report trend
+metrics.
 
 ## Report Output
 

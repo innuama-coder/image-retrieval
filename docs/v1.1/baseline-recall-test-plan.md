@@ -19,6 +19,48 @@ map. Each run should explain where recall is lost:
 The first baseline should favor small, inspectable cases over broad coverage.
 It should expose weak links before optimization work starts.
 
+## Completion Criteria
+
+The test plan is complete only when all three capability units define:
+
+- unit inputs and deterministic expectations;
+- real-service scenario inputs and threshold expectations;
+- report fields for stage-level failure attribution;
+- analysis rules that map failures to next engineering work.
+
+The implementation is complete only when:
+
+- unit tests run without external services;
+- scenario tests run the real CLI with real configured search providers, real
+  retrieval channels, and the real VLM evaluator;
+- scenario tests do not use mocked providers, fake channels, fixture evaluators,
+  fixture provider responses, or synthetic delivery packages;
+- scenario tests emit baseline reports under `target/baseline-reports/`;
+- real-service scenario tests are gated by `IMAGE_RETRIEVAL_REAL_BASELINE=1`.
+
+## Real Scenario Input Policy
+
+Scenario tests may use controlled baseline resources only when they are real
+externally reachable resources:
+
+- real HTTP(S) image URLs;
+- real HTTP(S) source pages with metadata such as `og:image`;
+- real HTTP status responses for access restrictions;
+- real downloadable corrupt or invalid files when the case requires it.
+
+They must not use:
+
+- in-process mock servers;
+- fake search providers;
+- fake retrieval channels;
+- fixture VLM evaluators;
+- prebuilt synthetic delivery packages;
+- local-only fixture files as substitutes for retrieval.
+
+This keeps scenario tests reproducible while still exercising the actual CLI,
+network stack, retrieval channels, VLM evaluator, package builder, and package
+validator.
+
 ## Test Units
 
 The suite has three product capability units.
@@ -41,7 +83,8 @@ candidates, and assign scores/ranking that match the expected relevance?
 Inputs:
 
 - A `QueryPlan`.
-- One or more provider response fixtures, or an opt-in real provider run.
+- Unit tests may use provider response fixtures.
+- Scenario tests must use configured real search providers.
 - A gold label set for candidate ids:
   - `must_recall`
   - `acceptable`
@@ -58,7 +101,7 @@ Metrics:
 - `duplicate_rate`
 - `false_accept_count`
 - `false_reject_count`
-- `score_mae` for fixture/scored evaluators
+- `score_mae` for unit fixture/scored evaluators
 - `ranking_ndcg_at_10`
 
 Unit pass condition:
@@ -70,12 +113,11 @@ Unit pass condition:
 
 Scenario pass condition:
 
-- The search scheduler, provider fixture, candidate gate, and retrievable batch
-  produce the expected candidate ids in priority order.
-- The fixture scenario may call modules directly or run the CLI, but it must
-  emit the same baseline report shape.
-- The real-service scenario produces enough retrievable candidates for
-  downstream retrieval, or attributes any shortage to a known reason.
+- The CLI invokes real configured search providers and the real candidate
+  evaluator.
+- The scenario produces enough retrievable candidates for downstream retrieval,
+  or attributes any shortage to a known reason.
+- The scenario emits the standard baseline report shape.
 
 ### 2. Candidate Retrieval
 
@@ -97,7 +139,8 @@ Inputs:
 
 - A set of retrievable candidates.
 - A channel configuration.
-- A local fixture server or fixture artifact set for retrieval behavior.
+- Unit tests may use local fixture inputs for deterministic classifiers.
+- Scenario tests must use real channel execution against actual URLs/services.
 - Expected retrieval outcomes per candidate.
 
 Difficulty classes:
@@ -131,9 +174,9 @@ Scenario pass condition:
 
 - Channel fallback only processes pending jobs.
 - Policy-blocked results do not proceed to higher fallback tiers.
-- The fixture scenario validates the channel chain without external services.
-- The real-service scenario produces real local artifacts, or a partial result
-  with accurate failure attribution.
+- The scenario validates the real channel chain through actual execution.
+- The scenario produces real local artifacts, or a partial result with accurate
+  failure attribution.
 
 ### 3. Delivery
 
@@ -154,7 +197,8 @@ correctly satisfy the `QueryPlan`?
 Inputs:
 
 - A `QueryPlan`.
-- A retrieved result set with local artifact fixtures.
+- Unit tests may use local artifact fixtures.
+- Scenario tests must use retrieved results produced by a real scenario run.
 - Gold labels for expected delivery:
   - `must_deliver`
   - `acceptable_delivery`
@@ -179,9 +223,8 @@ Unit pass condition:
 Scenario pass condition:
 
 - The orchestrator records accepted images and coverage gaps correctly.
-- The fixture scenario validates the accepted image set and package.
-- The real-service scenario validates the package and reports delivery quality
-  thresholds rather than exact public web ids.
+- The scenario validates the package produced by a real CLI run and reports
+  delivery quality thresholds rather than exact public web ids.
 
 ## Test Types
 
@@ -216,26 +259,27 @@ Purpose:
 
 - Validate the capability chain. This combines the previous integration and
   end-to-end layers so the first baseline stays simple.
+- Scenario tests are real execution tests. They must not mock, fake, or fixture
+  search providers, retrieval channels, VLM evaluators, or delivery packages.
 
 Examples:
 
-- `QueryPlan -> fixture provider -> scheduler -> candidate gate`.
-- `RetrievableCandidateBatch -> retrieval planner -> fixture/web fetch channel`.
+- `QueryPlan -> real search provider -> scheduler -> candidate gate`.
+- `RetrievableCandidateBatch -> retrieval planner -> real retrieval channel`.
 - `Retrieved images -> image gate -> orchestrator -> package validator`.
-- CLI fixture runs that produce a delivery package and baseline report.
+- CLI runs that produce a delivery package and baseline report.
 
 Modes:
 
-- `scenario_fixture`: default mode, no external services required.
-- `scenario_real_service`: opt-in mode, uses live search/retrieval/VLM services.
+- `scenario_real_service`: opt-in mode, uses live search, retrieval, and VLM
+  services.
 
-Real-service scenarios must be opt-in because they use network services,
+Scenario tests must be opt-in because they use network services,
 credentials, cost, and live provider state.
 
 Execution:
 
 ```bash
-cargo test --test baseline_scenario_fixture
 IMAGE_RETRIEVAL_REAL_BASELINE=1 cargo test --test baseline_scenario_real_service
 ```
 
@@ -244,7 +288,7 @@ Required real-service environment variables:
 - `SERPAPI_API_KEY` or provider-specific search key.
 - `QWEN_API_KEY` or configured VLM credential env.
 
-Real-service scenarios must never assert exact candidate ids from the public web.
+Scenario tests must never assert exact candidate ids from the public web.
 They should assert thresholds and produce a report for trend comparison.
 
 ## Case Design
@@ -260,6 +304,7 @@ Each case should declare:
 - `gold_labels`
 - `expected_metrics`
 - `analysis_tags`
+- `execution_policy`
 
 The case catalog lives at:
 
@@ -292,7 +337,7 @@ Recommended report shape:
   "suite_id": "baseline_recall_v1_1",
   "run_id": "baseline-...",
   "git_commit": "...",
-  "execution_mode": "fixture",
+  "execution_mode": "real_service",
   "cases": [],
   "stage_summary": {},
   "regressions": [],
@@ -326,12 +371,12 @@ Recommended interpretation rules:
 
 - High `expected_candidate_recall` but low `delivery_recall` means retrieval or
   delivery is the bottleneck.
-- Low `expected_candidate_recall` with good provider fixture data means
-  parsing, dedupe, query propagation, or candidate scoring is the bottleneck.
+- Low `expected_candidate_recall` with healthy provider readiness means query
+  propagation, search strategy, dedupe, or candidate scoring is the bottleneck.
 - High duplicate rate means provider diversity, dedupe keys, pagination, or
   retry feedback need work.
-- Good fixture scenarios but poor real-service scenarios mean live
-  provider/query strategy or network retrieval is the bottleneck.
+- Good unit tests but poor scenario tests mean live provider/query strategy,
+  network retrieval, VLM stability, or CLI orchestration is the bottleneck.
 - High false accept rate in delivery is more severe than low recall because it
   risks delivering wrong images.
 
@@ -340,7 +385,7 @@ Recommended interpretation rules:
 Initial thresholds should be intentionally conservative. They are meant to map
 capability, not to block all development.
 
-Suggested fixture thresholds:
+Suggested unit thresholds:
 
 - Candidate recall:
   - `expected_candidate_recall >= 0.90`
@@ -355,7 +400,7 @@ Suggested fixture thresholds:
   - `package_validation_passed == true` when full delivery is expected
   - `wrong_image_delivered_count == 0`
 
-Suggested real-service thresholds:
+Suggested scenario thresholds:
 
 - `delivered_count >= required_count` for easy cases.
 - `delivered_count > 0` and accurate shortage reasons for hard cases.

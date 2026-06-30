@@ -166,11 +166,66 @@ fn admit_with_explicit_values_produces_correct_plan() {
     assert!(outcome.is_accepted());
     let plan = outcome.unwrap();
     assert_eq!(plan.required_image_count, 3);
-    assert_eq!(plan.quality, QualityTier::High);
-    assert_eq!(plan.retry_limit, 2);
-    assert_eq!(plan.full_attempt_limit, 3);
+    assert_eq!(plan.quality, QualityTier::General);
+    assert_eq!(plan.retry_limit, 3);
+    assert_eq!(plan.full_attempt_limit, 4);
     assert_eq!(plan.candidate_target, 60);
     assert_eq!(plan.retrieval_batch_target, 6);
+}
+
+#[test]
+fn admit_discards_non_content_query_requirements_except_count() {
+    let input = QueryPlanInput {
+        description: "red apple isolated on white background".into(),
+        required_image_count: 2,
+        quality: QualityTier::Strict,
+        quality_requirements: QualityRequirements {
+            minimum_width: Some(1200),
+            minimum_height: Some(900),
+            allow_watermark: Some(false),
+            allow_thumbnail_only: true,
+            min_visual_relevance_score: Some(0.95),
+        },
+        material_types: vec!["public domain photo".into()],
+        source_diversity_requirement: Some(2),
+        provider_policy: QueryProviderPolicy {
+            allowed_provider_kinds: vec!["serpapi".into()],
+            excluded_provider_kinds: vec!["fixture".into()],
+            allow_fixture: true,
+        },
+        retrieval_policy: QueryRetrievalPolicy {
+            allow_paid: true,
+            respect_robots: false,
+            allow_login: true,
+            allow_paywalled: true,
+        },
+        retry_limit: 1,
+        ..Default::default()
+    };
+
+    let outcome = admit_query_plan(input, &AdmissionConfig::default());
+    assert!(outcome.is_accepted());
+    let plan = outcome.unwrap();
+
+    assert_eq!(plan.description, "red apple isolated on white background");
+    assert_eq!(plan.required_image_count, 2);
+    assert_eq!(plan.retry_limit, 3);
+    assert_eq!(plan.full_attempt_limit, 4);
+    assert_eq!(plan.quality, QualityTier::General);
+    assert_eq!(plan.quality_requirements.minimum_width, None);
+    assert_eq!(plan.quality_requirements.minimum_height, None);
+    assert_eq!(plan.quality_requirements.allow_watermark, None);
+    assert!(!plan.quality_requirements.allow_thumbnail_only);
+    assert_eq!(plan.quality_requirements.min_visual_relevance_score, None);
+    assert!(plan.material_types.is_empty());
+    assert_eq!(plan.source_diversity_requirement, None);
+    assert!(plan.provider_policy.allowed_provider_kinds.is_empty());
+    assert!(plan.provider_policy.excluded_provider_kinds.is_empty());
+    assert!(!plan.provider_policy.allow_fixture);
+    assert!(!plan.retrieval_policy.allow_paid);
+    assert!(plan.retrieval_policy.respect_robots);
+    assert!(!plan.retrieval_policy.allow_login);
+    assert!(!plan.retrieval_policy.allow_paywalled);
 }
 
 // =============================================================================
@@ -199,6 +254,56 @@ fn admit_missing_description_rejected() {
 }
 
 #[test]
+fn admit_rejects_source_or_license_terms_in_query_text() {
+    let input = QueryPlanInput {
+        description: "public domain photo of a red apple".into(),
+        query_texts: vec!["red apple royalty free image".into()],
+        ..Default::default()
+    };
+
+    let outcome = admit_query_plan(input, &AdmissionConfig::default());
+    assert!(!outcome.is_accepted());
+    match outcome {
+        AdmissionOutcome::Rejected { diagnostics } => {
+            assert!(diagnostics.iter().any(|d| {
+                d.code == AdmissionFailureCode::NonContentRequirementUnsupported
+                    && d.field_path == "description"
+            }));
+            assert!(diagnostics.iter().any(|d| {
+                d.code == AdmissionFailureCode::NonContentRequirementUnsupported
+                    && d.field_path == "query_texts[0]"
+            }));
+        }
+        _ => panic!("expected rejected"),
+    }
+}
+
+#[test]
+fn admit_rejects_collection_count_terms_in_query_text() {
+    let input = QueryPlanInput {
+        description: "three distinct photos of hot air balloons".into(),
+        query_texts: vec!["multiple images of Cappadocia balloons".into()],
+        ..Default::default()
+    };
+
+    let outcome = admit_query_plan(input, &AdmissionConfig::default());
+    assert!(!outcome.is_accepted());
+    match outcome {
+        AdmissionOutcome::Rejected { diagnostics } => {
+            assert!(diagnostics.iter().any(|d| {
+                d.code == AdmissionFailureCode::NonContentRequirementUnsupported
+                    && d.field_path == "description"
+            }));
+            assert!(diagnostics.iter().any(|d| {
+                d.code == AdmissionFailureCode::NonContentRequirementUnsupported
+                    && d.field_path == "query_texts[0]"
+            }));
+        }
+        _ => panic!("expected rejected"),
+    }
+}
+
+#[test]
 fn admit_whitespace_only_description_rejected() {
     let input = QueryPlanInput {
         description: "   \n  \t  ".into(),
@@ -209,14 +314,17 @@ fn admit_whitespace_only_description_rejected() {
 }
 
 #[test]
-fn admit_retry_limit_exceeds_max_rejected() {
+fn admit_ignores_retry_limit_input() {
     let input = QueryPlanInput {
         description: "test".into(),
         retry_limit: 10,
         ..Default::default()
     };
     let outcome = admit_query_plan(input, &AdmissionConfig::default());
-    assert!(!outcome.is_accepted());
+    assert!(outcome.is_accepted());
+    let plan = outcome.unwrap();
+    assert_eq!(plan.retry_limit, 3);
+    assert_eq!(plan.full_attempt_limit, 4);
 }
 
 #[test]
@@ -286,7 +394,7 @@ fn admit_empty_query_text_entries_ignored_with_warning() {
 }
 
 #[test]
-fn admit_source_diversity_exceeds_required_warns() {
+fn admit_ignores_source_diversity_requirement() {
     let input = QueryPlanInput {
         description: "test".into(),
         required_image_count: 2,
@@ -296,8 +404,12 @@ fn admit_source_diversity_exceeds_required_warns() {
     let outcome = admit_query_plan(input, &AdmissionConfig::default());
     assert!(outcome.is_accepted());
     match outcome {
-        AdmissionOutcome::Accepted { warnings, .. } => {
-            assert!(warnings
+        AdmissionOutcome::Accepted {
+            query_plan,
+            warnings,
+        } => {
+            assert_eq!(query_plan.source_diversity_requirement, None);
+            assert!(!warnings
                 .iter()
                 .any(|d| d.code == AdmissionFailureCode::SourceDiversityExceedsRequired));
         }
@@ -367,7 +479,7 @@ fn retrieval_batch_target_is_2n() {
 }
 
 #[test]
-fn full_attempt_limit_is_one_plus_retry_limit() {
+fn full_attempt_limit_uses_default_retry_limit() {
     for retry in &[0, 1, 2, 3] {
         let input = QueryPlanInput {
             description: "test".into(),
@@ -377,9 +489,13 @@ fn full_attempt_limit_is_one_plus_retry_limit() {
         let outcome = admit_query_plan(input, &AdmissionConfig::default());
         let plan = outcome.unwrap();
         assert_eq!(
-            plan.full_attempt_limit,
-            retry + 1,
-            "full_attempt_limit for retry={}",
+            plan.retry_limit, 3,
+            "retry_limit should ignore QueryPlan input retry={}",
+            retry
+        );
+        assert_eq!(
+            plan.full_attempt_limit, 4,
+            "full_attempt_limit should ignore QueryPlan input retry={}",
             retry
         );
     }

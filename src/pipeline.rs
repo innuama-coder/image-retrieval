@@ -155,7 +155,8 @@ pub fn execute_production_attempt(
         normalized.query_plan_id.to_string(),
         config.policy.prohibited_domains.clone(),
         false,
-    );
+    )
+    .with_retrievable_target(normalized.retrieval_batch_target as usize);
     let candidate_result = match candidate_gate.evaluate(&search_outcome) {
         Ok(r) => r,
         Err(e) => {

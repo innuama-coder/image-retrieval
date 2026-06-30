@@ -1,10 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 fn catalog() -> serde_json::Value {
-    serde_json::from_str(include_str!(
-        "fixtures/v1_1/baseline/case-catalog.json"
-    ))
-    .expect("baseline case catalog must be valid JSON")
+    serde_json::from_str(include_str!("fixtures/v1_1/baseline/case-catalog.json"))
+        .expect("baseline case catalog must be valid JSON")
 }
 
 #[test]
@@ -48,7 +46,11 @@ fn baseline_scenarios_require_real_execution_only() {
             .map(|v| v.as_str().expect("test type string"))
             .collect();
 
-        assert!(type_set.contains("unit"), "{} must support unit tests", case["case_id"]);
+        assert!(
+            type_set.contains("unit"),
+            "{} must support unit tests",
+            case["case_id"]
+        );
         assert!(
             type_set.contains("scenario_real_service"),
             "{} must support real scenario tests",
@@ -92,3 +94,62 @@ fn real_scenario_cases_have_query_plan_inputs() {
     }
 }
 
+#[test]
+fn baseline_query_plans_do_not_encode_source_or_license_requirements() {
+    let catalog = catalog();
+    let forbidden_terms = [
+        "public domain",
+        "license",
+        "licensed",
+        "copyright",
+        "royalty",
+        "stock photo",
+        "source diversity",
+        "high quality",
+        "high resolution",
+        "distinct photos",
+        "different photos",
+        "multiple photos",
+        "multiple images",
+        "several photos",
+        "photos of",
+        "images of",
+        "pictures of",
+    ];
+
+    for case in catalog["cases"].as_array().expect("cases array") {
+        let case_id = case["case_id"].as_str().expect("case_id");
+        let query_plan = case
+            .get("query_plan")
+            .unwrap_or_else(|| panic!("{} missing query_plan", case_id));
+        for field in [
+            "quality",
+            "quality_requirements",
+            "material_types",
+            "source_diversity_requirement",
+            "authorization_preference",
+            "output_preference",
+            "provider_policy",
+            "retrieval_policy",
+            "retry_limit",
+        ] {
+            assert!(
+                query_plan.get(field).is_none(),
+                "{} QueryPlan must not contain non-content requirement field '{}'",
+                case_id,
+                field
+            );
+        }
+        let serialized = serde_json::to_string(query_plan).expect("serialize query plan");
+        let lower = serialized.to_lowercase();
+
+        for term in forbidden_terms {
+            assert!(
+                !lower.contains(term),
+                "{} QueryPlan must not encode source/license requirement '{}'",
+                case_id,
+                term
+            );
+        }
+    }
+}

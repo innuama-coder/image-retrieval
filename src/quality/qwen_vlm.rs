@@ -43,6 +43,13 @@ struct CandidateRelevanceVerdict {
     raw: String,
 }
 
+#[derive(Debug, Clone)]
+struct ImageVerdict {
+    approved: bool,
+    rationale: Option<String>,
+    raw: String,
+}
+
 /// Production Qwen VLM evaluation adapter.
 pub struct QwenVlmEvaluator {
     base_url: String,
@@ -126,6 +133,19 @@ impl QwenVlmEvaluator {
         evidence
     }
 
+    fn decision_evidence_with_rationale(
+        &self,
+        decision: &str,
+        evidence_source: &str,
+        verdict: &ImageVerdict,
+    ) -> VlmDecisionEvidence {
+        let mut evidence = self.decision_evidence(decision, evidence_source, verdict.raw.clone());
+        if let Some(rationale) = &verdict.rationale {
+            evidence.rationale_summary = Some(rationale.clone());
+        }
+        evidence
+    }
+
     fn candidate_relevance_evidence(
         &self,
         decision: &str,
@@ -149,14 +169,13 @@ impl QwenVlmEvaluator {
         evidence
     }
 
-    /// Ask the model a yes/no question about one local image file.
-    /// Returns Ok(true) for "yes", Ok(false) for "no", Err on transport/parse.
+    /// Ask the model for a decision and rationale about one local image file.
     fn judge_image(
         &self,
         local_path: &str,
         description: &str,
         reference_metrics: &[serde_json::Value],
-    ) -> Result<(bool, String)> {
+    ) -> Result<ImageVerdict> {
         let token = self
             .api_token
             .as_deref()
@@ -167,26 +186,8 @@ impl QwenVlmEvaluator {
         let b64 = base64_encode(&bytes);
         let data_url = format!("data:image/jpeg;base64,{}", b64);
 
-        let reference_context = format_reference_metrics(reference_metrics);
-        let prompt = format!(
-            "You are judging whether an image satisfies a desired description. \
-             Description: \"{}\". Reference metrics: {}. \
-             Use the reference metrics as supporting evidence, but judge the image itself. \
-             Does the image clearly satisfy this description? Answer with exactly one word: yes or no.",
-            description, reference_context
-        );
-
-        let body = serde_json::json!({
-            "model": self.model,
-            "max_tokens": 16,
-            "messages": [{
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": prompt},
-                    {"type": "image_url", "image_url": {"url": data_url}}
-                ]
-            }]
-        });
+        let body =
+            image_evaluation_request_body(&self.model, &data_url, description, reference_metrics);
 
         let url = format!("{}/chat/completions", self.base_url.trim_end_matches('/'));
         let body_str = serde_json::to_string(&body).map_err(|e| {
@@ -214,9 +215,13 @@ impl QwenVlmEvaluator {
             .and_then(|c| c.as_str())
             .ok_or_else(|| Error::openclaw_unavailable("VLM response missing content"))?;
 
-        let verdict = content.trim().to_lowercase();
-        self.last_verdicts.borrow_mut().push(verdict.clone());
-        Ok((verdict.starts_with("yes"), verdict))
+        let verdict = parse_image_verdict(content).map_err(|e| {
+            Error::openclaw_unavailable(format!("VLM image verdict parse failed: {}", e))
+        })?;
+        self.last_verdicts
+            .borrow_mut()
+            .push(format!("image_decision:{}", verdict.raw));
+        Ok(verdict)
     }
 
     /// Ask the model whether provider-supplied candidate text is relevant
@@ -338,10 +343,7 @@ impl OpenClawEvaluationPort for QwenVlmEvaluator {
                     }
                     Ok(verdict) => Ok(CandidateDecision::Rejected {
                         candidate: c.clone(),
-                        reason: format!(
-                            "Qwen VLM candidate relevance {:.3} did not exceed threshold {:.1}",
-                            verdict.score, CANDIDATE_RELEVANCE_THRESHOLD
-                        ),
+                        reason: candidate_rejection_reason(&verdict),
                     }),
                     Err(e) => Err(e),
                 },
@@ -382,10 +384,7 @@ impl OpenClawEvaluationPort for QwenVlmEvaluator {
                     }
                     Ok(verdict) => Ok(CandidateDecision::Rejected {
                         candidate: request.candidate.clone(),
-                        reason: format!(
-                            "Qwen VLM candidate relevance {:.3} did not exceed threshold {:.1}",
-                            verdict.score, CANDIDATE_RELEVANCE_THRESHOLD
-                        ),
+                        reason: candidate_rejection_reason(&verdict),
                     }),
                     Err(e) => Err(e),
                 }
@@ -410,22 +409,28 @@ impl OpenClawEvaluationPort for QwenVlmEvaluator {
             }
             let decision =
                 match self.judge_image(&img.local_path, description, &img.reference_metrics) {
-                    Ok((true, verdict)) => ImageAcceptanceDecision::Accepted {
+                    Ok(verdict) if verdict.approved => ImageAcceptanceDecision::Accepted {
                         image: img.clone(),
-                        notes: "Qwen VLM approved".into(),
+                        notes: verdict
+                            .rationale
+                            .clone()
+                            .unwrap_or_else(|| "Qwen VLM approved".into()),
                         vlm_evidence: Some({
-                            let mut evidence =
-                                self.decision_evidence("approve", "qwen_image_evaluation", verdict);
+                            let mut evidence = self.decision_evidence_with_rationale(
+                                "approve",
+                                "qwen_image_evaluation",
+                                &verdict,
+                            );
                             evidence
                                 .reason_codes
                                 .push("reference_metrics_provided".into());
                             evidence
                         }),
                     },
-                    Ok((false, _verdict)) => ImageAcceptanceDecision::SubjectivelyRejected {
+                    Ok(verdict) => ImageAcceptanceDecision::SubjectivelyRejected {
                         image: img.clone(),
                         mechanical_evidence: evidence,
-                        reason: "Qwen VLM judged image does not match description".into(),
+                        reason: image_rejection_reason(&verdict),
                     },
                     Err(e) => ImageAcceptanceDecision::ExecutionBlocked {
                         reason: format!("Qwen VLM evaluation failed: {}", e),
@@ -443,6 +448,35 @@ fn format_reference_metrics(metrics: &[serde_json::Value]) -> String {
         return "[]".into();
     }
     serde_json::to_string(metrics).unwrap_or_else(|_| "[]".into())
+}
+
+fn image_evaluation_request_body(
+    model: &str,
+    data_url: &str,
+    description: &str,
+    reference_metrics: &[serde_json::Value],
+) -> serde_json::Value {
+    let reference_context = format_reference_metrics(reference_metrics);
+    let prompt = format!(
+        "You are judging whether one retrieved image satisfies a desired image-content description. \
+         Description: \"{}\". Reference metrics: {}. \
+         Use the reference metrics as supporting evidence, but judge the image itself. \
+         Return strict JSON only with fields: decision (\"approve\" or \"reject\") and rationale (short human-readable reason). \
+         The rationale is required for both approval and rejection and must explain the visible image-content match or mismatch.",
+        description, reference_context
+    );
+
+    serde_json::json!({
+        "model": model,
+        "max_tokens": 128,
+        "messages": [{
+            "role": "user",
+            "content": [
+                {"type": "text", "text": prompt},
+                {"type": "image_url", "image_url": {"url": data_url}}
+            ]
+        }]
+    })
 }
 
 fn candidate_relevance_request_body(
@@ -467,41 +501,25 @@ fn candidate_relevance_request_body(
 fn candidate_relevance_prompt(
     candidate: &CandidateRecord,
     description: &str,
-    reference_metrics: &[serde_json::Value],
+    _reference_metrics: &[serde_json::Value],
 ) -> String {
-    let source_authority = candidate
-        .provenance
-        .source_authority_hint
-        .as_deref()
-        .unwrap_or("unknown");
-    let source_page = candidate.source_page_url.as_deref().unwrap_or("unknown");
-    let dimensions = match (candidate.width, candidate.height) {
-        (Some(w), Some(h)) => format!("{}x{}", w, h),
-        _ => "unknown".into(),
-    };
     let title = candidate.title.as_deref().unwrap_or("");
     let snippet = candidate.snippet.as_deref().unwrap_or("");
-    let license = candidate.license_hint.as_deref().unwrap_or("unknown");
-    let reference_context = format_reference_metrics(reference_metrics);
 
     format!(
         "You are evaluating a search-provider image candidate before retrieval. \
          Do not inspect or fetch the image URL. Compare only the provider text and metadata with the user need. \
+         Ignore source, license, authorization, paywall, provider policy, availability, free/paid, and download terms; \
+         score only visible image-content semantics described by the title and snippet. \
          User need: \"{}\". \
          Candidate title: \"{}\". Candidate description/snippet: \"{}\". \
-         Source page: {}. Source authority hint: {}. Dimensions: {}. License hint: {}. Provider rank: {}. \
-         Reference metrics: {}. \
+         Provider rank: {}. \
          Return strict JSON only with fields: relevance_score (number from 0 to 1) and rationale (short string). \
          Score semantic relevance of the text/metadata to the user need; 1 means direct match, 0 means unrelated.",
         description,
         title,
         snippet,
-        source_page,
-        source_authority,
-        dimensions,
-        license,
-        candidate.provider_rank,
-        reference_context
+        candidate.provider_rank
     )
 }
 
@@ -523,12 +541,72 @@ fn parse_candidate_relevance_score(
     let rationale = parsed
         .get("rationale")
         .and_then(|v| v.as_str())
-        .map(ToOwned::to_owned);
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(ToOwned::to_owned)
+        .ok_or_else(|| "missing non-empty rationale".to_string())?;
     Ok(CandidateRelevanceVerdict {
         score: score as f32,
-        rationale,
+        rationale: Some(rationale),
         raw: trimmed.to_string(),
     })
+}
+
+fn parse_image_verdict(content: &str) -> std::result::Result<ImageVerdict, String> {
+    let trimmed = content.trim();
+    let json_text = extract_json_object(trimmed).unwrap_or(trimmed);
+    let parsed: serde_json::Value = serde_json::from_str(json_text)
+        .map_err(|e| format!("expected JSON image verdict response: {}", e))?;
+    let decision = parsed
+        .get("decision")
+        .or_else(|| parsed.get("verdict"))
+        .and_then(|v| v.as_str())
+        .map(|v| v.trim().to_lowercase())
+        .ok_or_else(|| "missing decision".to_string())?;
+    let approved = match decision.as_str() {
+        "approve" | "approved" | "accept" | "accepted" => true,
+        "reject" | "rejected" => false,
+        other => {
+            return Err(format!(
+                "unsupported decision '{}'; expected approve or reject",
+                other
+            ));
+        }
+    };
+    let rationale = parsed
+        .get("rationale")
+        .or_else(|| parsed.get("reason"))
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(ToOwned::to_owned)
+        .ok_or_else(|| "missing non-empty rationale".to_string())?;
+
+    Ok(ImageVerdict {
+        approved,
+        rationale: Some(rationale),
+        raw: trimmed.to_string(),
+    })
+}
+
+fn candidate_rejection_reason(verdict: &CandidateRelevanceVerdict) -> String {
+    match verdict.rationale.as_deref() {
+        Some(rationale) => format!(
+            "Qwen VLM candidate relevance {:.3} did not exceed threshold {:.1}: {}",
+            verdict.score, CANDIDATE_RELEVANCE_THRESHOLD, rationale
+        ),
+        None => format!(
+            "Qwen VLM candidate relevance {:.3} did not exceed threshold {:.1}: no rationale returned",
+            verdict.score, CANDIDATE_RELEVANCE_THRESHOLD
+        ),
+    }
+}
+
+fn image_rejection_reason(verdict: &ImageVerdict) -> String {
+    match verdict.rationale.as_deref() {
+        Some(rationale) => format!("Qwen VLM rejected image: {}", rationale),
+        None => "Qwen VLM rejected image: no rationale returned".into(),
+    }
 }
 
 fn extract_json_object(text: &str) -> Option<&str> {
@@ -692,6 +770,91 @@ mod tests {
     }
 
     #[test]
+    fn candidate_relevance_prompt_excludes_source_and_license_requirements() {
+        let mut candidate = CandidateRecord {
+            title: Some("Red apple isolated on white".into()),
+            snippet: Some("Studio fruit photo on a plain background".into()),
+            source_page_url: Some("https://example.com/public-domain-apple".into()),
+            license_hint: Some("public domain".into()),
+            width: Some(900),
+            height: Some(596),
+            ..CandidateRecord::minimal(
+                crate::domain::candidate::CandidateId::new("cand-1"),
+                crate::domain::candidate::ProviderId::new("serpapi_google_images"),
+                "https://example.com/image.jpg",
+            )
+        };
+        candidate.provenance.source_authority_hint = Some("open-license-provider".into());
+
+        let body = candidate_relevance_request_body(
+            "qwen3-vl-plus",
+            &candidate,
+            "red apple isolated on white background",
+            &[],
+        );
+        let text = body["messages"][0]["content"][0]["text"].as_str().unwrap();
+
+        assert!(text.contains("Red apple isolated on white"));
+        assert!(text.contains("Studio fruit photo"));
+        assert!(!text.contains("public domain"));
+        assert!(!text.contains("open-license-provider"));
+        assert!(!text.contains("Source authority"));
+        assert!(!text.contains("License hint"));
+    }
+
+    #[test]
+    fn candidate_relevance_prompt_excludes_non_content_reference_metrics() {
+        let candidate = CandidateRecord {
+            title: Some("Red apple isolated on white".into()),
+            snippet: Some("Studio fruit photo on a plain background".into()),
+            ..CandidateRecord::minimal(
+                crate::domain::candidate::CandidateId::new("cand-1"),
+                crate::domain::candidate::ProviderId::new("serpapi_google_images"),
+                "https://example.com/image.jpg",
+            )
+        };
+
+        let body = candidate_relevance_request_body(
+            "qwen3-vl-plus",
+            &candidate,
+            "red apple isolated on white background",
+            &[
+                serde_json::json!({"kind": "license_hint_absent", "note": "no license information"}),
+                serde_json::json!({"kind": "source_authority", "note": "unknown source authority"}),
+            ],
+        );
+        let text = body["messages"][0]["content"][0]["text"].as_str().unwrap();
+
+        assert!(!text.contains("no license information"));
+        assert!(!text.contains("unknown source authority"));
+        assert!(!text.contains("Reference metrics"));
+    }
+
+    #[test]
+    fn candidate_relevance_prompt_instructs_model_to_ignore_non_content_provider_terms() {
+        let candidate = CandidateRecord {
+            title: Some("Red apple isolated on white - free download".into()),
+            snippet: Some("Royalty-free stock image from a provider catalog".into()),
+            ..CandidateRecord::minimal(
+                crate::domain::candidate::CandidateId::new("cand-1"),
+                crate::domain::candidate::ProviderId::new("serpapi_google_images"),
+                "https://example.com/image.jpg",
+            )
+        };
+
+        let body = candidate_relevance_request_body(
+            "qwen3-vl-plus",
+            &candidate,
+            "red apple isolated on white background",
+            &[],
+        );
+        let text = body["messages"][0]["content"][0]["text"].as_str().unwrap();
+
+        assert!(text.contains("Ignore source, license, authorization"));
+        assert!(text.contains("score only visible image-content semantics"));
+    }
+
+    #[test]
     fn parse_candidate_relevance_score_accepts_json_and_threshold_is_strict() {
         let high = parse_candidate_relevance_score(
             r#"{"relevance_score":0.72,"rationale":"title and snippet match"}"#,
@@ -704,5 +867,49 @@ mod tests {
         assert!(candidate_relevance_passes(high.score));
         assert!(!candidate_relevance_passes(boundary.score));
         assert_eq!(high.rationale.as_deref(), Some("title and snippet match"));
+    }
+
+    #[test]
+    fn candidate_rejection_reason_includes_qwen_rationale() {
+        let verdict = parse_candidate_relevance_score(
+            r#"{"relevance_score":0.31,"rationale":"title describes a poster, not a real balloon photo"}"#,
+        )
+        .unwrap();
+
+        let reason = candidate_rejection_reason(&verdict);
+
+        assert!(reason.contains("0.310"));
+        assert!(reason.contains("0.6"));
+        assert!(reason.contains("title describes a poster"));
+    }
+
+    #[test]
+    fn image_verdict_json_preserves_rejection_rationale() {
+        let verdict = parse_image_verdict(
+            r#"{"decision":"reject","rationale":"image is an illustration rather than a real photo"}"#,
+        )
+        .unwrap();
+
+        assert!(!verdict.approved);
+        assert_eq!(
+            verdict.rationale.as_deref(),
+            Some("image is an illustration rather than a real photo")
+        );
+    }
+
+    #[test]
+    fn image_request_requires_json_decision_and_rationale() {
+        let body = image_evaluation_request_body(
+            "qwen3-vl-plus",
+            "data:image/jpeg;base64,abc",
+            "hot air balloons over Cappadocia at dawn",
+            &[],
+        );
+        let text = body["messages"][0]["content"][0]["text"].as_str().unwrap();
+
+        assert!(text.contains("strict JSON"));
+        assert!(text.contains("decision"));
+        assert!(text.contains("rationale"));
+        assert!(!text.contains("exactly one word"));
     }
 }

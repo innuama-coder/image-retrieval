@@ -1,15 +1,18 @@
 {
   "description": "modern architecture glass buildings with blue sky reflection",
   "required_image_count": 2,
-  "quality": "high",
   "query_texts": [
     "modern glass architecture",
     "blue sky building reflection",
     "contemporary office tower"
   ],
-  "material_types": ["photo"],
-  "visual_requirements": ["sharp focus", "natural lighting"],
-  "negative_scope": ["rendering", "drawing", "old building"],
-  "source_diversity_requirement": 2,
-  "retry_limit": 1
+  "visual_requirements": [
+    "sharp focus",
+    "natural lighting"
+  ],
+  "negative_scope": [
+    "rendering",
+    "drawing",
+    "old building"
+  ]
 }

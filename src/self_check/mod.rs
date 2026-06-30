@@ -550,22 +550,6 @@ fn check_query_plan(
                 // This case would have been rejected, so we don't reach here.
             }
 
-            // Default explanations for fields that were not explicitly set
-            if request.query_plan_input.quality == crate::domain::query_plan::QualityTier::General {
-                default_explanations
-                    .push("quality_tier 未指定或为默认值，已应用通用质量 (general)。".into());
-            }
-            if request.query_plan_input.output_preference
-                == crate::domain::query_plan::OutputPreference::Human
-            {
-                default_explanations.push(
-                    "output_preference 未指定或为默认值，已应用面向人工查看 (human)。".into(),
-                );
-            }
-            if request.query_plan_input.retry_limit == 3 {
-                default_explanations.push("retry_limit 未指定或为默认值，已应用 3 次重试。".into());
-            }
-
             // Large count warning
             if plan.required_count >= 100 {
                 let msg = format!(
@@ -1352,7 +1336,7 @@ mod tests {
     }
 
     #[test]
-    fn retry_limit_exceeded_produces_blocked() {
+    fn retry_limit_input_is_ignored_by_self_check() {
         let request = SelfCheckRequest {
             query_plan_input: QueryPlanInput {
                 description: "test".into(),
@@ -1363,8 +1347,13 @@ mod tests {
         };
 
         let report = run_self_check(request);
-        assert_eq!(report.status, SelfCheckStatus::Blocked);
-        assert!(!report.blockers.is_empty());
+        assert_eq!(report.status, SelfCheckStatus::Warning);
+        assert!(report.query_plan_valid);
+        assert!(report.blockers.is_empty());
+        assert!(!report
+            .default_explanations
+            .iter()
+            .any(|explanation| explanation.contains("retry_limit")));
     }
 
     // -----------------------------------------------------------------------
@@ -1656,11 +1645,11 @@ mod tests {
     // -----------------------------------------------------------------------
 
     #[test]
-    fn default_explanations_included_in_report() {
+    fn default_explanations_only_cover_supported_query_plan_defaults() {
         let request = SelfCheckRequest {
             query_plan_input: QueryPlanInput {
                 description: "test".into(),
-                required_image_count: 1,
+                required_image_count: 0,
                 quality: QualityTier::General,
                 output_preference: OutputPreference::Human,
                 retry_limit: 3,
@@ -1674,15 +1663,17 @@ mod tests {
         assert!(report
             .default_explanations
             .iter()
-            .any(|e| e.contains("quality_tier")));
-        assert!(report
-            .default_explanations
-            .iter()
-            .any(|e| e.contains("output_preference")));
-        assert!(report
-            .default_explanations
-            .iter()
-            .any(|e| e.contains("retry_limit")));
+            .any(|e| e.contains("required_count") || e.contains("required_image_count")));
+        for unsupported_field in ["quality_tier", "output_preference", "retry_limit"] {
+            assert!(
+                !report
+                    .default_explanations
+                    .iter()
+                    .any(|e| e.contains(unsupported_field)),
+                "unsupported QueryPlan field should not be explained as an input default: {}",
+                unsupported_field
+            );
+        }
     }
 
     // -----------------------------------------------------------------------

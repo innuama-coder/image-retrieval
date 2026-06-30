@@ -16,11 +16,6 @@
       "accepted_delta": 1
     }
   ],
-  "source_diversity": {
-    "required": 1,
-    "actual": 1,
-    "met": true
-  },
   "required_count": 1,
   "accepted_count": 1,
   "coverage_gap": 0

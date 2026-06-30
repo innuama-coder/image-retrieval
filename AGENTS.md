@@ -30,12 +30,19 @@ The CLI workflow is:
 ## QueryPlan
 
 The core of a `QueryPlan` is the semantic description of the desired image.
+The description must only express image content that can be checked from the
+image itself.
 
 It must also include:
 
 - Required image count.
-- Quality requirements.
-- Defaults for count and quality when omitted.
+
+It must not encode source, license, provider, retrieval, authorization,
+paywall, quality, retry, execution, or other non-image-content requirements.
+Those concerns belong to runtime configuration, provider/channel policy, or
+downstream evidence, not to the QueryPlan. Legacy fields for these concerns may
+be parsed for compatibility, but production admission must not let them affect
+search, retrieval, or VLM acceptance.
 
 Candidate search should target roughly 20 candidates per required delivered
 image. If one requirement asks for multiple delivered images, increase the

@@ -17,7 +17,9 @@
   "vlm_decision": {
     "decision": "approve",
     "provider_id": "fixture_vlm",
-    "evidence_source": "fixture_candidate_evaluation"
+    "evidence_source": "fixture_candidate_evaluation",
+    "rationale_summary": "The candidate title and snippet describe a sunset over a mountain landscape with orange sky.",
+    "raw_verdict": "{\"relevance_score\":0.95,\"rationale\":\"The candidate title and snippet describe a sunset over a mountain landscape with orange sky.\"}"
   },
   "redaction_applied": true
 }

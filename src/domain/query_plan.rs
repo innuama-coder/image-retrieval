@@ -42,12 +42,13 @@ pub struct QueryPlanInput {
     #[serde(default = "default_required_image_count", alias = "required_count")]
     pub required_image_count: u32,
 
-    /// Quality tier preference. Supported values: `general`, `high`, `strict`.
-    /// Accepts `quality_tier` as input alias for backward compatibility.
+    /// Deprecated compatibility input. QueryPlan admission ignores this value;
+    /// runtime/image quality policy is not a QueryPlan requirement.
     #[serde(default, alias = "quality_tier")]
     pub quality: QualityTier,
 
-    /// Structured quality requirements that override tier-derived defaults.
+    /// Deprecated compatibility input. QueryPlan admission ignores these
+    /// values; runtime/image quality policy is not a QueryPlan requirement.
     #[serde(default)]
     pub quality_requirements: QualityRequirements,
 
@@ -67,24 +68,27 @@ pub struct QueryPlanInput {
     #[serde(default)]
     pub negative_scope: Vec<String>,
 
-    /// Desired minimum number of distinct sources. Must be between 1 and
-    /// `required_image_count` when present.
+    /// Deprecated compatibility input. QueryPlan admission ignores source
+    /// requirements; source evidence is not part of image-content semantics.
     #[serde(default)]
     pub source_diversity_requirement: Option<u32>,
 
-    /// Authorization risk preference.
+    /// Deprecated compatibility input. QueryPlan admission ignores this value;
+    /// authorization policy belongs to runtime configuration.
     #[serde(default)]
     pub authorization_preference: AuthorizationPreference,
 
-    /// Output preference: human-readable vs automation-consumable.
+    /// Deprecated compatibility input. QueryPlan admission ignores this value.
     #[serde(default)]
     pub output_preference: OutputPreference,
 
-    /// Provider-level policy constraints.
+    /// Deprecated compatibility input. QueryPlan admission ignores provider
+    /// policy; provider selection belongs to runtime configuration.
     #[serde(default)]
     pub provider_policy: QueryProviderPolicy,
 
-    /// Retrieval-level policy constraints.
+    /// Deprecated compatibility input. QueryPlan admission ignores retrieval
+    /// policy; channel policy belongs to runtime configuration.
     #[serde(default)]
     pub retrieval_policy: QueryRetrievalPolicy,
 
@@ -521,6 +525,11 @@ pub enum AdmissionFailureCode {
     /// Robots unknown posture is configured as block.
     #[serde(rename = "POLICY_ROBOTS_BLOCKED")]
     PolicyRobotsBlocked,
+
+    /// QueryPlan text contains source/license/provider requirements that are
+    /// not image-content semantics.
+    #[serde(rename = "NON_CONTENT_REQUIREMENT_UNSUPPORTED")]
+    NonContentRequirementUnsupported,
 }
 
 /// A diagnostic produced during QueryPlan admission.
@@ -720,11 +729,8 @@ impl Default for AdmissionConfig {
 /// # Blocking checks
 ///
 /// - `description` is empty or whitespace-only.
-/// - `retry_limit` exceeds the constitution maximum of 3.
 /// - `required_image_count` exceeds `admission_config.max_required_image_count`.
 /// - Target derivation overflows `u32`.
-/// - `source_diversity_requirement > required_image_count`.
-///
 /// # Non-blocking checks
 ///
 /// - `required_image_count` is zero (defaulted to 1).
@@ -750,19 +756,13 @@ pub fn admit_query_plan(
         };
     }
 
-    // --- blocking: retry_limit ---
+    reject_non_content_requirements_v1(trimmed, &input.query_texts, &mut diagnostics);
+
+    // --- compatibility: retry_limit ---
+    //
+    // QueryPlan no longer supports execution-policy requirements. The
+    // constitution-level retry limit remains fixed at the default below.
     const MAX_RETRY: u8 = 3;
-    if input.retry_limit > MAX_RETRY {
-        diagnostics.push(AdmissionDiagnostic::error(
-            AdmissionFailureCode::RetryLimitExceeded,
-            "retry_limit",
-            format!(
-                "Retry limit {} exceeds the maximum allowed ({}).",
-                input.retry_limit, MAX_RETRY
-            ),
-            Some(format!("Set retry_limit to at most {}.", MAX_RETRY)),
-        ));
-    }
 
     // --- blocking: required_image_count limit ---
     if input.required_image_count > admission_config.max_required_image_count {
@@ -853,20 +853,6 @@ pub fn admit_query_plan(
         }
     };
 
-    // --- non-blocking: source diversity ---
-    if let Some(diversity) = input.source_diversity_requirement {
-        if diversity > applied_count {
-            diagnostics.push(AdmissionDiagnostic::warning(
-                AdmissionFailureCode::SourceDiversityExceedsRequired,
-                "source_diversity_requirement",
-                format!(
-                    "Source diversity requirement ({}) exceeds required image count ({}).",
-                    diversity, applied_count
-                ),
-            ));
-        }
-    }
-
     // --- non-blocking: sensitive content (before query_texts move) ---
     check_sensitive_patterns_v1(&input, &mut diagnostics);
 
@@ -894,7 +880,7 @@ pub fn admit_query_plan(
     }
 
     // --- build normalized plan ---
-    let retry_limit = input.retry_limit.min(MAX_RETRY);
+    let retry_limit = default_retry_limit().min(MAX_RETRY);
     let full_attempt_limit = 1 + retry_limit;
 
     let normalized = NormalizedQueryPlan {
@@ -902,18 +888,18 @@ pub fn admit_query_plan(
         description: trimmed.to_string(),
         query_texts,
         required_image_count: applied_count,
-        quality: input.quality,
-        quality_requirements: input.quality_requirements,
-        material_types: input.material_types,
+        quality: QualityTier::General,
+        quality_requirements: QualityRequirements::default(),
+        material_types: Vec::new(),
         visual_requirements: input.visual_requirements,
         negative_scope: input.negative_scope,
-        source_diversity_requirement: input.source_diversity_requirement,
+        source_diversity_requirement: None,
         candidate_target,
         retrieval_batch_target,
         retry_limit,
         full_attempt_limit,
-        provider_policy: input.provider_policy,
-        retrieval_policy: input.retrieval_policy,
+        provider_policy: QueryProviderPolicy::default(),
+        retrieval_policy: QueryRetrievalPolicy::default(),
         admission_diagnostics: diagnostics.clone(),
     };
 
@@ -1187,17 +1173,7 @@ pub fn validate_query_plan(input: QueryPlanInput) -> ValidationOutcome {
         ));
     }
 
-    const MAX_RETRY: u32 = 3;
-    if (input.retry_limit as u32) > MAX_RETRY {
-        diagnostics.push(InputDiagnostic::error(
-            "retry_limit",
-            format!(
-                "重试策略越界：retry_limit 为 {}，但宪法允许最多 {} 次重试。",
-                input.retry_limit, MAX_RETRY
-            ),
-            format!("请将 retry_limit 设置为不超过 {} 的值。", MAX_RETRY),
-        ));
-    }
+    reject_non_content_requirements_legacy(trimmed, &input.query_texts, &mut diagnostics);
 
     let errors: Vec<InputDiagnostic> = diagnostics
         .iter()
@@ -1238,11 +1214,11 @@ pub fn validate_query_plan(input: QueryPlanInput) -> ValidationOutcome {
     let plan = ValidatedQueryPlan {
         description: trimmed.to_string(),
         required_count: applied_count,
-        quality_tier: input.quality,
-        content_constraints: input.content_constraints,
-        authorization_preference: input.authorization_preference,
-        output_preference: input.output_preference,
-        retry_limit: (input.retry_limit as u32).min(MAX_RETRY),
+        quality_tier: QualityTier::General,
+        content_constraints: ContentConstraints::default(),
+        authorization_preference: AuthorizationPreference::default(),
+        output_preference: OutputPreference::default(),
+        retry_limit: default_retry_limit() as u32,
     };
 
     ValidationOutcome::Valid {
@@ -1254,6 +1230,94 @@ pub fn validate_query_plan(input: QueryPlanInput) -> ValidationOutcome {
 // ---------------------------------------------------------------------------
 // Sensitive-input detection
 // ---------------------------------------------------------------------------
+
+const NON_CONTENT_REQUIREMENT_TERMS: &[&str] = &[
+    "public domain",
+    "royalty free",
+    "royalty-free",
+    "creative commons",
+    "copyright",
+    "license",
+    "licensed",
+    "open license",
+    "stock photo",
+    "source diversity",
+    "high quality",
+    "high resolution",
+    "distinct photos",
+    "different photos",
+    "multiple photos",
+    "several photos",
+    "photos of",
+    "images of",
+    "pictures of",
+];
+
+fn non_content_requirement_term(text: &str) -> Option<&'static str> {
+    let lower = text.to_lowercase();
+    NON_CONTENT_REQUIREMENT_TERMS
+        .iter()
+        .copied()
+        .find(|term| lower.contains(term))
+}
+
+fn reject_non_content_requirements_v1(
+    description: &str,
+    query_texts: &[String],
+    diagnostics: &mut Vec<AdmissionDiagnostic>,
+) {
+    if let Some(term) = non_content_requirement_term(description) {
+        diagnostics.push(AdmissionDiagnostic::error(
+            AdmissionFailureCode::NonContentRequirementUnsupported,
+            "description",
+            format!(
+                "QueryPlan description contains unsupported non-image-content requirement '{}'.",
+                term
+            ),
+            Some("Remove count, collection, source, license, provider, retrieval, quality, and policy requirements."),
+        ));
+    }
+
+    for (i, query_text) in query_texts.iter().enumerate() {
+        if let Some(term) = non_content_requirement_term(query_text) {
+            diagnostics.push(AdmissionDiagnostic::error(
+                AdmissionFailureCode::NonContentRequirementUnsupported,
+                format!("query_texts[{}]", i),
+                format!(
+                    "QueryPlan query text contains unsupported non-image-content requirement '{}'.",
+                    term
+                ),
+                Some(
+                    "Keep query_texts focused on image content, not count, collection, source, license, provider, retrieval, quality, or policy requirements.",
+                ),
+            ));
+        }
+    }
+}
+
+fn reject_non_content_requirements_legacy(
+    description: &str,
+    query_texts: &[String],
+    diagnostics: &mut Vec<InputDiagnostic>,
+) {
+    if let Some(term) = non_content_requirement_term(description) {
+        diagnostics.push(InputDiagnostic::error(
+            "description",
+            format!("QueryPlan 描述包含不支持的非图片内容要求：'{}'。", term),
+            "请移除数量、集合、来源、授权、provider、retrieval、质量或策略类要求。",
+        ));
+    }
+
+    for (i, query_text) in query_texts.iter().enumerate() {
+        if let Some(term) = non_content_requirement_term(query_text) {
+            diagnostics.push(InputDiagnostic::error(
+                format!("query_texts[{}]", i),
+                format!("QueryPlan 搜索文本包含不支持的非图片内容要求：'{}'。", term),
+                "请只保留图片内容语义，不要包含数量、集合、来源、授权、provider、retrieval、质量或策略类要求。",
+            ));
+        }
+    }
+}
 
 /// Patterns that suggest the user accidentally pasted credentials or tokens.
 const SENSITIVE_PATTERNS: &[(&str, &str)] = &[
@@ -1472,6 +1536,56 @@ mod tests {
     }
 
     #[test]
+    fn admit_rejects_source_or_license_terms_in_query_text() {
+        let input = QueryPlanInput {
+            description: "public domain photo of a red apple".into(),
+            query_texts: vec!["red apple royalty free image".into()],
+            ..Default::default()
+        };
+
+        let outcome = admit_query_plan(input, &AdmissionConfig::default());
+        assert!(!outcome.is_accepted());
+        match outcome {
+            AdmissionOutcome::Rejected { diagnostics } => {
+                assert!(diagnostics.iter().any(|d| {
+                    d.code == AdmissionFailureCode::NonContentRequirementUnsupported
+                        && d.field_path == "description"
+                }));
+                assert!(diagnostics.iter().any(|d| {
+                    d.code == AdmissionFailureCode::NonContentRequirementUnsupported
+                        && d.field_path == "query_texts[0]"
+                }));
+            }
+            _ => panic!("expected rejected"),
+        }
+    }
+
+    #[test]
+    fn admit_rejects_collection_count_terms_in_query_text() {
+        let input = QueryPlanInput {
+            description: "three distinct photos of hot air balloons".into(),
+            query_texts: vec!["multiple images of Cappadocia balloons".into()],
+            ..Default::default()
+        };
+
+        let outcome = admit_query_plan(input, &AdmissionConfig::default());
+        assert!(!outcome.is_accepted());
+        match outcome {
+            AdmissionOutcome::Rejected { diagnostics } => {
+                assert!(diagnostics.iter().any(|d| {
+                    d.code == AdmissionFailureCode::NonContentRequirementUnsupported
+                        && d.field_path == "description"
+                }));
+                assert!(diagnostics.iter().any(|d| {
+                    d.code == AdmissionFailureCode::NonContentRequirementUnsupported
+                        && d.field_path == "query_texts[0]"
+                }));
+            }
+            _ => panic!("expected rejected"),
+        }
+    }
+
+    #[test]
     fn admit_whitespace_only_description_rejected() {
         let input = QueryPlanInput {
             description: "   \n  \t  ".into(),
@@ -1482,14 +1596,17 @@ mod tests {
     }
 
     #[test]
-    fn admit_retry_limit_exceeds_max_rejected() {
+    fn admit_ignores_retry_limit_input() {
         let input = QueryPlanInput {
             description: "test".into(),
             retry_limit: 10,
             ..Default::default()
         };
         let outcome = admit_query_plan(input, &AdmissionConfig::default());
-        assert!(!outcome.is_accepted());
+        assert!(outcome.is_accepted());
+        let plan = outcome.unwrap();
+        assert_eq!(plan.retry_limit, 3);
+        assert_eq!(plan.full_attempt_limit, 4);
     }
 
     #[test]
@@ -1554,7 +1671,7 @@ mod tests {
     }
 
     #[test]
-    fn admit_source_diversity_exceeds_required_warns() {
+    fn admit_ignores_source_diversity_requirement() {
         let input = QueryPlanInput {
             description: "test".into(),
             required_image_count: 2,
@@ -1564,8 +1681,12 @@ mod tests {
         let outcome = admit_query_plan(input, &AdmissionConfig::default());
         assert!(outcome.is_accepted());
         match outcome {
-            AdmissionOutcome::Accepted { warnings, .. } => {
-                assert!(warnings
+            AdmissionOutcome::Accepted {
+                query_plan,
+                warnings,
+            } => {
+                assert_eq!(query_plan.source_diversity_requirement, None);
+                assert!(!warnings
                     .iter()
                     .any(|d| d.code == AdmissionFailureCode::SourceDiversityExceedsRequired));
             }
@@ -1628,7 +1749,7 @@ mod tests {
     }
 
     #[test]
-    fn full_attempt_limit_with_retry_limit_2() {
+    fn full_attempt_limit_ignores_query_plan_retry_limit() {
         let input = QueryPlanInput {
             description: "test".into(),
             retry_limit: 2,
@@ -1636,7 +1757,8 @@ mod tests {
         };
         let outcome = admit_query_plan(input, &AdmissionConfig::default());
         let plan = outcome.unwrap();
-        assert_eq!(plan.full_attempt_limit, 3);
+        assert_eq!(plan.retry_limit, 3);
+        assert_eq!(plan.full_attempt_limit, 4);
     }
 
     // =========================================================================
@@ -1915,14 +2037,46 @@ mod tests {
     }
 
     #[test]
-    fn legacy_validate_retry_exceeds_max_rejected() {
+    fn legacy_validate_rejects_source_or_license_terms() {
+        let input = QueryPlanInput {
+            description: "public domain photo of a red apple".into(),
+            query_texts: vec!["red apple royalty free image".into()],
+            ..Default::default()
+        };
+
+        let outcome = validate_query_plan(input);
+        assert!(!outcome.is_valid());
+        let diagnostics = outcome.diagnostics();
+        assert!(diagnostics.iter().any(|d| d.field == "description"));
+        assert!(diagnostics.iter().any(|d| d.field == "query_texts[0]"));
+    }
+
+    #[test]
+    fn legacy_validate_rejects_collection_count_terms() {
+        let input = QueryPlanInput {
+            description: "three distinct photos of hot air balloons".into(),
+            query_texts: vec!["multiple images of Cappadocia balloons".into()],
+            ..Default::default()
+        };
+
+        let outcome = validate_query_plan(input);
+        assert!(!outcome.is_valid());
+        let diagnostics = outcome.diagnostics();
+        assert!(diagnostics.iter().any(|d| d.field == "description"));
+        assert!(diagnostics.iter().any(|d| d.field == "query_texts[0]"));
+    }
+
+    #[test]
+    fn legacy_validate_ignores_retry_limit_input() {
         let input = QueryPlanInput {
             description: "test".into(),
             retry_limit: 10,
             ..Default::default()
         };
         let outcome = validate_query_plan(input);
-        assert!(!outcome.is_valid());
+        assert!(outcome.is_valid());
+        let plan = outcome.unwrap();
+        assert_eq!(plan.retry_limit, 3);
     }
 
     #[test]

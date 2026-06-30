@@ -38,6 +38,13 @@ fn read_fixture_json<T: serde::de::DeserializeOwned>(relative: &str) -> T {
         .unwrap_or_else(|e| panic!("failed to parse fixture {}: {}", path.display(), e))
 }
 
+fn assert_non_empty_str(value: &serde_json::Value, label: &str) {
+    let text = value
+        .as_str()
+        .unwrap_or_else(|| panic!("{} must be a string", label));
+    assert!(!text.trim().is_empty(), "{} must not be empty", label);
+}
+
 // =============================================================================
 // QueryPlan fixture loading and admission
 // =============================================================================
@@ -52,7 +59,7 @@ fn fixture_query_plan_basic_loads_and_admits() {
     assert_eq!(input.required_image_count, 1);
     assert_eq!(input.quality, QualityTier::General);
     assert_eq!(input.query_texts.len(), 2);
-    assert_eq!(input.material_types, vec!["photo"]);
+    assert!(input.material_types.is_empty());
     assert_eq!(input.negative_scope, vec!["night", "black and white"]);
     assert_eq!(input.retry_limit, 3);
 
@@ -67,17 +74,17 @@ fn fixture_query_plan_basic_loads_and_admits() {
 #[test]
 fn fixture_query_plan_high_quality_multi_loads_and_admits() {
     let input: QueryPlanInput = read_fixture_json("query-plans/query-plan-high-quality-multi.json");
-    assert_eq!(input.quality, QualityTier::High);
+    assert_eq!(input.quality, QualityTier::General);
     assert_eq!(input.required_image_count, 2);
-    assert_eq!(input.source_diversity_requirement, Some(2));
-    assert_eq!(input.retry_limit, 1);
+    assert_eq!(input.source_diversity_requirement, None);
+    assert_eq!(input.retry_limit, 3);
 
     let outcome = admit_query_plan(input, &AdmissionConfig::default());
     assert!(outcome.is_accepted());
     let plan = outcome.unwrap();
     assert_eq!(plan.candidate_target, 40);
     assert_eq!(plan.retrieval_batch_target, 4);
-    assert_eq!(plan.full_attempt_limit, 2);
+    assert_eq!(plan.full_attempt_limit, 4);
 }
 
 #[test]
@@ -245,6 +252,25 @@ fn fixture_package_passed_minimal_preserves_image_reference_metrics() {
             .iter()
             .any(|metric| metric["kind"] == "mechanical_reference"));
     }
+}
+
+#[test]
+fn fixture_package_passed_minimal_preserves_vlm_rationales() {
+    let retrieved: serde_json::Value =
+        read_fixture_json("packages/passed_minimal/retrieved-images.json");
+    let candidate_quality: serde_json::Value =
+        read_fixture_json("packages/passed_minimal/evidence/candidate-quality/cand-001.json");
+
+    let image_vlm = &retrieved["image_acceptance_decisions"][0]["vlm_decision"];
+    assert_non_empty_str(&image_vlm["rationale_summary"], "image VLM rationale");
+    assert_non_empty_str(&image_vlm["raw_verdict"], "image VLM raw verdict");
+
+    let candidate_vlm = &candidate_quality["vlm_decision"];
+    assert_non_empty_str(
+        &candidate_vlm["rationale_summary"],
+        "candidate VLM rationale",
+    );
+    assert_non_empty_str(&candidate_vlm["raw_verdict"], "candidate VLM raw verdict");
 }
 
 #[test]

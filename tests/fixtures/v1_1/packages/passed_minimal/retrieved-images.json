@@ -86,7 +86,9 @@
       "vlm_decision": {
         "decision": "approve",
         "provider_id": "fixture_vlm",
-        "notes": "fixture VLM approved"
+        "notes": "fixture VLM approved",
+        "rationale_summary": "The fixture image shows a sunset over a mountain landscape with a vibrant orange sky.",
+        "raw_verdict": "{\"decision\":\"approve\",\"rationale\":\"The fixture image shows a sunset over a mountain landscape with a vibrant orange sky.\"}"
       }
     }
   ],

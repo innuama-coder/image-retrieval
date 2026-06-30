@@ -225,19 +225,23 @@ fn e2e_input_rejected_whitespace_only_description() {
 }
 
 #[test]
-fn e2e_input_rejected_retry_limit_exceeded() {
+fn e2e_query_plan_retry_limit_input_is_ignored() {
     let input = QueryPlanInput {
         description: "valid description".into(),
         retry_limit: 10,
         ..Default::default()
     };
     let outcome = validate_query_plan(input);
-    assert!(!outcome.is_valid());
     match outcome {
-        image_retrieval::domain::query_plan::ValidationOutcome::Rejected(rejection) => {
-            assert!(rejection.summary.contains("输入被拒绝"));
+        image_retrieval::domain::query_plan::ValidationOutcome::Valid { plan, .. } => {
+            assert_eq!(plan.retry_limit, 3);
+            let task_plan = TaskPlan::from_validated(plan);
+            assert_eq!(task_plan.max_attempts, 4);
         }
-        _ => panic!("expected rejection"),
+        other => panic!(
+            "expected valid plan with default retry limit, got {:?}",
+            other
+        ),
     }
 }
 

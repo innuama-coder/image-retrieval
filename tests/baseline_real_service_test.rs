@@ -9,10 +9,8 @@ fn binary() -> PathBuf {
 }
 
 fn catalog() -> serde_json::Value {
-    serde_json::from_str(include_str!(
-        "fixtures/v1_1/baseline/case-catalog.json"
-    ))
-    .expect("baseline case catalog must be valid JSON")
+    serde_json::from_str(include_str!("fixtures/v1_1/baseline/case-catalog.json"))
+        .expect("baseline case catalog must be valid JSON")
 }
 
 fn opt_in_enabled() -> bool {
@@ -44,7 +42,9 @@ fn report_dir() -> PathBuf {
 fn config_path() -> PathBuf {
     std::env::var("IMAGE_RETRIEVAL_BASELINE_CONFIG")
         .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("tests/fixtures/v1_1/configs/config-production-like.toml"))
+        .unwrap_or_else(|_| {
+            PathBuf::from("tests/fixtures/v1_1/configs/config-production-like.toml")
+        })
 }
 
 fn require_env(name: &str) {

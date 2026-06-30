@@ -1949,11 +1949,6 @@ impl CanonicalPackageBuilder {
                     "retry_count": a.retry_count,
                     "accepted_delta": a.accepted_delta_count,
                 })).collect::<Vec<_>>(),
-                "source_diversity": {
-                    "required": inputs.required_image_count,
-                    "actual": accepted_count,
-                    "met": accepted_count >= inputs.required_image_count,
-                },
             }),
         )?;
 
@@ -2527,7 +2522,9 @@ mod canonical_tests {
                     ],
                     vlm_decision: Some(serde_json::json!({
                         "decision": "approve",
-                        "provider_id": "fixture_vlm"
+                        "provider_id": "fixture_vlm",
+                        "rationale_summary": "Fixture candidate title and snippet match the requested image content.",
+                        "raw_verdict": "{\"relevance_score\":0.95,\"rationale\":\"Fixture candidate title and snippet match the requested image content.\"}"
                     })),
                 },
                 image_decision: DeliveredImageAcceptanceEvidence {
@@ -2542,7 +2539,9 @@ mod canonical_tests {
                     vlm_decision: Some(serde_json::json!({
                         "decision": "approve",
                         "provider_id": "fixture_vlm",
-                        "notes": "fixture accepted"
+                        "notes": "fixture accepted",
+                        "rationale_summary": "Fixture image visibly matches the requested content.",
+                        "raw_verdict": "{\"decision\":\"approve\",\"rationale\":\"Fixture image visibly matches the requested content.\"}"
                     })),
                 },
             },
@@ -2925,6 +2924,16 @@ mod canonical_tests {
             retrieved["image_acceptance_decisions"][0]["vlm_decision"]["decision"],
             "approve"
         );
+        assert!(
+            retrieved["image_acceptance_decisions"][0]["vlm_decision"]["rationale_summary"]
+                .as_str()
+                .is_some_and(|value| !value.trim().is_empty())
+        );
+        assert!(
+            retrieved["image_acceptance_decisions"][0]["vlm_decision"]["raw_verdict"]
+                .as_str()
+                .is_some_and(|value| !value.trim().is_empty())
+        );
         assert!(pkg.join("evidence/candidate-quality/c-0001.json").exists());
         let manifest: serde_json::Value =
             serde_json::from_slice(&std::fs::read(pkg.join("retrieval-manifest.json")).unwrap())
@@ -2935,6 +2944,12 @@ mod canonical_tests {
         )
         .unwrap();
         assert_eq!(candidate_quality["vlm_decision"]["decision"], "approve");
+        assert!(candidate_quality["vlm_decision"]["rationale_summary"]
+            .as_str()
+            .is_some_and(|value| !value.trim().is_empty()));
+        assert!(candidate_quality["vlm_decision"]["raw_verdict"]
+            .as_str()
+            .is_some_and(|value| !value.trim().is_empty()));
 
         let _ = std::fs::remove_dir_all(&dir);
         let _ = std::fs::remove_dir_all(&artifact_dir);

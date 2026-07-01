@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "case_id": "rt_direct_ok_batch",
+  "candidates": [
+    {
+      "candidate_id": "rt_direct_ok_batch-ret-000",
+      "image_url": "https://example.com/rt_direct_ok_batch/0.jpg"
+    },
+    {
+      "candidate_id": "rt_direct_ok_batch-ret-001",
+      "image_url": "https://example.com/rt_direct_ok_batch/1.jpg"
+    },
+    {
+      "candidate_id": "rt_direct_ok_batch-ret-002",
+      "image_url": "https://example.com/rt_direct_ok_batch/2.jpg"
+    }
+  ]
+}

@@ -1,0 +1,2 @@
+channel_kind = "normal_web_fetch"
+fixture_only = true

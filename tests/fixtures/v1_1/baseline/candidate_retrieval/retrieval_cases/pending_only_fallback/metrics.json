@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "case_id": "rt_pending_only_fallback",
+  "metrics": {
+    "retrieval_success_rate": 0.66,
+    "artifact_complete_count": 2,
+    "failure_classification_accuracy": 1.0,
+    "fallback_attempt_count": 1,
+    "fallback_success_count": 0,
+    "policy_blocked_count": 0,
+    "metadata_only_rejected_count": 0,
+    "completed_job_reattempt_count": 0
+  }
+}

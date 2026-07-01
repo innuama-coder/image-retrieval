@@ -298,7 +298,16 @@ Optional runner environment variables:
   `target/baseline-reports`.
 
 Scenario tests must never assert exact candidate ids from the public web.
-They should assert thresholds and produce a report for trend comparison.
+They must assert stable CLI/package thresholds: command exit code, delivery
+status, accepted image count relative to the QueryPlan count, and package
+validation status. Metrics that depend on deterministic fixture labels belong
+to unit thresholds, not live public-web scenario thresholds.
+
+Real-service scenario tests require all configured search providers, retrieval
+channels, and Qwen evaluators to be real. They do not require unconfigured
+self-hosted or paid fallback services to succeed. Self-hosted/paid fallback
+success is covered by deterministic unit fixtures until a service-specific
+adapter and credentials are explicitly configured for a real-service suite.
 
 ## Case Design
 
@@ -311,7 +320,8 @@ Each case should declare:
 - `difficulty_profile`
 - `fixtures`
 - `gold_labels`
-- `expected_metrics`
+- `expected_metrics.unit`
+- `expected_metrics.scenario_real_service`
 - `analysis_tags`
 - `execution_policy`
 

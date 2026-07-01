@@ -56,6 +56,20 @@ Result:
 - package:
   `/private/tmp/image-retrieval-real-run-v11-fix-20260624-final/package`
 
+Baseline real-service regression is a separate opt-in suite:
+
+```bash
+IMAGE_RETRIEVAL_REAL_BASELINE=1 \
+IMAGE_RETRIEVAL_BASELINE_CASES=rt_direct_ok_batch,dl_partial_delivery_with_accurate_gaps \
+IMAGE_RETRIEVAL_BASELINE_CONFIG=tests/fixtures/v1_1/configs/config-production-like.toml \
+cargo test --test baseline_real_service_test -- --nocapture
+```
+
+The baseline runner now fails the test when a real CLI case has a non-zero exit
+code, an unexpected status, insufficient accepted images, or failed package
+validation. Unit baseline tests cover candidate recall, candidate retrieval,
+and delivery fixture thresholds separately from public-web live scenarios.
+
 ## Evidence Checks
 
 The final smoke package confirms:

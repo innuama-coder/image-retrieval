@@ -1,0 +1,176 @@
+{
+  "schema_version": 1,
+  "case_id": "cr_high_quality_landscape_noisy",
+  "provider": "serpapi_fixture_response",
+  "candidates": [
+    {
+      "candidate_id": "cr_high_quality_landscape_noisy-cand-000",
+      "relevant": true
+    },
+    {
+      "candidate_id": "cr_high_quality_landscape_noisy-cand-001",
+      "relevant": true
+    },
+    {
+      "candidate_id": "cr_high_quality_landscape_noisy-cand-002",
+      "relevant": true
+    },
+    {
+      "candidate_id": "cr_high_quality_landscape_noisy-cand-003",
+      "relevant": true
+    },
+    {
+      "candidate_id": "cr_high_quality_landscape_noisy-cand-004",
+      "relevant": true
+    },
+    {
+      "candidate_id": "cr_high_quality_landscape_noisy-cand-005",
+      "relevant": true
+    },
+    {
+      "candidate_id": "cr_high_quality_landscape_noisy-cand-006",
+      "relevant": true
+    },
+    {
+      "candidate_id": "cr_high_quality_landscape_noisy-cand-007",
+      "relevant": true
+    },
+    {
+      "candidate_id": "cr_high_quality_landscape_noisy-cand-008",
+      "relevant": true
+    },
+    {
+      "candidate_id": "cr_high_quality_landscape_noisy-cand-009",
+      "relevant": true
+    },
+    {
+      "candidate_id": "cr_high_quality_landscape_noisy-cand-010",
+      "relevant": false
+    },
+    {
+      "candidate_id": "cr_high_quality_landscape_noisy-cand-011",
+      "relevant": false
+    },
+    {
+      "candidate_id": "cr_high_quality_landscape_noisy-cand-012",
+      "relevant": false
+    },
+    {
+      "candidate_id": "cr_high_quality_landscape_noisy-cand-013",
+      "relevant": false
+    },
+    {
+      "candidate_id": "cr_high_quality_landscape_noisy-cand-014",
+      "relevant": false
+    },
+    {
+      "candidate_id": "cr_high_quality_landscape_noisy-cand-015",
+      "relevant": false
+    },
+    {
+      "candidate_id": "cr_high_quality_landscape_noisy-cand-016",
+      "relevant": false
+    },
+    {
+      "candidate_id": "cr_high_quality_landscape_noisy-cand-017",
+      "relevant": false
+    },
+    {
+      "candidate_id": "cr_high_quality_landscape_noisy-cand-018",
+      "relevant": false
+    },
+    {
+      "candidate_id": "cr_high_quality_landscape_noisy-cand-019",
+      "relevant": false
+    },
+    {
+      "candidate_id": "cr_high_quality_landscape_noisy-cand-020",
+      "relevant": false
+    },
+    {
+      "candidate_id": "cr_high_quality_landscape_noisy-cand-021",
+      "relevant": false
+    },
+    {
+      "candidate_id": "cr_high_quality_landscape_noisy-cand-022",
+      "relevant": false
+    },
+    {
+      "candidate_id": "cr_high_quality_landscape_noisy-cand-023",
+      "relevant": false
+    },
+    {
+      "candidate_id": "cr_high_quality_landscape_noisy-cand-024",
+      "relevant": false
+    },
+    {
+      "candidate_id": "cr_high_quality_landscape_noisy-cand-025",
+      "relevant": false
+    },
+    {
+      "candidate_id": "cr_high_quality_landscape_noisy-cand-026",
+      "relevant": false
+    },
+    {
+      "candidate_id": "cr_high_quality_landscape_noisy-cand-027",
+      "relevant": false
+    },
+    {
+      "candidate_id": "cr_high_quality_landscape_noisy-cand-028",
+      "relevant": false
+    },
+    {
+      "candidate_id": "cr_high_quality_landscape_noisy-cand-029",
+      "relevant": false
+    },
+    {
+      "candidate_id": "cr_high_quality_landscape_noisy-cand-030",
+      "relevant": false
+    },
+    {
+      "candidate_id": "cr_high_quality_landscape_noisy-cand-031",
+      "relevant": false
+    },
+    {
+      "candidate_id": "cr_high_quality_landscape_noisy-cand-032",
+      "relevant": false
+    },
+    {
+      "candidate_id": "cr_high_quality_landscape_noisy-cand-033",
+      "relevant": false
+    },
+    {
+      "candidate_id": "cr_high_quality_landscape_noisy-cand-034",
+      "relevant": false
+    },
+    {
+      "candidate_id": "cr_high_quality_landscape_noisy-cand-035",
+      "relevant": false
+    },
+    {
+      "candidate_id": "cr_high_quality_landscape_noisy-cand-036",
+      "relevant": false
+    },
+    {
+      "candidate_id": "cr_high_quality_landscape_noisy-cand-037",
+      "relevant": false
+    },
+    {
+      "candidate_id": "cr_high_quality_landscape_noisy-cand-038",
+      "relevant": false
+    },
+    {
+      "candidate_id": "cr_high_quality_landscape_noisy-cand-039",
+      "relevant": false
+    }
+  ],
+  "metrics": {
+    "unique_candidate_count": 40,
+    "expected_candidate_recall": 0.9,
+    "precision_at_10": 0.7,
+    "duplicate_rate": 0.3,
+    "score_mae": 0.12,
+    "false_accept_count": 0,
+    "distinct_sources": 1
+  }
+}

@@ -17,7 +17,8 @@
       "mocks_allowed": false,
       "fakes_allowed": false,
       "requires_real_search_provider": true,
-      "requires_real_retrieval_channels": true,
+      "requires_real_configured_retrieval_channels": true,
+      "requires_unconfigured_fallback_success": false,
       "requires_real_vlm_evaluator": true,
       "requires_cli_execution": true,
       "allows_controlled_real_baseline_endpoints": true,
@@ -91,11 +92,19 @@
         ]
       },
       "expected_metrics": {
-        "min_unique_candidate_count": 20,
-        "expected_candidate_recall_min": 1.0,
-        "precision_at_10_min": 0.8,
-        "duplicate_rate_max": 0.25,
-        "score_mae_max": 0.1
+        "unit": {
+          "min_unique_candidate_count": 20,
+          "expected_candidate_recall_min": 1.0,
+          "precision_at_10_min": 0.8,
+          "duplicate_rate_max": 0.25,
+          "score_mae_max": 0.1
+        },
+        "scenario_real_service": {
+          "cli_exit_code": 0,
+          "status": "passed",
+          "accepted_count_min": 1,
+          "package_validation_passed": true
+        }
       },
       "analysis_tags": [
         "easy_recall",
@@ -159,11 +168,19 @@
         ]
       },
       "expected_metrics": {
-        "min_unique_candidate_count": 40,
-        "expected_candidate_recall_min": 0.9,
-        "precision_at_10_min": 0.7,
-        "duplicate_rate_max": 0.35,
-        "score_mae_max": 0.12
+        "unit": {
+          "min_unique_candidate_count": 40,
+          "expected_candidate_recall_min": 0.9,
+          "precision_at_10_min": 0.7,
+          "duplicate_rate_max": 0.35,
+          "score_mae_max": 0.12
+        },
+        "scenario_real_service": {
+          "cli_exit_code": 0,
+          "status": "passed",
+          "accepted_count_min": 2,
+          "package_validation_passed": true
+        }
       },
       "analysis_tags": [
         "high_quality",
@@ -221,11 +238,19 @@
         "duplicates": []
       },
       "expected_metrics": {
-        "min_unique_candidate_count": 20,
-        "expected_candidate_recall_min": 0.9,
-        "precision_at_10_min": 0.75,
-        "duplicate_rate_max": 0.2,
-        "false_accept_count_max": 0
+        "unit": {
+          "min_unique_candidate_count": 20,
+          "expected_candidate_recall_min": 0.9,
+          "precision_at_10_min": 0.75,
+          "duplicate_rate_max": 0.2,
+          "false_accept_count_max": 0
+        },
+        "scenario_real_service": {
+          "cli_exit_code": 0,
+          "status": "passed",
+          "accepted_count_min": 1,
+          "package_validation_passed": true
+        }
       },
       "analysis_tags": [
         "negative_scope",
@@ -293,11 +318,19 @@
         ]
       },
       "expected_metrics": {
-        "min_unique_candidate_count": 60,
-        "expected_candidate_recall_min": 0.85,
-        "precision_at_10_min": 0.7,
-        "duplicate_rate_max": 0.45,
-        "min_distinct_sources": 3
+        "unit": {
+          "min_unique_candidate_count": 60,
+          "expected_candidate_recall_min": 0.85,
+          "precision_at_10_min": 0.7,
+          "duplicate_rate_max": 0.45,
+          "min_distinct_sources": 3
+        },
+        "scenario_real_service": {
+          "cli_exit_code": 0,
+          "status": "passed",
+          "accepted_count_min": 3,
+          "package_validation_passed": true
+        }
       },
       "analysis_tags": [
         "multi_image",
@@ -354,11 +387,19 @@
         "duplicates": []
       },
       "expected_metrics": {
-        "min_unique_candidate_count": 12,
-        "expected_candidate_recall_min": 0.8,
-        "precision_at_10_min": 0.5,
-        "duplicate_rate_max": 0.25,
-        "score_mae_max": 0.15
+        "unit": {
+          "min_unique_candidate_count": 12,
+          "expected_candidate_recall_min": 0.8,
+          "precision_at_10_min": 0.5,
+          "duplicate_rate_max": 0.25,
+          "score_mae_max": 0.15
+        },
+        "scenario_real_service": {
+          "cli_exit_code": 0,
+          "status": "passed",
+          "accepted_count_min": 1,
+          "package_validation_passed": true
+        }
       },
       "analysis_tags": [
         "hard_recall",
@@ -408,10 +449,18 @@
         "expected_policy_blocked": []
       },
       "expected_metrics": {
-        "retrieval_success_rate_min": 1.0,
-        "artifact_complete_count": 3,
-        "failure_classification_accuracy_min": 1.0,
-        "fallback_attempt_count": 0
+        "unit": {
+          "retrieval_success_rate_min": 1.0,
+          "artifact_complete_count": 3,
+          "failure_classification_accuracy_min": 1.0,
+          "fallback_attempt_count": 0
+        },
+        "scenario_real_service": {
+          "cli_exit_code": 0,
+          "status": "passed",
+          "accepted_count_min": 1,
+          "package_validation_passed": true
+        }
       },
       "analysis_tags": [
         "retrieval_easy",
@@ -466,11 +515,19 @@
         }
       },
       "expected_metrics": {
-        "retrieval_success_rate_min": 0.66,
-        "artifact_complete_count": 2,
-        "fallback_attempt_count_min": 2,
-        "fallback_success_count_min": 2,
-        "failure_classification_accuracy_min": 1.0
+        "unit": {
+          "retrieval_success_rate_min": 0.66,
+          "artifact_complete_count": 2,
+          "fallback_attempt_count_min": 2,
+          "fallback_success_count_min": 2,
+          "failure_classification_accuracy_min": 1.0
+        },
+        "scenario_real_service": {
+          "cli_exit_code": 0,
+          "status": "passed",
+          "accepted_count_min": 1,
+          "package_validation_passed": true
+        }
       },
       "analysis_tags": [
         "source_page_fallback",
@@ -528,10 +585,18 @@
         }
       },
       "expected_metrics": {
-        "retrieval_success_rate_min": 0.33,
-        "artifact_complete_count": 1,
-        "policy_blocked_count": 1,
-        "failure_classification_accuracy_min": 1.0
+        "unit": {
+          "retrieval_success_rate_min": 0.33,
+          "artifact_complete_count": 1,
+          "policy_blocked_count": 1,
+          "failure_classification_accuracy_min": 1.0
+        },
+        "scenario_real_service": {
+          "cli_exit_code": 0,
+          "status": "passed",
+          "accepted_count_min": 1,
+          "package_validation_passed": true
+        }
       },
       "analysis_tags": [
         "hotlink_blocked",
@@ -588,10 +653,18 @@
         }
       },
       "expected_metrics": {
-        "retrieval_success_rate_min": 0.33,
-        "artifact_complete_count": 1,
-        "metadata_only_rejected_count": 1,
-        "failure_classification_accuracy_min": 1.0
+        "unit": {
+          "retrieval_success_rate_min": 0.33,
+          "artifact_complete_count": 1,
+          "metadata_only_rejected_count": 1,
+          "failure_classification_accuracy_min": 1.0
+        },
+        "scenario_real_service": {
+          "cli_exit_code": 0,
+          "status": "passed",
+          "accepted_count_min": 1,
+          "package_validation_passed": true
+        }
       },
       "analysis_tags": [
         "metadata_only",
@@ -650,11 +723,19 @@
         }
       },
       "expected_metrics": {
-        "retrieval_success_rate_min": 0.66,
-        "artifact_complete_count": 2,
-        "fallback_attempt_count_min": 1,
-        "completed_job_reattempt_count": 0,
-        "failure_classification_accuracy_min": 1.0
+        "unit": {
+          "retrieval_success_rate_min": 0.66,
+          "artifact_complete_count": 2,
+          "fallback_attempt_count_min": 1,
+          "completed_job_reattempt_count": 0,
+          "failure_classification_accuracy_min": 1.0
+        },
+        "scenario_real_service": {
+          "cli_exit_code": 0,
+          "status": "passed",
+          "accepted_count_min": 1,
+          "package_validation_passed": true
+        }
       },
       "analysis_tags": [
         "fallback_semantics",
@@ -699,11 +780,19 @@
         "duplicates": []
       },
       "expected_metrics": {
-        "accepted_count": 2,
-        "delivery_recall_min": 1.0,
-        "delivery_precision_min": 1.0,
-        "wrong_image_delivered_count": 0,
-        "package_validation_passed": true
+        "unit": {
+          "accepted_count": 2,
+          "delivery_recall_min": 1.0,
+          "delivery_precision_min": 1.0,
+          "wrong_image_delivered_count": 0,
+          "package_validation_passed": true
+        },
+        "scenario_real_service": {
+          "cli_exit_code": 0,
+          "status": "passed",
+          "accepted_count_min": 2,
+          "package_validation_passed": true
+        }
       },
       "analysis_tags": [
         "full_delivery",
@@ -751,11 +840,19 @@
         "duplicates": []
       },
       "expected_metrics": {
-        "accepted_count": 1,
-        "delivery_recall_min": 1.0,
-        "delivery_precision_min": 1.0,
-        "wrong_image_delivered_count": 0,
-        "package_validation_passed": true
+        "unit": {
+          "accepted_count": 1,
+          "delivery_recall_min": 1.0,
+          "delivery_precision_min": 1.0,
+          "wrong_image_delivered_count": 0,
+          "package_validation_passed": true
+        },
+        "scenario_real_service": {
+          "cli_exit_code": 0,
+          "status": "passed",
+          "accepted_count_min": 1,
+          "package_validation_passed": true
+        }
       },
       "analysis_tags": [
         "semantic_rejection",
@@ -806,11 +903,19 @@
         ]
       },
       "expected_metrics": {
-        "accepted_count": 1,
-        "delivery_recall_min": 1.0,
-        "delivery_precision_min": 1.0,
-        "wrong_image_delivered_count": 0,
-        "package_validation_passed": true
+        "unit": {
+          "accepted_count": 1,
+          "delivery_recall_min": 1.0,
+          "delivery_precision_min": 1.0,
+          "wrong_image_delivered_count": 0,
+          "package_validation_passed": true
+        },
+        "scenario_real_service": {
+          "cli_exit_code": 0,
+          "status": "passed",
+          "accepted_count_min": 1,
+          "package_validation_passed": true
+        }
       },
       "analysis_tags": [
         "quality_requirements",
@@ -861,12 +966,20 @@
         "partial_delivery_expected": true
       },
       "expected_metrics": {
-        "accepted_count": 2,
-        "delivery_recall_min": 0.66,
-        "delivery_precision_min": 1.0,
-        "wrong_image_delivered_count": 0,
-        "missing_expected_image_count": 1,
-        "package_validation_passed": true
+        "unit": {
+          "accepted_count": 2,
+          "delivery_recall_min": 0.66,
+          "delivery_precision_min": 1.0,
+          "wrong_image_delivered_count": 0,
+          "missing_expected_image_count": 1,
+          "package_validation_passed": true
+        },
+        "scenario_real_service": {
+          "cli_exit_code": 0,
+          "status": "passed",
+          "accepted_count_min": 3,
+          "package_validation_passed": true
+        }
       },
       "analysis_tags": [
         "partial_delivery",
@@ -923,11 +1036,19 @@
         ]
       },
       "expected_metrics": {
-        "accepted_count": 1,
-        "delivery_recall_min": 1.0,
-        "delivery_precision_min": 1.0,
-        "wrong_image_delivered_count": 0,
-        "package_validation_passed": true
+        "unit": {
+          "accepted_count": 1,
+          "delivery_recall_min": 1.0,
+          "delivery_precision_min": 1.0,
+          "wrong_image_delivered_count": 0,
+          "package_validation_passed": true
+        },
+        "scenario_real_service": {
+          "cli_exit_code": 0,
+          "status": "passed",
+          "accepted_count_min": 1,
+          "package_validation_passed": true
+        }
       },
       "analysis_tags": [
         "duplicate_delivery",

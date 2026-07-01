@@ -16,15 +16,21 @@
 
 ## QueryPlan Requirements
 
-A QueryPlan must include a semantic image description. It may also specify required image count, quality requirements, query texts, source policy, retrieval policy, and retry limit.
+A QueryPlan must include a semantic image description and required image count.
+The description must only express image content that can be checked from the
+image itself. Source, license, provider, retrieval, authorization, paywall,
+quality, retry, execution, and other non-image-content concerns are runtime
+configuration, provider/channel policy, or downstream evidence. Legacy fields
+for those concerns may be parsed for compatibility, but production admission
+must not let them affect search, retrieval, or Qwen acceptance.
 
 Defaults:
 
 - `required_image_count = 1`
-- `quality = general`
-- `retry_limit = 3`
 - `candidate_target = required_image_count * 20`
 - `retrieval_batch_target = required_image_count * 2`
+- `retry_limit = 3` as a fixed runtime constitution limit, not a QueryPlan
+  requirement.
 
 ## Functional Requirements
 
@@ -53,7 +59,7 @@ Defaults:
 | Search provider | SerpApi Google Images, credential env `SERPAPI_API_KEY`. |
 | Subjective evaluator | Qwen 3.5 VLM direct adapter, model `qwen3-vl-plus`, credential env `QWEN_API_KEY`. |
 | Qwen endpoint | Externalized with `QWEN_API_BASE_URL`. |
-| Retrieval | Normal web fetch enabled by default; self-hosted and paid tiers remain pluggable fallback channels. |
+| Retrieval | Normal web fetch is the default real v1.1 channel. Self-hosted and paid tiers are pluggable fallback channel boundaries and readiness surfaces; real success coverage requires explicitly configured service adapters and credentials. |
 
 ## Acceptance Criteria
 

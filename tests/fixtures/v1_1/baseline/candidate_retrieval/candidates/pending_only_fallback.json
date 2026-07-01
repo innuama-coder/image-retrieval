@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "case_id": "rt_pending_only_fallback",
+  "candidates": [
+    {
+      "candidate_id": "rt_pending_only_fallback-ret-000",
+      "image_url": "https://example.com/rt_pending_only_fallback/0.jpg"
+    },
+    {
+      "candidate_id": "rt_pending_only_fallback-ret-001",
+      "image_url": "https://example.com/rt_pending_only_fallback/1.jpg"
+    },
+    {
+      "candidate_id": "rt_pending_only_fallback-ret-002",
+      "image_url": "https://example.com/rt_pending_only_fallback/2.jpg"
+    }
+  ]
+}

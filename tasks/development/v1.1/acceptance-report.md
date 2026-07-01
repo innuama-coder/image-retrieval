@@ -83,6 +83,14 @@ Final package checks:
 
 ## Remaining Notes
 
-This report does not claim broad search-quality calibration beyond the single
-required v1.1 smoke QueryPlan. Post-MVP calibration remains a product iteration
-activity, not a release blocker for this v1.1 acceptance.
+The release smoke evidence is a single QueryPlan readiness check. The separate
+baseline suite now provides opt-in real-service threshold checks plus
+deterministic unit baseline fixtures for candidate recall, candidate retrieval,
+and delivery. Live public-web baseline scenarios assert stable package and
+delivery thresholds; deterministic recall/precision calibration stays in unit
+fixtures unless a future release adds stable labeled public-web evaluation.
+
+The default v1.1 production-like config covers SerpApi, Qwen, and normal web
+fetch as real services. Self-hosted and paid retrieval tiers remain pluggable
+fallback boundaries unless service-specific adapters and credentials are
+explicitly configured.

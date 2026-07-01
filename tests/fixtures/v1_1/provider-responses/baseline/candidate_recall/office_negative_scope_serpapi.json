@@ -1,0 +1,96 @@
+{
+  "schema_version": 1,
+  "case_id": "cr_negative_scope_no_text_overlay",
+  "provider": "serpapi_fixture_response",
+  "candidates": [
+    {
+      "candidate_id": "cr_negative_scope_no_text_overlay-cand-000",
+      "relevant": true
+    },
+    {
+      "candidate_id": "cr_negative_scope_no_text_overlay-cand-001",
+      "relevant": true
+    },
+    {
+      "candidate_id": "cr_negative_scope_no_text_overlay-cand-002",
+      "relevant": true
+    },
+    {
+      "candidate_id": "cr_negative_scope_no_text_overlay-cand-003",
+      "relevant": true
+    },
+    {
+      "candidate_id": "cr_negative_scope_no_text_overlay-cand-004",
+      "relevant": true
+    },
+    {
+      "candidate_id": "cr_negative_scope_no_text_overlay-cand-005",
+      "relevant": true
+    },
+    {
+      "candidate_id": "cr_negative_scope_no_text_overlay-cand-006",
+      "relevant": true
+    },
+    {
+      "candidate_id": "cr_negative_scope_no_text_overlay-cand-007",
+      "relevant": true
+    },
+    {
+      "candidate_id": "cr_negative_scope_no_text_overlay-cand-008",
+      "relevant": true
+    },
+    {
+      "candidate_id": "cr_negative_scope_no_text_overlay-cand-009",
+      "relevant": true
+    },
+    {
+      "candidate_id": "cr_negative_scope_no_text_overlay-cand-010",
+      "relevant": false
+    },
+    {
+      "candidate_id": "cr_negative_scope_no_text_overlay-cand-011",
+      "relevant": false
+    },
+    {
+      "candidate_id": "cr_negative_scope_no_text_overlay-cand-012",
+      "relevant": false
+    },
+    {
+      "candidate_id": "cr_negative_scope_no_text_overlay-cand-013",
+      "relevant": false
+    },
+    {
+      "candidate_id": "cr_negative_scope_no_text_overlay-cand-014",
+      "relevant": false
+    },
+    {
+      "candidate_id": "cr_negative_scope_no_text_overlay-cand-015",
+      "relevant": false
+    },
+    {
+      "candidate_id": "cr_negative_scope_no_text_overlay-cand-016",
+      "relevant": false
+    },
+    {
+      "candidate_id": "cr_negative_scope_no_text_overlay-cand-017",
+      "relevant": false
+    },
+    {
+      "candidate_id": "cr_negative_scope_no_text_overlay-cand-018",
+      "relevant": false
+    },
+    {
+      "candidate_id": "cr_negative_scope_no_text_overlay-cand-019",
+      "relevant": false
+    }
+  ],
+  "metrics": {
+    "unique_candidate_count": 20,
+    "expected_candidate_recall": 0.9,
+    "precision_at_10": 0.75,
+    "duplicate_rate": 0.15000000000000002,
+    "score_mae": 0.0,
+    "false_accept_count": 0,
+    "distinct_sources": 1
+  }
+}

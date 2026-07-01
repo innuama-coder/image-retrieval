@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "case_id": "dl_partial_delivery_with_accurate_gaps",
+  "metrics": {
+    "accepted_count": 2,
+    "delivery_recall": 0.66,
+    "delivery_precision": 1.0,
+    "wrong_image_delivered_count": 0,
+    "missing_expected_image_count": 1,
+    "package_validation_passed": true
+  }
+}

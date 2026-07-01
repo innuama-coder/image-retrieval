@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "case_id": "rt_hotlink_and_policy_blocked",
+  "candidates": [
+    {
+      "candidate_id": "rt_hotlink_and_policy_blocked-ret-000",
+      "image_url": "https://example.com/rt_hotlink_and_policy_blocked/0.jpg"
+    },
+    {
+      "candidate_id": "rt_hotlink_and_policy_blocked-ret-001",
+      "image_url": "https://example.com/rt_hotlink_and_policy_blocked/1.jpg"
+    },
+    {
+      "candidate_id": "rt_hotlink_and_policy_blocked-ret-002",
+      "image_url": "https://example.com/rt_hotlink_and_policy_blocked/2.jpg"
+    }
+  ]
+}

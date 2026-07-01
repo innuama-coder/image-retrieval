@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "case_id": "rt_metadata_only_and_corrupt",
+  "candidates": [
+    {
+      "candidate_id": "rt_metadata_only_and_corrupt-ret-000",
+      "image_url": "https://example.com/rt_metadata_only_and_corrupt/0.jpg"
+    },
+    {
+      "candidate_id": "rt_metadata_only_and_corrupt-ret-001",
+      "image_url": "https://example.com/rt_metadata_only_and_corrupt/1.jpg"
+    },
+    {
+      "candidate_id": "rt_metadata_only_and_corrupt-ret-002",
+      "image_url": "https://example.com/rt_metadata_only_and_corrupt/2.jpg"
+    }
+  ]
+}

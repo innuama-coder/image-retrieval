@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "case_id": "dl_quality_requirement_blocks_low_res",
+  "metrics": {
+    "accepted_count": 1,
+    "delivery_recall": 1.0,
+    "delivery_precision": 1.0,
+    "wrong_image_delivered_count": 0,
+    "missing_expected_image_count": 0,
+    "package_validation_passed": true
+  }
+}

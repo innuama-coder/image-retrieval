@@ -56,6 +56,174 @@ fn require_env(name: &str) {
     );
 }
 
+fn value_u64(value: &serde_json::Value, field: &str) -> Result<u64, String> {
+    value
+        .get(field)
+        .and_then(|v| v.as_u64())
+        .ok_or_else(|| format!("{} missing numeric field '{}'", value, field))
+}
+
+fn value_str<'a>(value: &'a serde_json::Value, field: &str) -> Result<&'a str, String> {
+    value
+        .get(field)
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| format!("{} missing string field '{}'", value, field))
+}
+
+fn evaluate_real_service_thresholds(
+    case: &serde_json::Value,
+    exit_code: i32,
+    parsed: &serde_json::Value,
+) -> Result<(), String> {
+    let case_id = case["case_id"].as_str().unwrap_or("<unknown>");
+    let thresholds = case
+        .get("expected_metrics")
+        .and_then(|m| m.get("scenario_real_service"))
+        .ok_or_else(|| format!("{} missing expected_metrics.scenario_real_service", case_id))?;
+
+    if let Some(expected_exit) = thresholds.get("cli_exit_code").and_then(|v| v.as_i64()) {
+        if exit_code as i64 != expected_exit {
+            return Err(format!(
+                "{} exit code {} did not match expected {}",
+                case_id, exit_code, expected_exit
+            ));
+        }
+    }
+
+    if let Some(expected_status) = thresholds.get("status").and_then(|v| v.as_str()) {
+        let actual_status = value_str(parsed, "status")?;
+        if actual_status != expected_status {
+            return Err(format!(
+                "{} status '{}' did not match expected '{}'",
+                case_id, actual_status, expected_status
+            ));
+        }
+    }
+
+    let query_required = case
+        .get("query_plan")
+        .and_then(|q| q.get("required_image_count"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(1);
+    let accepted_min = thresholds
+        .get("accepted_count_min")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(query_required);
+    let accepted = value_u64(parsed, "accepted_image_count")?;
+    if accepted < accepted_min {
+        return Err(format!(
+            "{} accepted_image_count {} was below threshold {}",
+            case_id, accepted, accepted_min
+        ));
+    }
+
+    let reported_required = value_u64(parsed, "required_image_count")?;
+    if reported_required != query_required {
+        return Err(format!(
+            "{} required_image_count {} did not match QueryPlan required count {}",
+            case_id, reported_required, query_required
+        ));
+    }
+
+    if thresholds
+        .get("package_validation_passed")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+    {
+        let validation_status = value_str(parsed, "validation_status")?;
+        if validation_status != "pass" {
+            return Err(format!(
+                "{} validation_status '{}' did not match expected 'pass'",
+                case_id, validation_status
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod threshold_tests {
+    use super::*;
+
+    fn case_with_scenario_thresholds() -> serde_json::Value {
+        json!({
+            "case_id": "threshold-case",
+            "query_plan": {
+                "description": "red apple on white background",
+                "required_image_count": 2
+            },
+            "expected_metrics": {
+                "scenario_real_service": {
+                    "cli_exit_code": 0,
+                    "status": "passed",
+                    "accepted_count_min": 2,
+                    "package_validation_passed": true
+                }
+            }
+        })
+    }
+
+    #[test]
+    fn real_service_thresholds_reject_failed_cli_exit() {
+        let parsed = json!({
+            "status": "passed",
+            "accepted_image_count": 2,
+            "required_image_count": 2,
+            "validation_status": "pass"
+        });
+
+        let result = evaluate_real_service_thresholds(&case_with_scenario_thresholds(), 2, &parsed);
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("exit code"));
+    }
+
+    #[test]
+    fn real_service_thresholds_reject_insufficient_delivery() {
+        let parsed = json!({
+            "status": "passed",
+            "accepted_image_count": 1,
+            "required_image_count": 2,
+            "validation_status": "pass"
+        });
+
+        let result = evaluate_real_service_thresholds(&case_with_scenario_thresholds(), 0, &parsed);
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("accepted_image_count"));
+    }
+
+    #[test]
+    fn real_service_thresholds_reject_package_validation_failure() {
+        let parsed = json!({
+            "status": "passed",
+            "accepted_image_count": 2,
+            "required_image_count": 2,
+            "validation_status": "fail"
+        });
+
+        let result = evaluate_real_service_thresholds(&case_with_scenario_thresholds(), 0, &parsed);
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("validation_status"));
+    }
+
+    #[test]
+    fn real_service_thresholds_accept_valid_delivery() {
+        let parsed = json!({
+            "status": "passed",
+            "accepted_image_count": 2,
+            "required_image_count": 2,
+            "validation_status": "pass"
+        });
+
+        let result = evaluate_real_service_thresholds(&case_with_scenario_thresholds(), 0, &parsed);
+
+        assert!(result.is_ok());
+    }
+}
+
 fn assert_config_is_real(path: &Path) {
     let content = std::fs::read_to_string(path)
         .unwrap_or_else(|e| panic!("cannot read baseline config {}: {}", path.display(), e));
@@ -171,19 +339,30 @@ fn baseline_real_service_scenarios_execute_real_cli_when_opted_in() {
             case_id,
             case_dir.display()
         );
+        let parsed = parsed.expect("parseable CLI output");
+        let exit_code = output.status.code().unwrap_or(-1);
+        evaluate_real_service_thresholds(case, exit_code, parsed).unwrap_or_else(|e| {
+            panic!(
+                "{} real CLI run did not meet baseline thresholds: {}; see {}",
+                case_id,
+                e,
+                case_dir.display()
+            )
+        });
 
         case_results.push(json!({
             "case_id": case_id,
             "unit": case["unit"],
             "test_type": "scenario_real_service",
-            "command_exit_code": output.status.code(),
+            "command_exit_code": exit_code,
             "stdout_json_parseable": parsed_stdout.is_some(),
             "stderr_json_parseable": parsed_stderr.is_some(),
-            "status": parsed.and_then(|v| v.get("status")).cloned(),
-            "accepted_image_count": parsed.and_then(|v| v.get("accepted_image_count")).cloned(),
-            "required_image_count": parsed.and_then(|v| v.get("required_image_count")).cloned(),
-            "validation_status": parsed.and_then(|v| v.get("validation_status")).cloned(),
-            "package_dir": parsed.and_then(|v| v.get("package_dir")).cloned(),
+            "threshold_status": "pass",
+            "status": parsed.get("status").cloned(),
+            "accepted_image_count": parsed.get("accepted_image_count").cloned(),
+            "required_image_count": parsed.get("required_image_count").cloned(),
+            "validation_status": parsed.get("validation_status").cloned(),
+            "package_dir": parsed.get("package_dir").cloned(),
             "stdout_path": case_dir.join("stdout.json").display().to_string(),
             "stderr_path": case_dir.join("stderr.json").display().to_string(),
             "output_dir": output_dir.display().to_string()

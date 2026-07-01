@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::path::PathBuf;
 
 fn catalog() -> serde_json::Value {
     serde_json::from_str(include_str!("fixtures/v1_1/baseline/case-catalog.json"))
@@ -33,7 +34,8 @@ fn baseline_scenarios_require_real_execution_only() {
     assert_eq!(policy["mocks_allowed"], false);
     assert_eq!(policy["fakes_allowed"], false);
     assert_eq!(policy["requires_real_search_provider"], true);
-    assert_eq!(policy["requires_real_retrieval_channels"], true);
+    assert_eq!(policy["requires_real_configured_retrieval_channels"], true);
+    assert_eq!(policy["requires_unconfigured_fallback_success"], false);
     assert_eq!(policy["requires_real_vlm_evaluator"], true);
     assert_eq!(policy["requires_cli_execution"], true);
 
@@ -150,6 +152,62 @@ fn baseline_query_plans_do_not_encode_source_or_license_requirements() {
                 case_id,
                 term
             );
+        }
+    }
+}
+
+#[test]
+fn baseline_expected_metrics_are_scoped_by_test_type() {
+    let catalog = catalog();
+
+    for case in catalog["cases"].as_array().expect("cases array") {
+        let case_id = case["case_id"].as_str().expect("case_id");
+        let metrics = case
+            .get("expected_metrics")
+            .unwrap_or_else(|| panic!("{} missing expected_metrics", case_id));
+
+        assert!(
+            metrics.get("unit").is_some(),
+            "{} expected_metrics must contain unit thresholds",
+            case_id
+        );
+        assert!(
+            metrics.get("scenario_real_service").is_some(),
+            "{} expected_metrics must contain scenario_real_service thresholds",
+            case_id
+        );
+    }
+}
+
+#[test]
+fn baseline_unit_fixture_paths_exist() {
+    let catalog = catalog();
+    let fixture_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join("v1_1");
+
+    for case in catalog["cases"].as_array().expect("cases array") {
+        let case_id = case["case_id"].as_str().expect("case_id");
+        let fixtures = case
+            .get("unit_fixtures")
+            .and_then(|v| v.as_object())
+            .unwrap_or_else(|| panic!("{} missing unit_fixtures", case_id));
+
+        for (name, value) in fixtures {
+            if !name.ends_with("scorer") {
+                let rel = value.as_str().unwrap_or_else(|| {
+                    panic!("{} fixture '{}' must be a path string", case_id, name)
+                });
+                let path = fixture_root.join(rel);
+                assert!(
+                    path.exists(),
+                    "{} fixture '{}' path must exist: {}",
+                    case_id,
+                    name,
+                    path.display()
+                );
+            }
         }
     }
 }

@@ -17,7 +17,7 @@ the development tasks must implement.
 | Module | Required v1.1 Changes |
 | --- | --- |
 | `src/main.rs` | `run` executes the full workflow; add `validate-package`; load config. |
-| `src/domain/query_plan.rs` | Add normalized v1.1 QueryPlan fields, defaults, provider/retrieval policy. |
+| `src/domain/query_plan.rs` | Add normalized v1.1 QueryPlan content fields, count defaults, compatibility parsing, and admission diagnostics. |
 | `src/domain/candidate.rs` | Add provenance, dedupe, mechanical evidence, evaluation decision references. |
 | `src/domain/retrieval.rs` | Replace path-only success with artifact-backed retrieval job/result/attempt model. |
 | `src/domain/image.rs` | Add image evidence, visual description, artifact integrity, acceptance linkage. |
@@ -38,26 +38,25 @@ pub struct NormalizedQueryPlan {
     pub query_plan_id: String,
     pub description: String,
     pub required_image_count: u32,
-    pub quality: QualityTier,
     pub query_texts: Vec<String>,
-    pub material_types: Vec<String>,
     pub visual_requirements: Vec<String>,
     pub negative_scope: Vec<String>,
-    pub source_diversity_requirement: Option<u32>,
     pub candidate_target: u32,
     pub retrieval_batch_target: u32,
-    pub retry_limit: u8,
-    pub provider_policy: ProviderPolicy,
-    pub retrieval_policy: RetrievalPolicy,
+    pub retry_limit: u8, // fixed runtime constitution default, not user policy
+    pub full_attempt_limit: u8,
 }
 ```
 
 Rules:
 
 - `required_image_count` defaults to `1`.
-- `quality` defaults to `general`.
 - `candidate_target = required_image_count * 20`.
 - `retrieval_batch_target = required_image_count * 2`.
+- Source, license, provider, retrieval, authorization, paywall, quality, retry,
+  execution, and other non-image-content requirements are not production
+  QueryPlan semantics. Legacy fields may be parsed for compatibility but must
+  not influence search, retrieval, or Qwen acceptance.
 - `retry_limit = 3`.
 
 ## Configuration Model
